@@ -126,6 +126,28 @@ def rig(tmp_db, session_manager, mock_acp_client, monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("history", ["absent", "journal", "spawned"])
+async def test_missing_owner_preflight_precedes_mark_and_preserves_ambiguity(rig, monkeypatch, history):
+    if history == "journal":
+        await rig.runtime.acquire(req())
+    if history == "spawned":
+        rig.source["acquisition_reservation"]["state"] = "spawned"
+    marker = AsyncMock()
+    monkeypatch.setattr(acquisition_runtime, "mark_dispatch_acquisition", marker)
+    monkeypatch.setattr(
+        acquisition_runtime, "verify_worktree",
+        AsyncMock(side_effect=AcquisitionRefused("worktrees_unavailable", "owner missing")),
+    )
+    before = rig.db.execute_read("SELECT COUNT(*) AS n FROM acquisition_attempts")[0]["n"]
+    with pytest.raises(AcquisitionRefused) as error:
+        await rig.runtime.acquire(req(delivery_id="delivery-next"))
+    assert error.value.code == "worktrees_unavailable"
+    assert error.value.effect is None
+    marker.assert_not_awaited()
+    assert rig.db.execute_read("SELECT COUNT(*) AS n FROM acquisition_attempts")[0]["n"] == before
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["cli", "acp"])
 async def test_new_live_and_stopped_resume_preserve_native_id(rig, mode):
     first = req(mode=mode)

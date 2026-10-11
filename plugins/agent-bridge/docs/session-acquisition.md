@@ -50,6 +50,23 @@ The bridge reads admission facts through the existing `dispatch:` namespace
 provider: current task generation/status/hold, latest active reservation,
 worktree ownership and retirement. Generation is the **current admission
 fence**, not immutable conversation lineage: claim/adoption increments it.
+
+Worktree-owner resolution does not require an interactive shell's `PATH`.
+A legacy bridge uses its installed canonical versioned-runtime resolver to
+select a completed worktree-owner interpreter. Its execution trampoline rechecks
+legacy ownership and resolves the completed slot immediately before launch,
+retaining the legacy command
+compatibility path when no runtime resolves. A native service rooted in an
+installation cell derives its own `install.json` context when the launcher
+did not supply one; explicit and derived contexts use the existing validated
+same-cell peer launcher and never fall back to a global command. Retired legacy
+ownership refuses rather than crossing installation cells.
+Owner availability is checked before marking dispatch acquisition. A missing
+owner reports the existing `worktrees_unavailable` refusal without certifying
+`effect: not_started`: neither owner absence nor an empty local journal proves
+that an earlier launch did not happen. Historical and unknown effects retain
+their existing reconciliation requirement. No acquisition wire capability or
+protocol change is introduced by installed-owner resolution.
 A bridge binding from an older generation of the same task remains resumable
 when current owner facts authorize it. A future/stale admission generation
 refuses. Historical expired registrations that are not the current native head

@@ -70,9 +70,9 @@ class AcquisitionRuntime:
             self.store.release_gate(req)
             return replay.result
         venue = await verify_dispatch(req, self.resolver)
+        row, head = await verify_worktree(req)
         if venue["acquisition_reservation"]["state"] == "reserving":
             await mark_dispatch_acquisition(req, self.resolver)
-        row, head = await verify_worktree(req)
         await self._reconcile_prior(req, row, head)
         venue = await verify_dispatch(req, self.resolver)
         row, head = await verify_worktree(req)
