@@ -24,11 +24,10 @@ contrast, queries a REAL governed feed directly at install time on a
 managed machine, since it has one available -- see that phase's own
 Validation Plan). Yanked and pre-release versions are never selected,
 regardless of age, and a version's age is measured from its NEWEST
-uploaded file -- not its oldest -- since this resolver returns a bare
-version string, never a pinned exact file hash: an install can select
-whichever file ends up published for that version, including one added
-after the fact, so every file must clear the seasoning floor for the
-guarantee to actually hold.
+uploaded file -- not its oldest -- so every file in the metadata snapshot
+clears the floor. The version-only API returns a bare pin; the release API
+also returns eligible file hashes, which the toolchain installs with hash
+enforcement so later same-version uploads cannot supply unseasoned bytes.
 """
 from __future__ import annotations
 
@@ -38,6 +37,7 @@ import re
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 #: Default seasoning window, in days, applied when a caller doesn't name
@@ -130,28 +130,24 @@ def _default_fetch(url: str) -> bytes:
         return response.read()
 
 
-def resolve_seasoned_public_version(
+def _resolve_seasoned_release(
     package: str,
     *,
     min_age_days: int = DEFAULT_MIN_AGE_DAYS,
     now: datetime | None = None,
     fetch: Callable[[str], bytes] = _default_fetch,
-) -> str:
+) -> tuple[str, list[dict]]:
     """The newest public-PyPI release of ``package`` whose NEWEST uploaded
     file is at least ``min_age_days`` old as of ``now`` (defaults to the
     real current UTC time), excluding any release PyPI reports as yanked
     or that parses as a pre-release/dev release.
 
-    A release's age is measured from its NEWEST file's
-    ``upload_time_iso_8601`` -- not its earliest -- because this resolver
-    returns a bare version, never a pinned exact file hash: a later
-    install can select whichever file PyPI/the installer picks for that
-    version, including one added to an already-published release after
-    the fact. Measuring from the earliest file would let a seasoned-
-    looking old version quietly carry a brand-new, unseasoned wheel;
-    requiring every file for the version to meet the age floor is the
-    only way this resolver's "seasoned" guarantee actually holds for
-    whatever file ends up installed.
+    Returns the selected version AND its snapshot file records. Measuring
+    from the newest file's ``upload_time_iso_8601``, not the earliest,
+    prevents a seasoned-looking version from carrying a newly uploaded
+    file in that snapshot. The version-only wrapper drops the records;
+    the release API binds their hashes to installation, preventing a
+    subsequent same-version upload from winning live index selection.
 
     Raises :class:`SeasonedVersionError` -- never returns a value silently
     substituting a different guarantee -- on a negative ``min_age_days``,
@@ -263,10 +259,8 @@ def resolve_seasoned_public_version(
             # unparseable-timestamp file look older than it is.
             continue
         # Measured from the NEWEST file, not the oldest -- see this
-        # function's own docstring for why (this resolver returns a bare
-        # version, not a pinned file hash, so every file for the version
-        # must meet the age floor for the "seasoned" guarantee to hold
-        # for whichever file actually gets installed).
+        # function's own docstring for why every snapshot file must age,
+        # even when the release API also binds installation to its hash.
         newest = max(upload_times)
         age_days = (now - newest).total_seconds() / 86400.0
         if age_days < min_age_days:
@@ -281,4 +275,39 @@ def resolve_seasoned_public_version(
         )
 
     candidates.sort()
-    return candidates[-1][1]
+    version = candidates[-1][1]
+    return version, releases[version]
+
+
+def resolve_seasoned_public_version(
+    package: str, *, min_age_days: int = DEFAULT_MIN_AGE_DAYS,
+    now: datetime | None = None, fetch: Callable[[str], bytes] = _default_fetch,
+) -> str:
+    """Newest stable, non-yanked version whose newest file clears the age floor."""
+    return _resolve_seasoned_release(
+        package, min_age_days=min_age_days, now=now, fetch=fetch
+    )[0]
+
+
+@dataclass(frozen=True)
+class SeasonedPublicRelease:
+    version: str
+    hashes: tuple[str, ...]
+
+
+def resolve_seasoned_public_release(
+    package: str, *, min_age_days: int = DEFAULT_MIN_AGE_DAYS,
+    now: datetime | None = None, fetch: Callable[[str], bytes] = _default_fetch,
+) -> SeasonedPublicRelease:
+    """Bind the age decision to eligible file bytes, not a mutable live version."""
+    version, files = _resolve_seasoned_release(
+        package, min_age_days=min_age_days, now=now, fetch=fetch
+    )
+    hashes = set()
+    for file in files:
+        digests = file.get("digests")
+        digest = digests.get("sha256") if isinstance(digests, dict) else None
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-fA-F]{64}", digest) is None:
+            raise SeasonedVersionError(f"{package} {version}: missing or invalid file SHA-256")
+        hashes.add(digest.lower())
+    return SeasonedPublicRelease(version, tuple(sorted(hashes)))

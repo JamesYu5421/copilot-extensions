@@ -9,6 +9,45 @@ and reactive automation this repo runs. `CONTRIBUTING.md` owns contributor
 requirements); this doc owns the *infrastructure* those steps run on top
 of — link here rather than restating any of it.
 
+## Python artifact-builder toolchain policy
+
+`tools/build_python_artifacts.py` remains a standalone builder, not yet part
+of promotion. Its default `--toolchain-source governed` requires an
+affirmatively trusted governed feed. There is no automatic public fallback.
+Public promotion runners may explicitly choose
+`--toolchain-source seasoned-public --toolchain-min-age-days 7` (seven days
+is the default). This exception applies only to the build toolchain:
+`setuptools`, `wheel`, and `packaging`, never managed-device runtime
+dependency resolution or published third-party wheels.
+
+Public mode selects exact non-yanked stable pins from PyPI metadata, measures
+age from the newest file, and installs binary distributions only from one
+explicit public index. An incompatible pin set fails resolution; it never
+relaxes a pin or the seasoning floor. Every source's build requirements are
+also checked against the locked interpreter before building. Seasoning is an
+age floor, not proof that any consumer's governed feed has mirrored a version.
+The metadata snapshot's eligible SHA-256 file hashes are carried into a
+`--require-hashes` install. A wheel uploaded to the same version after that
+snapshot cannot silently win live-index selection: its bytes fail verification
+before the toolchain is published. Hash mode also refuses any unpinned
+transitive build-tool dependency.
+
+Manifest schema 3 records toolchain source policy and resolved interpreter in
+`build_toolchain.provenance`; public provenance additionally records the
+index, seasoning floor, exact pins, and eligible file hashes. These fields participate in
+`lock_id`, hence `artifact_id`. Caller-supplied toolchain locks with missing
+or inconsistent provenance are rejected before any wheel is built.
+Shared `--toolchain-venv` reuse checks the
+same policy/pins/interpreter identity and rechecks installed public pins;
+a different identity uses an alternate slot without disturbing an active
+build. The existing `.governed-feed-provenance.json` filename is retained
+for compatibility, but public markers explicitly say `seasoned-public` and
+contain no `validated_index_identity` claim.
+
+Path-scoped CI runs a fresh public toolchain plus real first-party wheel
+builds on a public hosted runner. Managed machines should retain governed
+mode when exercising the builder locally.
+
 ## Branch model at a glance
 
 - **`dev`** is this repo's contribution branch and the only one an ordinary PR
