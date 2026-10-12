@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agent_bridge import acquisition_authority, acquisition_runtime, session_manager as core
-from agent_bridge.acquisition_cli import acquire as client_acquire
+from agent_bridge.acquisition_cli import ACQUISITION_PROTOCOL_VERSION, acquire as client_acquire
 from agent_bridge.acquisition_contract import AcquisitionRefused, AcquisitionRequest
 from agent_bridge.acquisition_store import AcquisitionStore
 from agent_bridge.acquisition_executor import executor
@@ -286,6 +286,44 @@ async def test_first_conversation_revalidates_authority_after_target_preparation
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("blocker", ["none", "unknown_head", "live_holder", "revoked"])
+async def test_explicit_retirement_recovery_still_checks_native_holder_and_owner(rig, monkeypatch, blocker):
+    rig.source["task"]["generation"] = 1
+    rig.source["acquisition_reservation"].update(
+        attempt=167, worktree_ownership="reused", conversation_retired=True,
+    )
+    request = req(allocation="reused", conversation_retired=True, task_generation=1)
+    if blocker == "unknown_head":
+        rig.head["id"] = "unknown-native"
+    elif blocker == "live_holder":
+        await rig.runtime.acquire(request)
+        return_request = request.model_copy(update={"delivery_id": "second-delivery"})
+        with pytest.raises(AcquisitionRefused) as error:
+            await rig.runtime.acquire(return_request)
+        assert error.value.code == "live_holder"
+        assert len(rig.db.execute_read("SELECT * FROM turns")) == 1
+        return
+    elif blocker == "revoked":
+        original = rig.runtime._prepare_target
+        async def revoke(*args):
+            result = await original(*args)
+            rig.source["acquisition_reservation"]["conversation_retired"] = False
+            return result
+        monkeypatch.setattr(rig.runtime, "_prepare_target", revoke)
+    if blocker == "none":
+        result = await rig.runtime.acquire(request)
+        assert result.acquired == "created"
+        assert len(rig.db.execute_read("SELECT * FROM turns")) == 1
+        return
+    with pytest.raises(AcquisitionRefused) as error:
+        await rig.runtime.acquire(request)
+    assert error.value.code == (
+        "authority_unknown" if blocker == "unknown_head" else "dispatch_fence_changed"
+    )
+    assert not rig.manager.list_sessions()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["cli", "acp"])
 async def test_new_live_and_stopped_resume_preserve_native_id(rig, mode):
     first = req(mode=mode)
@@ -395,7 +433,7 @@ async def test_real_constructed_client_envelope_and_http_response(rig):
         assert refused.json()["detail"]["code"] == "cli_options_unsupported"
         assert refused.json()["detail"]["effect"] == "not_started"
     client = BridgeClient("http://unused", "unused", connect_grace=0)
-    client._daemon_proto = (30, 1)
+    client._daemon_proto = (ACQUISITION_PROTOCOL_VERSION, 1)
     sent = []
 
     def request(method, path, body, **kw):
@@ -406,9 +444,9 @@ async def test_real_constructed_client_envelope_and_http_response(rig):
     result = client_acquire(client, req(mode="cli"))
     assert result.native_session_id == response.json()["native_session_id"]
     assert sent[0][:2] == ("POST", "/api/v1/acquisitions")
-    assert sent[0][2]["protocol_version"] == 30
+    assert sent[0][2]["protocol_version"] == ACQUISITION_PROTOCOL_VERSION
     assert sent[0][2]["mode"] == "cli"
-    client._daemon_proto = (29, 1)
+    client._daemon_proto = (30, 1)
     with pytest.raises(BridgeClientError) as error:
         client_acquire(client, req(mode="cli"))
     assert error.value.status == 426
