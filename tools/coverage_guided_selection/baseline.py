@@ -290,6 +290,9 @@ _DRIVER_SCRIPT = textwrap.dedent(
 class BaselineCollectionError(RuntimeError):
     """Raised when the ephemeral pytest+coverage subprocess fails outright.
 
+    The message labels and preserves both nonempty subprocess streams so
+    stderr warnings cannot hide pytest's stdout failure diagnostics.
+
     A baseline is only ever earned from a run where **every** collected test
     passed: a failed/errored run can leave later tests unexecuted and
     coverage/duration data partial, which would silently under-test any
@@ -302,9 +305,14 @@ class BaselineCollectionError(RuntimeError):
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
+        diagnostics = "\n".join(
+            f"{name}:\n{output}"
+            for name, output in (("stdout", stdout), ("stderr", stderr))
+            if output
+        )
         super().__init__(
             f"coverage baseline collection failed (exit {returncode}):\n"
-            f"{stderr or stdout}"
+            f"{diagnostics}"
         )
 
 

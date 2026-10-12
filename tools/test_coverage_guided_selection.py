@@ -746,7 +746,7 @@ class TestPlanChunks:
         # order matches sorted discovery order (stable, reproducible
         # chunking across runs).
         flattened = [path for chunk in chunks for path in chunk]
-        assert flattened == sorted(f"tests/{name}" for name in names)
+        assert flattened == sorted(str(Path("tests") / name) for name in names)
 
     def test_large_suite_includes_both_default_pytest_filename_patterns(
         self, tmp_path: Path
@@ -765,7 +765,7 @@ class TestPlanChunks:
         chunks = baseline_mod._plan_chunks(tmp_path, "tests", max_files_per_chunk=3)
 
         flattened = {path for chunk in chunks for path in chunk}
-        assert flattened == {f"tests/{name}" for name in names}
+        assert flattened == {str(Path("tests") / name) for name in names}
 
     def test_large_suite_outside_cwd_keeps_absolute_paths(
         self, tmp_path: Path
@@ -859,13 +859,26 @@ class TestBaselineCollectionErrorContract:
     neither spawns a real subprocess, so both run in the always-on
     synthetic lane alongside `TestSelectTests`/`TestComputeFallbackSet`."""
 
-    def test_nonzero_exit_raises_baseline_collection_error(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    @pytest.mark.parametrize(
+        ("stdout", "stderr"),
+        [
+            ("1 failed", ""),
+            ("", "driver failed"),
+            ("ERROR collecting tests/test_example.py", "No data was collected"),
+            ("", ""),
+        ],
+    )
+    def test_nonzero_exit_preserves_both_diagnostic_streams(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        stdout: str,
+        stderr: str,
     ) -> None:
         fake_result = type(
             "FakeCompletedProcess",
             (),
-            {"returncode": 1, "stdout": "1 failed", "stderr": ""},
+            {"returncode": 2, "stdout": stdout, "stderr": stderr},
         )()
         monkeypatch.setattr(
             baseline_mod.subprocess, "run", lambda *a, **k: fake_result
@@ -877,8 +890,17 @@ class TestBaselineCollectionErrorContract:
                 cov_source="src",
                 plugin="mocked",
             )
-        assert exc_info.value.returncode == 1
-        assert "1 failed" in str(exc_info.value)
+        error = exc_info.value
+        assert error.returncode == 2
+        assert error.stdout == stdout
+        assert error.stderr == stderr
+        message = str(error)
+        assert message.startswith("coverage baseline collection failed (exit 2):\n")
+        for name, output in (("stdout", stdout), ("stderr", stderr)):
+            if output:
+                assert f"{name}:\n{output}" in message
+            else:
+                assert f"{name}:" not in message
 
     def test_timeout_raises_baseline_collection_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -886,7 +908,10 @@ class TestBaselineCollectionErrorContract:
         import subprocess as subprocess_module
 
         def _raise_timeout(*args, **kwargs):
-            raise subprocess_module.TimeoutExpired(cmd=["uv", "run"], timeout=1.0)
+            raise subprocess_module.TimeoutExpired(
+                cmd=["uv", "run"], timeout=1.0,
+                output=b"pytest progress", stderr=b"coverage warning",
+            )
 
         monkeypatch.setattr(baseline_mod.subprocess, "run", _raise_timeout)
         with pytest.raises(baseline_mod.BaselineCollectionError) as exc_info:
@@ -898,6 +923,8 @@ class TestBaselineCollectionErrorContract:
                 timeout_s=1.0,
             )
         assert "timed out after 1.0s" in str(exc_info.value)
+        assert "stdout:\npytest progress" in str(exc_info.value)
+        assert "stderr:\ntimed out after 1.0s: coverage warning" in str(exc_info.value)
         # The documented contract is specifically that callers only ever
         # need to catch `BaselineCollectionError`; confirm the raw
         # `TimeoutExpired` never escapes as the exception type itself.
@@ -2572,7 +2599,4 @@ class TestDecide:
         result = decide_mod.decide(tmp_path, "owner/repo", "plugin", "fork", {})
 
         json.dumps(result.as_dict())  # must not raise
-
-
-
 
