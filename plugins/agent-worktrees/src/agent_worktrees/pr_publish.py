@@ -149,19 +149,30 @@ def _tip(remote: str, branch: str, worktree_path: str) -> str | None:
     return ""
 
 
-def _provider_head(repo, pr) -> str:
+def _provider_head(repo, pr, *, expected_ref: str = "", expected_identity: str = "") -> str:
     """The PR's actual head commit, from the provider; "" when it can't be read."""
     number, slug = getattr(pr, "number", None), getattr(pr, "repo", "") or ""
     if not number or "/" not in slug:
         return ""
     try:
         from . import providers
+        from .providers.pr_source import same_repository
 
         prcfg = repo.pr
-        provider = providers.get_provider(getattr(pr, "provider", "") or prcfg.provider)
+        provider_name = getattr(pr, "provider", "") or prcfg.provider
+        provider = providers.get_provider(provider_name)
         result = provider.get_pull(slug, int(number),
                                    api_base=getattr(prcfg, "api_base", "") or "",
                                    token=providers.account_token_for_slug(slug, prcfg))
+        if expected_ref and (
+            result.state not in ("open", "active") or result.merged
+            or result.number != int(number) or result.head_ref != expected_ref
+            or result.base_ref != repo.default_branch
+            or not same_repository(
+                _identity(result.head_url, ""), expected_identity, provider_name,
+            )
+        ):
+            return ""
         return (getattr(result, "head_sha", "") or "").strip()
     except Exception:
         return ""
@@ -446,6 +457,12 @@ def push_checked(record, remote: str, refspec: str, *, cwd: str,
                 tip = _tip(remote, destination.removeprefix("refs/heads/"), cwd)
                 if tip and git_ops.is_commit_ancestor(tip, source, cwd=cwd):
                     result = git_ops.push(remote, refspec, cwd=cwd, timeout=timeout)
+                elif tip and repo is not None:
+                    from . import pr_rebase
+                    result = pr_rebase.push(
+                        record, repo, remote, refspec, force_with_lease_expect,
+                        cwd=cwd, timeout=timeout, reconcile_head=tip,
+                    )
             if repo is not None and force_with_lease_expect and result.stderr == (
                 f"Refusing: {force_with_lease_expect} not an ancestor."
             ):
