@@ -108,6 +108,19 @@ The stalled descendant/captured-pipe case lives separately in
 `test_first_install_bootstrap_watchdog.py` and runs only in the full suite,
 not the required guard lane.
 
+FINAL stamp regressions use one immutable real-Git template and isolated
+per-test copies. The changed-plugin guard lane runs four smoke cases:
+serialized stamp/poll persistence, a tracked edit invalidating the stamp,
+the production cached-display/removal split, and a retained at-rest claim.
+The remaining checkout/obligation matrix runs in the existing full
+promotion/scheduled/manual suite, not as an unconditional new PR matrix.
+The report-only audit recipe's pure parameter/receipt/path checks and
+service-free CLI render smoke also run in the changed-dispatch guard lane.
+A non-dry-run CLI kick additionally traverses the real parser/create/client
+path against an isolated loopback coordinator without spawning a worker.
+Native symlink escape coverage runs where the test environment permits
+creating symlinks; a platform refusal is reported as a skip, not a pass.
+
 There is no host-wide test singleton. Each target takes a lease keyed by its
 **concrete environment directory's filesystem identity** (`st_dev`, `st_ino`),
 held across venv preparation,
