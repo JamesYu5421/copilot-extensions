@@ -56,8 +56,10 @@ def _validate(worktree_id: str, config: Config, record: tracking.WorktreeRecord 
         if (pr.rewrite_owner or pr.rewrite_identity
                 or not legacy_identity(pr, cwd) or pr.number is None or not pr.url):
             raise ValueError("Missing publication ownership or compatible legacy evidence; inspect the tracked PR.")
+    from .pr_custom_head import saved_attestation
     if (pr.branch in {repo.default_branch, "main", "master", "dev", branch, *hooks._protected_branches(cwd)}
-            or (not recovery and not pr.branch.endswith("-" + git_ops.worktree_suffix(worktree_id)))
+            or (not recovery and not pr.branch.endswith("-" + git_ops.worktree_suffix(worktree_id))
+                and not saved_attestation(record, repo, pr, pr.head_sha))
             or "/" not in pr.branch
             or pr.branch.startswith(("worktree/", "release/"))):
         raise ValueError("--rewrite-pr only rewrites a worktree-scoped private PR head.")
@@ -125,6 +127,7 @@ def push_changes(worktree_id: str, config: Config, record: tracking.WorktreeReco
             if ((not recovery or pr.rewrite_identity)
                     and identity != (pr.rewrite_identity or legacy_identity(pr, cwd))):
                 raise ValueError("PR publication destination changed; nothing was pushed.")
+            observed = None
             if pr.number:
                 observed = observe_pr(config, pr)
                 if observed.merged or observed.state.lower() != "open" or observed.head_sha != pr.head_sha:
@@ -138,8 +141,14 @@ def push_changes(worktree_id: str, config: Config, record: tracking.WorktreeReco
                     )
                 ):
                     raise ValueError("Provider did not confirm this exact PR head and destination; nothing was pushed.")
-            if pr_publish._tip(target.remote, pr.branch, cwd) != pr.head_sha:
+            remote_tip = pr_publish._tip(target.remote, pr.branch, cwd)
+            if remote_tip != pr.head_sha:
                 raise ValueError("PR remote head no longer matches the recorded lease; inspect and reconcile it.")
+            if not recovery and not pr.branch.endswith("-" + git_ops.worktree_suffix(worktree_id)):
+                from .pr_custom_head import verify_attested
+                if not verify_attested(fresh, repo, pr, target.remote, pr.head_sha, cwd=cwd,
+                                       config=config, observed=observed, remote_tip=remote_tip):
+                    raise ValueError("Custom PR head lacks exact saved and live publication ownership.")
             if not git_ops.is_clean(cwd=cwd):
                 raise ValueError("Working tree has uncommitted changes; commit them before --rewrite-pr.")
             head_sha = git_ops.git(
