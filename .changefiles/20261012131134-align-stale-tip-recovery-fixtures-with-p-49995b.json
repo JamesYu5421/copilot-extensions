@@ -1,0 +1,9 @@
+{
+  "comment": "Align stale-tip recovery fixtures with pinned push transport metadata",
+  "changes": [
+    {
+      "plugin": "agent-worktrees",
+      "type": "dev"
+    }
+  ]
+}

@@ -18,13 +18,23 @@ def test_stale_lease_retries_only_fast_forward(monkeypatch, ancestor, refspec):
         return "remote-tip"
 
     monkeypatch.setattr(pr_publish, "_tip", tip)
+    ancestry_checks = []
     def ancestry(*args, **kwargs):
+        assert kwargs["check"] is False
+        assert kwargs["isolated_repository"] is True
+        if args[:2] == ("remote", "get-url"):
+            assert args in (
+                ("remote", "get-url", "--push", "--all", "origin"),
+                ("remote", "get-url", "origin"),
+            )
+            return SimpleNamespace(returncode=0, stdout="https://example.com/owner/repo.git\n", stderr="")
+        if args[0] == "config":
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
         assert args == (
             "--no-replace-objects", "merge-base", "--is-ancestor", "remote-tip",
             refspec.partition(":")[0],
         )
-        assert kwargs["check"] is False
-        assert kwargs["isolated_repository"] is True
+        ancestry_checks.append(args)
         return SimpleNamespace(returncode=0 if ancestor else 1)
 
     monkeypatch.setattr(git_ops, "git", ancestry)
@@ -38,6 +48,7 @@ def test_stale_lease_retries_only_fast_forward(monkeypatch, ancestor, refspec):
     result = pr_publish.push_checked(
         None, "origin", refspec, cwd=".", force_with_lease_expect="old",
     )
+    assert len(ancestry_checks) == 1
     assert result.ok == ancestor
     assert len(calls) == (2 if ancestor else 1)
     if ancestor:
