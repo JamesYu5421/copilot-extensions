@@ -148,6 +148,15 @@ operator directive to remove the explicit claimed-dev exception.
       Internal ownership bookkeeping must not require a manual old-tip,
       re-publish, restore-tip sequence. Preserve exact saved leases, destination
       and worktree/ref authority, real concurrency refusal, and normal hooks.
+      Initial delivery verified on 2026-10-12: #5835 and publication repair #6256
+      are merged; normal release promotions #6263/#6267 are merged; unified
+      update selected agent-worktrees `1.24.50-dev1` and the installed CLI
+      exposes `--rewrite-pr`. Independent promotion blockers #6244/#6262
+      were resolved before those releases. Consumer guidance refresh cleared its
+      reviewed flow; the merged plan's PR claim was reconciled.
+      Reopened for the in-scope revised-legacy-record correction #6299, merged
+      after that deployment. Its normal promotion and installed verification
+      are still required before this prerequisite is complete.
 
 - [ ] Review the shared
       [runtime-admission/build-coalescing slice](phase-3-runtime-admission.md)
@@ -221,6 +230,72 @@ operator directive to remove the explicit claimed-dev exception.
       this worktree mid-effort.
 
 ## Journal
+
+### 2026-10-12 — Revised legacy compatibility follow-up reopens the gate
+
+The #6297 completion review identified #6299, which closes an additional
+compatible-legacy case under #5817: a nonzero metadata revision must not alone
+block an intentional owned rewrite when fresh numbered-provider, source-branch,
+source-repository and exact-head evidence match. #6299 merged after the
+`1.24.50-dev1` deployment recorded below. The prerequisite is reopened pending
+normal promotion and installed verification of that follow-up; the earlier
+deployment evidence remains true for the narrower candidate, not proof that
+the revised-record compatibility requirement is already installed.
+
+### 2026-10-12 — Publisher prerequisite deployed and consumer refreshed
+
+Normal promotion cleared after the owned release repairs and scoped standalone
+materialization repair #6262. The promoted `main` source contains the
+one-command legacy-update implementation. Unified update completed with
+agent-worktrees `1.24.50-dev1` active and the installed `--rewrite-pr` flag
+available; agent-dispatch health reported `ok` on `0.16.7-dev1`.
+The updater reported a supervisor-retirement warning, but the named diagnostic
+PID was subsequently absent; no manual process termination was performed.
+An existing unowned project-command receipt was preserved rather than silently
+transferred.
+
+Consumer refresh exposed a missing Windows LF attribute for reviewed fallback
+bodies. Byte-equivalent normalization and the generated sync landed through
+the consumer's reviewed flow after clean automated review and required
+validation. The old merged-plan #5788 obligation is now released. Publisher
+prerequisite completion does not close Phase 3. Remaining work includes
+construction coalescing, candidate/rollback retention, per-adopter immutable-slot
+refusal, claimed dev/release, distinct-generation health repair, and the
+remaining guidance and validation.
+
+### 2026-10-11 — Publisher prerequisite merged; release gate remains
+
+This historical entry records the state at merge. The 2026-10-12 entry above
+records the subsequent verified release, deployment and consumer refresh.
+
+The one-command compatible-legacy update and exact-lease publication fixes
+merged as #5835 (`2724ce210191de4b66700a4ecd526e0368abaf31`).
+Current-head review cleared all Medium/High findings; the remaining Low
+installer-validation observation was addressed with corrected scope and a
+contained registration/prerequisite/manifest/binstub selection (52 passed,
+2 platform-skipped). Required CI completed successfully before merge.
+Additional completed selections exercised legacy migration, actual rebase and
+follow-up transport, authority/interleaving/publication state, and unregister
+lock ordering; no failing or timed-out broad selection was called green.
+
+Recovery-authored fixes were preserved, and updates used supported publication
+with exact saved leases and normal hooks. The parent prerequisite remains
+unchecked until normal release promotion, unified deployment, consumer refresh
+and old-plan claim reconciliation are verified. Runtime Phase 3 and the parked
+daemon-only effort remain open. Shared runtime admission code also advanced
+upstream while this prerequisite was in review; compare the reviewed plan
+against current source before beginning another implementation slice.
+
+The first post-merge full release gate exposed nine publication regressions
+and two stale bridge authority-fixture bindings. Existing repair ownership
+was honored: #6244 and #6256 landed through their own reviewed fixes.
+Validation run `38184375719` then passed every full test and guard job for
+`35eddcaaf`, but its promotion job refused the new standalone dispatch
+distribution's plugin-backed editable reference under the libs-only
+materialization contract. That separate release blocker is reported under
+#6177 and coordinated with the live distribution owner. No bypass, direct
+main mutation, duplicate repair PR or deployment occurred. The prerequisite
+therefore remains release-gated, not checked off by the publisher merge alone.
 
 ### 2026-10-09 — Reviewed runtime plan and publisher continuation
 
