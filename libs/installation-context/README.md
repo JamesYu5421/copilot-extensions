@@ -468,8 +468,18 @@ ownership locks. The transaction validates the published markers and reports
 `activated: false` and `operative: false`; activation publication, launchers,
 services, health qualification, repair/release, uninstall, and normal-flow
 adoption remain separate lifecycle boundaries.
-Read-only callers may import `resolve_installation_mode` and
-`probe_legacy_entrypoint`. Their optional `os_profile`, `platform`,
+Strictly read-only callers import `inspect_installation_mode`. It accepts the
+same resolution arguments and returns the same complete governance result as
+`resolve_installation_mode`, without creating or refreshing an advisory
+runtime-root pointer, a directory, a receipt or a configuration file. It does
+not activate a cell, grant execution authority or turn migration-required,
+invalid, foreign or stale evidence into readiness.
+
+`resolve_installation_mode`, `probe_legacy_entrypoint`, and the existing
+`status`/`probe-legacy` CLI actions retain their intentional advisory
+runtime-root pointer publication for a ready, attributable resolution.
+Inspection must not invoke those publishing entry points merely to obtain
+the same result. The optional `os_profile`, `platform`,
 `wsl_distro`, `current_time`, `host`, and `pid_is_live` arguments are explicit
 test/diagnostic seams; they are not ambient authorization.
 

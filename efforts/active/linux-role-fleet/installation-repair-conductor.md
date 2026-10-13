@@ -1,7 +1,7 @@
 # Explicit installation repair conductor
 
-**Status:** Agent-recommended proposal; no executor is implemented by this
-document. Review this boundary before implementation under #6464.
+**Status:** Agent-recommended boundary reviewed in #6477; no executor is
+implemented by this document. Implementation and consumer proof remain under #6464.
 
 ## Intent and reconciliation
 

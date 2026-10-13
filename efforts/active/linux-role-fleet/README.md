@@ -165,7 +165,7 @@ Implementation sequencing below is **agent-recommended**:
   are the first prerequisite under #6424/#6240; managed lifecycle execution and
   controller/connector components remain open.
   [Installation repair conductor](installation-repair-conductor.md) is the
-  agent-recommended #6464 setup prerequisite proposal; it does not implement
+  reviewed, agent-recommended #6464 setup prerequisite boundary; it does not implement
   execution or require downstream plugins to create core installation cells.
 - [ ] Define controller-owned live configuration validation, atomic activation,
   last-valid-state recovery and explicit restart-required outcomes.
@@ -451,3 +451,29 @@ not to the vision. This effort does not acquire or migrate live capacity.
   retaining recovery refs. Both efforts stay Active; controller/connector,
   useful service roles, authorization, provider admission and adopter migration
   completion gates remain unresolved.
+
+### 2026-10-13 - Reviewed conductor and released client prerequisite
+- #6477 merged at `2026-10-13T09:07:45Z`, commit
+  `6dfefc3427668bc49aaad65bdaa10543ba58ce1f`, after current-head approval,
+  resolution of the native macOS/WSL validation gap and all required checks.
+  The plan keeps core-cell admission separate from ordinary downstream
+  payload delivery. Review is not executor availability or consumer readiness.
+- #6480 promoted the exact #6432 merge snapshot `ca7b3e563067` and released
+  `fleet-manager 0.1.7-dev1`. This is the artifact-contained client prerequisite,
+  not an installed managed lifecycle or controller/connector distribution.
+- The authorized unified rollout returned aggregate exit 1: the released
+  dispatch dependency floor still exceeded the configured index's available
+  FastAPI version. Existing #6454 owns that blocker; its source correction
+  #6458 postdates the promoted snapshot. Partial runtime updates do not prove
+  whole-update convergence. No alternate index or installed-source override
+  was used.
+- The next bounded #6464 prerequisite separates truly read-only mode inspection
+  from the existing resolver's deliberate advisory runtime-pointer publication.
+  The conductor, managed lifecycle and all live setup/migration gates remain open.
+- The prerequisite API now passes 26 native cases covering whole-fixture
+  nonmutation, unchanged publishing semantics and first-touch imports of all
+  eight vendored plugin consumers plus Worktree Manager. The combined native
+  governance/CLI smoke passed 48 cases; four unsupported runner cases skipped.
+  Canonical synchronization, installation contracts, source size and focused
+  lint pass. This remains local candidate evidence until review, CI and release;
+  no executor or installed/live consumer adoption is claimed.

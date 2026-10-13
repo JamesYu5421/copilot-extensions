@@ -54,6 +54,7 @@ def resolve_installation_mode(
     current_time: datetime | str | None = None,
     host: str | None = None,
     pid_is_live: Callable[[int], bool] | None = None,
+    _publish_pointer: bool = True,
 ) -> dict[str, Any]:
     """Resolve desired and actual installation mode without mutating state."""
 
@@ -249,9 +250,10 @@ def resolve_installation_mode(
     elif actual_mode == "namespaced":
         reason = "namespaced-active"
 
-    _publish_runtime_root_pointer(
-        resolved_durable_home, trusted_plugin_id, runtime_root, status
-    )
+    if _publish_pointer:
+        _publish_runtime_root_pointer(
+            resolved_durable_home, trusted_plugin_id, runtime_root, status
+        )
     return {
         "schema": RESOLUTION_SCHEMA,
         "version": 1,
@@ -277,6 +279,12 @@ def resolve_installation_mode(
             "ownerMarketplaceId": legacy["ownerMarketplaceId"],
         },
     }
+
+
+@_validation_scope
+def inspect_installation_mode(**arguments: Any) -> dict[str, Any]:
+    """Observe the same governance result without publishing a runtime pointer."""
+    return resolve_installation_mode(**arguments, _publish_pointer=False)
 
 
 @_validation_scope
