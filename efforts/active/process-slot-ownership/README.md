@@ -470,3 +470,41 @@ native sample bounded completion provenance so cached reuse and repeated
 observations cannot inflate accounting. It remains measurement-only;
 cumulative role reduction, expected cost/fan-out policy, enforced budgets and
 identity-safe process-tree reclamation are separate open gates.
+
+### 2026-10-13 - Sample accounting plan landed; implementation prepared
+
+Merged #6534 as `0fdda518f` after exact-head approval with zero findings and
+actual CI success. The reviewed measurement-only contract now has an
+implementation: bounded per-sampler/sequence provenance, current/last native
+accounting, separate collector wall/thread CPU, and explicit clock uncertainty.
+Cache reuse carries the same cost; backend exceptions still reach awaiters.
+Bridge exports late accounting through the existing content-free sink, including
+failed or cancelled waits, without losing native holder ownership.
+
+The physical procutil mirror and all 13 consumer changefile entries are
+synchronized; default helper consumers neither import psutil nor sample.
+Windows library validation passed 99 tests, including a direct native-thread
+counter witness. All nine Agent Bridge sub-suites passed (4,245 passed, 94
+skipped), including native accounting export. Linux CI and exact-head review
+remain required before merge. Numeric policy, role reduction, reclamation and
+authorized adoption remain unresolved parent gates; this implementation does
+not close them.
+
+### 2026-10-13 - Worker-start cache failure semantics corrected
+
+Review identified the same cache-invalidation omission in the canonical sampler
+and its physical mirror. A worker-start failure after an unavailable or regressed
+cache clock must invalidate `_last_at`, as a backend failure already does, so
+later clock recovery cannot resurrect an older successful observation.
+Both paths now do so; four recovery regressions cover both clock conditions
+and RuntimeError/OSError start failures while preserving the original exception.
+
+The full Windows procutil suite passed 103 tests after this correction, and the
+focused reader/admission/telemetry/vendoring selection passed 42. The previous
+full nine-sub-suite Windows and Linux runs are baseline evidence only; fresh
+exact-head review and code CI remain required before landing the correction.
+
+The existing consumer native fixture now also verifies the actual sampling-thread
+counter delta in exported telemetry, ensuring canonical Linux CI exercises that
+direct witness without another subprocess fixture. Its focused Windows
+reader/admission/telemetry/vendoring selection passed 42 tests.

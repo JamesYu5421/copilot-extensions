@@ -26,7 +26,10 @@ from agent_bridge.agent_registry_resolver import AgentResolver
 @pytest.fixture
 def events() -> list[dict]:
     received: list[dict] = []
-    telemetry.set_telemetry_sink(received.append)
+    telemetry.set_telemetry_sink(
+        lambda event: received.append(event)
+        if event.get("event") == "reader_cpu_observation" else None,
+    )
     try:
         yield received
     finally:
@@ -576,6 +579,17 @@ async def test_native_cpu_receipt_and_telemetry(
     import psutil
 
     monkeypatch.setenv("AGENT_BRIDGE_NAMESPACE_LIST_TTL", "0")
+    thread_reads: list[tuple[int, float]] = []
+
+    def thread_clock() -> float:
+        value = time.thread_time()
+        thread_reads.append((threading.get_ident(), value))
+        return value
+
+    def sampler(root: ProcessIdentity) -> OwnedProcessCpuSampler:
+        return OwnedProcessCpuSampler(root, thread_clock=thread_clock)
+
+    monkeypatch.setattr(reader_observation, "OwnedProcessCpuSampler", sampler)
     source = str(Path(psutil.__file__).parent.parent)
     receipt = tmp_path / "receipt.json"
     script = (
@@ -614,6 +628,18 @@ async def test_native_cpu_receipt_and_telemetry(
     assert event["observed_cpu_seconds"] > 0.1
     assert event["coverage"] == "observed_lower_bound"
     assert event["wall_seconds"] >= 3.3
+    sample = event["sample"]
+    assert sample["state"] == "succeeded"
+    assert sample["completed_at"] >= sample["started_at"]
+    assert sample["wall_seconds"] >= 0
+    assert sample["thread_cpu_seconds"] >= 0
+    start, end = thread_reads[2 * (sample["sequence"] - 1):2 * sample["sequence"]]
+    assert start[0] == end[0] != threading.get_ident()
+    assert sample["thread_cpu_seconds"] == end[1] - start[1]
+    assert sample["issues"] == []
+    assert event["observation_sample"] == {
+        "instance": sample["instance"], "sequence": sample["sequence"],
+    }
     assert not event["truncated"]
     assert "identity_mismatch" not in {item["reason"] for item in event["issues"]}
     assert not psutil.pid_exists(event["pid"])
