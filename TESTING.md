@@ -9,11 +9,15 @@ How to run the plugin test suites, the fast gates to run before a push, and the
 
 ## The turn-key runner
 
-The standalone runner accepts the legacy `agent-index-service` component name
-as an alias for `services/index`. It normalizes the alias before environment
+The standalone runner accepts the legacy `agent-index-service` and
+`agent-dispatch-service` component names as aliases for `services/index` and
+`services/dispatch`, respectively. It normalizes aliases before environment
 admission, dependency preparation, and smoke/full selection, so a released
 promotion workflow can validate a development snapshot after the service move.
-New invocations should use `services/index`.
+New invocations should use the canonical service paths. The native runner
+contract executes both aliases in canonical contained fixture environments
+from an isolated parent whose pytest dependencies reside outside its interpreter
+scheme, exercising the layered dependency layout without installing packages.
 
 The review-request workflow's fast contract uses
 `node --test tools/test_copilot_review_gate.cjs`. To exercise its exact script

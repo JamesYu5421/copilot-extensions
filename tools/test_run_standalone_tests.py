@@ -5,6 +5,8 @@ import json
 import os
 import subprocess
 import sys
+import sysconfig
+import venv
 from pathlib import Path
 
 import pytest
@@ -82,18 +84,139 @@ def test_manager_preparation_retains_source_payload_layout(tmp_path, monkeypatch
     assert calls[-1][-2:] == ["--editable", str(tmp_path / "worktree-manager") + "[dev]"]
 
 
-def test_prepare_rejects_host_interpreter_before_admission(tmp_path, monkeypatch):
+@pytest.mark.parametrize("component", [
+    "services/index", "agent-dispatch-service",
+])
+def test_prepare_rejects_host_interpreter_before_admission(tmp_path, monkeypatch, component):
     monkeypatch.setattr(runner, "REPO", tmp_path)
     called = []
     monkeypatch.setattr(runner, "acquire", lambda wait, root: called.append(wait))
 
     with pytest.raises(SystemExit) as exc:
         runner.main([
-            "services/index", "--prepare", "--python", str(tmp_path / "host" / "python")
+            component, "--prepare", "--python", str(tmp_path / "host" / "python")
         ])
 
     assert exc.value.code == 2
     assert called == []
+
+
+def test_legacy_dispatch_name_uses_canonical_preparation_lease_and_tests(tmp_path, monkeypatch):
+    legacy, canonical = "agent-dispatch-service", "services/dispatch"
+    monkeypatch.setattr(runner, "REPO", tmp_path)
+    root = tmp_path / canonical
+    (root / "tests").mkdir(parents=True)
+    python = runner.default_python(canonical)
+    events = []
+
+    class Lease:
+        def release(self):
+            events.append(("release",))
+
+    def acquire(wait, environment_root):
+        assert environment_root == python.parent.parent.resolve()
+        assert environment_root.is_dir()
+        events.append(("lease", wait))
+        return Lease()
+
+    def prepare(component, selected_python, *, smoke):
+        assert component == canonical
+        assert selected_python == python
+        assert smoke is False
+        events.append(("prepare", smoke))
+        python.parent.mkdir(parents=True, exist_ok=True)
+        python.touch()
+        (python.parent.parent / "pyvenv.cfg").touch()
+
+    def run(command, **kwargs):
+        assert command[:5] == [str(python), "-I", "-m", "pytest", "-q"]
+        assert kwargs["cwd"] == root
+        assert kwargs["env"]["COPILOT_EXTENSIONS_TEST_CONTAINED"] == "1"
+        assert all(Path(path).is_relative_to(root / "tests") for path in command[5:-2])
+        assert command[5] == str(root / "tests")
+        events.append(("run",))
+        return 0
+
+    monkeypatch.setattr(runner, "acquire", acquire)
+    monkeypatch.setattr(runner, "prepare", prepare)
+    monkeypatch.setattr(runner, "run_contained", run)
+    args = [legacy, "--prepare", "--admission-wait", "60"]
+    assert runner.main(args) == 0
+    assert events == [("lease", 60.0), ("prepare", False), ("run",), ("release",)]
+    assert not (tmp_path / ".test-venvs" / sys.platform / legacy).exists()
+    assert legacy not in runner.STANDALONE_CONSUMERS
+
+
+def fixture_python(environment):
+    venv.EnvBuilder(with_pip=False).create(environment)
+    site = Path(sysconfig.get_path(
+        "purelib", vars={"base": str(environment), "platbase": str(environment)},
+    ))
+    dependency_paths = list(dict.fromkeys([
+        str(Path(pytest.__file__).resolve().parent.parent),
+        sysconfig.get_path("purelib"), sysconfig.get_path("platlib"),
+    ]))
+    (site / "test-harness.pth").write_text(
+        "\n".join(dependency_paths) + "\n", encoding="utf-8",
+    )
+    return environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def exercise_native_legacy_service_cli(tmp_path):
+    pairs = runner.COMPONENT_ALIASES
+    for canonical in pairs.values():
+        root = tmp_path / canonical
+        tests = root / "tests"
+        tests.mkdir(parents=True)
+        environment = tmp_path / ".test-venvs" / sys.platform / canonical
+        fixture_python(environment)
+        (tests / "test_contract.py").write_text(
+            "import os, sys, pytest\nfrom pathlib import Path\n"
+            "def test_contract():\n"
+            f"    assert Path.cwd() == Path({str(root)!r})\n"
+            f"    assert Path(sys.prefix).resolve() == Path({str(environment.resolve())!r})\n"
+            f"    assert Path(pytest.__file__).resolve() == Path({str(Path(pytest.__file__).resolve())!r})\n"
+            "    assert os.environ['COPILOT_EXTENSIONS_TEST_CONTAINED'] == '1'\n"
+            "    Path('executed.txt').write_text('canonical')\n",
+            encoding="utf-8",
+        )
+    script = (
+        "import importlib.util, sys\nfrom pathlib import Path\n"
+        f"sys.path.insert(0, {str(SCRIPT.parent)!r})\n"
+        f"spec = importlib.util.spec_from_file_location('standalone_runner', {str(SCRIPT)!r})\n"
+        "runner = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(runner)\n"
+        f"runner.REPO = Path({str(tmp_path)!r})\n"
+        f"for legacy in {tuple(pairs)!r}:\n"
+        "    assert runner.main([legacy, '--timeout', '10']) == 0\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", script], capture_output=True, text=True, timeout=30,
+        **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    for legacy, canonical in pairs.items():
+        assert (tmp_path / canonical / "executed.txt").read_text() == "canonical"
+        assert not (tmp_path / ".test-venvs" / sys.platform / legacy).exists()
+
+
+def test_native_legacy_service_cli_runs_canonical_tests_without_separate_environments(tmp_path):
+    python = fixture_python(tmp_path / "harness")
+    script = (
+        "import importlib.util, sys, sysconfig, pytest\nfrom pathlib import Path\n"
+        f"sys.path.insert(0, {str(SCRIPT.parent)!r})\n"
+        "assert Path(pytest.__file__).resolve().parent.parent != "
+        "Path(sysconfig.get_path('purelib')).resolve()\n"
+        f"spec = importlib.util.spec_from_file_location('fixture_tests', {str(Path(__file__).resolve())!r})\n"
+        "fixture = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(fixture)\n"
+        f"fixture.exercise_native_legacy_service_cli(Path({str(tmp_path)!r}))\n"
+    )
+    result = subprocess.run(
+        [str(python), "-I", "-c", script], capture_output=True, text=True, timeout=30,
+        **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_prepare_rejects_managed_launcher_with_host_environment(tmp_path, monkeypatch):
@@ -208,10 +331,13 @@ def test_unknown_component_is_rejected_before_admission(monkeypatch):
     assert exc.value.code == 2
 
 
-def test_smoke_rejects_undefined_component_before_admission(monkeypatch):
+@pytest.mark.parametrize("component", [
+    "worktree-manager", "services/dispatch", "agent-dispatch-service",
+])
+def test_smoke_rejects_undefined_component_before_admission(monkeypatch, component):
     monkeypatch.setattr(runner, "acquire", lambda wait, root: pytest.fail("unexpected admission"))
     with pytest.raises(SystemExit) as exc:
-        runner.main(["worktree-manager", "--smoke"])
+        runner.main([component, "--smoke"])
     assert exc.value.code == 2
 
 
