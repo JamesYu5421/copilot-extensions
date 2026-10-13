@@ -791,6 +791,89 @@ declaration, repository, or template is edited, and no daemon is started.
 surface used by the supervised child. Normal deployments declare the emitter
 rather than wiring cron, a Scheduled Task, or another external timer.
 
+### Registered repository resources
+
+Repository-owned declarations can refer to `repo:<registered-name>:<relative-path>`
+for emitter/evaluator argv resources and execution `cwd`, script-forge
+`command`/`cwd`, effort-driver `state_root`, and recipe `extends:`. These
+references remain unchanged in declarations and generated emitter specs; the
+concrete root is derived at use time from the owning repository registry.
+Paths must remain within that root, including after symlink resolution.
+One validation or script invocation uses a transient root snapshot shared by
+execution context, argv, cwd and effort state. A recipe chain likewise shares
+its resolved roots for identity, document reads and nested references.
+Inherited relative emitter cwd values retain their named repository authority,
+including placeholders filled by a later hop. Discovery's field-provenance
+walk and recipe merge share that same snapshot. Repository class is checked
+per use: a reference checkout may supply read-only effort state or recipe
+content, but an execution use of the same cached root is refused.
+Registry lookups share a 15-second execution budget rather than receiving a
+new full budget per field. Finite probes own a non-breakaway Windows Job or
+POSIX process group. POSIX keeps the leader unreaped until group retirement,
+using kernel child custody rather than signaling a potentially reused PID;
+unknown custody is refused. Timeout teardown gets at most one additional second and
+unconfirmed teardown is an explicit error. These bounds are separate from
+the script execution timeout. A standby emitter does no resource lookup before
+acquiring its schedule lease. Expanding repository/effort loops, loading or
+registering a builtin emitter, and validating a standby tick check declaration
+shape only. Expanded specs preserve the declared worker identity and resource
+context; registry, worker-identity and filesystem resolution occur in the held tick.
+
+Shape-only validation still parses resource syntax in emitter argv, cwd and
+side-load argv, and inline evaluator argv/cwd. Malformed resources are refused
+at loading or registration; valid syntax does not require a locally available
+checkout before admission.
+
+Windows Job custody has native Windows coverage; Linux unreaped-leader custody
+has native Linux coverage. macOS custody remains unverified: named-resource
+probes require Python's `waitid` and `WNOWAIT` support and refuse before spawning
+when those primitives are absent. There is no PID-only or uncustodied fallback.
+
+Repository and effort loops may set `execution_repo: tools` to bind their
+script/worker-identity context to a registered repository. This is independent
+of `repo`, which continues to identify the forge/task lane. For example:
+
+```yaml
+kind: evaluator
+name: verify-work
+spec:
+  repo: example/project
+  evaluator_ref: verify-work
+  evaluator_spec:
+    cwd: "repo:tools:."
+    scripts:
+      verify-work: ["python", "repo:tools:scripts/verify.py"]
+    timeout_seconds: 30
+```
+
+An identity-only discovery pointer uses the same registration:
+
+```bash
+agent-dispatch registrar add-pointer tools --kind repo --repository tools
+```
+
+The stored pointer contains `repository`, not a second checkout `location`.
+Explicitly migrating an existing repo pointer to the same registered root
+preserves its effective owner and lane aliases, materializing an implicit
+checkout-derived owner so registration identities do not change. A different target remains a retarget,
+not an inferred migration; an unavailable legacy target requires provenance
+verification before replacement. Legacy setup writers cannot downgrade a named
+pointer back to a checkout path; changing a named target requires an explicit
+registered repository name.
+
+Named resources require the optional agent-worktrees integration's
+`repos find <name> --registered-only --json` contract. Missing, malformed or
+duplicate registrations, absent local checkouts and older peers fail explicitly;
+no PATH/ancestor/srcroot discovery substitutes for registration. Acquire or
+adopt an absent checkout through its owner's standard `repos clone`/adoption
+flow before retrying. Read-only discovery never clones or registers it.
+Reference and knowledge registrations may supply read-only recipes and effort
+state, but cannot supply execution context. Active named registrar pointers must
+use worktree or singleton registrations: discovery refuses read-only classes
+before expanding declarations into executable units or implicit checkout paths.
+Existing standalone non-repository commands and legacy
+path declarations remain compatible; migration is explicit, not a startup rewrite.
+
 ### Repository reviewer loops (`agent-dispatch reviewer-loop`)
 
 A repository can compose its review source, lifecycle evaluator, and bounded

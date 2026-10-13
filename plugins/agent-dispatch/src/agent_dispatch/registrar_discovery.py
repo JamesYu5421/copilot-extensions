@@ -41,6 +41,12 @@ from . import repo_config
 from .install_paths import install_dir as dispatch_install_dir
 from .registrar import ProfileDeclaration, RegistrarError
 from .registrar_document import expand_declaration_document  # noqa: F401 -- public validation seam
+from .repository_resources import (
+    RepositoryResourceSnapshot,
+    is_repository_resource,
+    registered_repository_root,
+)
+from .registrar_pointer import Pointer
 from .registrar_lane_aliases import (  # noqa: F401 -- re-exported for existing call sites/tests
     ENFORCE_REGISTERED_REPOS_ENV,
     _derive_git_remote_alias,
@@ -88,94 +94,6 @@ def registrar_dir() -> Path:
 def pointers_file(base: Path | None = None) -> Path:
     """Path of the pointer-registry JSON file."""
     return (base or registrar_dir()) / "pointers.json"
-
-
-@dataclass(frozen=True)
-class Pointer:
-    """A recorded location to read declarations from (the registry's atom).
-
-    ``location`` is a directory of declaration documents. ``kind`` distinguishes a
-    plain ``dir`` pointer from a ``repo`` pointer (whose ``location`` is a repo root
-    and whose declarations live under :data:`INREPO_SUBDIR`). ``owner`` is provenance
-    stamped onto every declaration read through this pointer.
-
-    ``aliases`` are canonical lane identities (``identity.canonicalize_remote``
-    shape, e.g. ``host/owner/name``) this ``repo``-kind pointer is agent-backed
-    for -- the actual, trustworthy repo identity. ``name`` is a free-form label
-    (the registrar CLI accepts any name; it is not derived from or validated
-    against the repo's real remote), so it must never itself be treated as a
-    repo identity -- see :func:`agent_dispatch.queue_agent_backed_repo.
-    AgentBackedRepoMixin._require_agent_backed_repo`, which matches a task's
-    lane against this set, never against pointer ``name``\\ s.
-    """
-
-    name: str
-    location: str
-    kind: str = "dir"
-    owner: str | None = None
-    aliases: tuple[str, ...] = ()
-
-    def resolved_location(self) -> Path:
-        """The directory to scan for declaration documents.
-
-        For a ``repo`` pointer that is the repo root's canonical
-        ``.copilot-extensions/agent-dispatch/registrar`` directory with legacy
-        ``.agent-dispatch/registrar`` fallback; for a ``dir`` pointer it is the
-        location itself.
-        """
-        base = Path(self.location).expanduser()
-        if self.kind == "repo":
-            return repo_config.selected_repo_surface_dir(base, "registrar")
-        return base
-
-    def effective_owner(self) -> str:
-        """Provenance token for declarations read here (explicit owner, else derived)."""
-        if self.owner:
-            return self.owner
-        stem = Path(self.location).expanduser().name or self.name
-        return f"repo:{stem}" if self.kind == "repo" else f"pointer:{self.name}"
-
-    def to_dict(self) -> dict[str, str | list[str]]:
-        d: dict[str, str | list[str]] = {
-            "name": self.name,
-            "location": self.location,
-            "kind": self.kind,
-        }
-        if self.owner:
-            d["owner"] = self.owner
-        if self.aliases:
-            d["aliases"] = list(self.aliases)
-        return d
-
-    @classmethod
-    def from_dict(cls, data: Mapping) -> Pointer:
-        if not isinstance(data, Mapping):
-            raise RegistrarError(f"pointer: expected a mapping, got {type(data).__name__}")
-        name = data.get("name")
-        location = data.get("location")
-        if not isinstance(name, str) or not name:
-            raise RegistrarError("pointer: 'name' is required and must be a non-empty string")
-        if not isinstance(location, str) or not location:
-            raise RegistrarError("pointer: 'location' is required and must be a non-empty string")
-        kind = data.get("kind", "dir")
-        if kind not in ("dir", "repo"):
-            raise RegistrarError(f"pointer.kind: must be 'dir' or 'repo', got {kind!r}")
-        owner = data.get("owner")
-        if owner is not None and not isinstance(owner, str):
-            raise RegistrarError(f"pointer.owner: expected a string, got {owner!r}")
-        raw_aliases = data.get("aliases", [])
-        if not isinstance(raw_aliases, list) or not all(
-            isinstance(a, str) and a for a in raw_aliases
-        ):
-            raise RegistrarError("pointer.aliases: expected a list of non-empty strings")
-        return cls(
-            name=name,
-            location=location,
-            kind=kind,
-            owner=owner or None,
-            aliases=tuple(raw_aliases),
-        )
-
 
 
 def repo_pointer(
@@ -292,26 +210,31 @@ def ensure_pointer(pointer: Pointer, base: Path | None = None) -> Pointer:
 
 def add_pointer(
     name: str,
-    location: str | Path,
+    location: str | Path | None = None,
     *,
     kind: str = "dir",
     owner: str | Any | None = _UNSET,
     aliases: Iterable[str] | None = None,
     base: Path | None = None,
+    repository: str | None = None,
 ) -> Pointer:
     """Serialize a pointer read-modify-write, preserving unrelated sources."""
     with _pointer_transaction(base):
-        return _add_pointer(name, location, kind=kind, owner=owner, aliases=aliases, base=base)
+        return _add_pointer(
+            name, location, kind=kind, owner=owner, aliases=aliases,
+            base=base, repository=repository,
+        )
 
 
 def _add_pointer(
     name: str,
-    location: str | Path,
+    location: str | Path | None = None,
     *,
     kind: str = "dir",
     owner: str | Any | None = _UNSET,
     aliases: Iterable[str] | None = None,
     base: Path | None = None,
+    repository: str | None = None,
 ) -> Pointer:
     """Add (or replace) a pointer by ``name`` and persist. Returns the stored pointer.
 
@@ -342,14 +265,55 @@ def _add_pointer(
     """
     if not name or not all(c.isalnum() or c in "-_" for c in name):
         raise RegistrarError(f"pointer name {name!r}: use only letters, digits, '-' and '_'")
-    resolved_location = str(Path(location).expanduser())
+    if repository is not None:
+        if location is not None or kind != "repo":
+            raise RegistrarError("registered repository pointer requires kind 'repo' without location")
+        target = registered_repository_root(repository)
+        resolved_location = ""
+    else:
+        if location is None:
+            raise RegistrarError("pointer location is required without a registered repository")
+        target = Path(location).expanduser()
+        resolved_location = str(target)
     existing = load_pointers(base)
     current = next((p for p in existing if p.name == name), None)
+    if (
+        current is not None and current.repository is not None
+        and repository is None and current.kind == kind == "repo"
+    ):
+        try:
+            same_root = target.resolve(strict=True) == current.repo_root()
+        except (OSError, RuntimeError) as exc:
+            raise RegistrarError(f"pointer {name!r} legacy target could not be verified: {exc}") from exc
+        if not same_root:
+            raise RegistrarError(
+                f"pointer {name!r} uses a registered repository; retarget it by "
+                "repository name, not by a checkout path"
+            )
+        repository = current.repository
+        resolved_location = ""
     retargeted = current is not None and (
         current.location != resolved_location or current.kind != kind
+        or current.repository != repository
     )
+    if (
+        retargeted and current is not None and current.kind == kind == "repo"
+        and current.repository is None and repository is not None
+    ):
+        try:
+            retargeted = Path(current.location).expanduser().resolve(strict=True) != target
+        except (OSError, RuntimeError) as exc:
+            raise RegistrarError(
+                f"pointer {name!r} legacy target is unavailable; verify migration "
+                f"provenance before changing its repository identity: {exc}"
+            ) from exc
     if owner is _UNSET:
         resolved_owner = current.owner if (current is not None and not retargeted) else None
+        if (
+            current is not None and not retargeted
+            and current.repository is None and repository is not None
+        ):
+            resolved_owner = current.effective_owner()
     else:
         resolved_owner = owner
     if aliases is not None:
@@ -365,12 +329,13 @@ def _add_pointer(
     elif current is not None and not retargeted:
         alias_tuple = current.aliases  # same target -- preserve, never silently discard
     elif kind == "repo":
-        derived = _derive_git_remote_alias(Path(resolved_location))
+        derived = _derive_git_remote_alias(target)
         alias_tuple = (derived,) if derived else ()
     else:
         alias_tuple = ()
     pointer = Pointer(
-        name=name, location=resolved_location, kind=kind, owner=resolved_owner, aliases=alias_tuple
+        name=name, location=resolved_location, kind=kind, owner=resolved_owner,
+        aliases=alias_tuple, repository=repository,
     )
     Pointer.from_dict(pointer.to_dict())  # validate kind/shape via the loader
     if current == pointer:
@@ -425,6 +390,8 @@ def _resolve_declaration_paths(
         return declaration
     spec = dict(declaration.spec)
     cwd = spec.get("cwd")
+    if is_repository_resource(cwd):
+        return declaration
     is_absolute = (
         Path(cwd).is_absolute()
         or PurePosixPath(cwd).is_absolute()
@@ -443,6 +410,8 @@ def _field_defining_hop_is_cross_repo(
     base_dir: Path,
     repo_root: Path,
     _chain: tuple[str, ...] = (),
+    snapshot: RepositoryResourceSnapshot | None = None,
+    _base_resource: str | None = None,
 ) -> bool:
     """Walk an ``extends:`` chain to find the *nearest* hop that actually
     defines ``field`` in its own raw ``forge`` mapping, and report whether
@@ -464,9 +433,18 @@ def _field_defining_hop_is_cross_repo(
     """
     if not isinstance(ref, str) or not ref:
         return False  # malformed; let resolve_extends raise its own clear error later
-    from .registrar_recipes import _MAX_CHAIN_DEPTH, _ref_identity, resolve_recipe_ref
+    from .registrar_recipes import (
+        _MAX_CHAIN_DEPTH, _ref_identity, _read_recipe_document, resolve_recipe_ref,
+    )
+    from .repository_resources import relative_repository_resource, split_repository_resource
 
-    identity, ref_path = _ref_identity(ref, base_dir=base_dir)
+    if (
+        _base_resource is not None and not ref.startswith(("global:", "plugin:", "repo:"))
+        and not PurePosixPath(ref).is_absolute() and not PureWindowsPath(ref).is_absolute()
+    ):
+        ref = relative_repository_resource(_base_resource, ref)
+    snapshot = snapshot or RepositoryResourceSnapshot(execution=False)
+    identity, ref_path = _ref_identity(ref, base_dir=base_dir, snapshot=snapshot)
     if identity in _chain or len(_chain) >= _MAX_CHAIN_DEPTH:
         # A cyclic/too-deep chain is `resolve_extends`'s own error to
         # raise later -- don't manufacture a different one here.
@@ -476,7 +454,10 @@ def _field_defining_hop_is_cross_repo(
     hop_is_cross_repo = ref_path is None or not (
         ref_path == repo_root or repo_root in ref_path.parents
     )
-    template = resolve_recipe_ref(ref, base_dir=base_dir)
+    template = (
+        _read_recipe_document(ref_path, ref=ref)
+        if ref_path is not None else resolve_recipe_ref(ref, base_dir=base_dir)
+    )
     if not isinstance(template, Mapping):
         return False
     hop_forge = template.get("forge")
@@ -486,12 +467,18 @@ def _field_defining_hop_is_cross_repo(
     if "extends" not in template:
         return False
     next_base_dir = ref_path.parent if ref_path is not None else base_dir
+    next_base_resource = None
+    if is_repository_resource(ref):
+        name, relative = split_repository_resource(ref)
+        next_base_resource = f"repo:{name}:{PurePosixPath(relative).parent}"
     return _field_defining_hop_is_cross_repo(
         field,
         template.get("extends"),
         base_dir=next_base_dir,
         repo_root=repo_root,
         _chain=(*_chain, identity),
+        snapshot=snapshot,
+        _base_resource=next_base_resource,
     )
 
 
@@ -672,7 +659,11 @@ def discover_trusted(
     for pointer in pts:
         owner = pointer.effective_owner()
         if pointer.kind == "repo":
-            declarations = read_repo_location_layers(pointer.location, owner=owner)
+            root = (
+                registered_repository_root(pointer.repository, execution=True)
+                if pointer.repository is not None else pointer.repo_root()
+            )
+            declarations = read_repo_location_layers(root, owner=owner)
         else:
             location = pointer.resolved_location()
             # A supported dir pointer may point directly at an in-repo

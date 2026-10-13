@@ -4,7 +4,7 @@
 - **Repo:** copilot-extensions
 - **Branch(es):** Independent implementation worktrees; sequential merges.
 - **Created:** 2026-10-12
-- **Status:** Draft
+- **Status:** Active
 - **Vision:** agent-dispatch durable results, task/session attachment history and
   recoverable goals; plugin-services bounded work and single-owner lifecycle;
   registry-resolved configuration.
@@ -97,7 +97,7 @@ No private host, checkout, task or session identifiers are needed upstream.
 - [x] Deduplicate category, supervisor and registered-resource scopes and claim
   #6466, #6467, #6470 and #6471.
 - [x] Identify #6421 as the existing scalar writer/selected-repair implementation.
-- [ ] Review and merge this proposal before runtime implementation.
+- [x] Review and merge this proposal before runtime implementation.
 - [ ] Reconcile category-specific presentation to the existing dispatch vision;
   land any needed standing-intent extension before realizing it.
 
@@ -201,3 +201,144 @@ requested contract.
   legacy repair; cooperation replaces a competing implementation.
 - Opened the distinct coordination issues above. No runtime implementation,
   retention change, service update or worktree removal is part of this proposal.
+
+### 2026-10-13 - Reviewed proposal and implementation ownership
+
+- Proposal #6472 merged after an actual owner-authored clean `COMMENTED`
+  Copilot review and passing required CI. The full agentic review lane reported
+  a runner-start timeout; the available Lite review reported zero findings.
+- Began isolated category-intent reconciliation, bounded-supervisor and
+  registered-resource slices. Each implementation uses its own source worktree;
+  the coordinator retains serial merge and deployment obligations.
+- Existing #6421 scalar-repair ownership and the lifecycle owners remain intact.
+  Category realization remains gated on standing-intent reconciliation.
+
+### 2026-10-13 - Registered-resource review corrections
+
+- #6531's first implementation review identified separate root lookups across
+  validation fields, pre-lease emitter resolution and recipe identity/document
+  reads. Five failing regressions reproduced those boundaries under a moving
+  registry before the fixes.
+- One transient resolution context now binds each validation/invocation and
+  recipe chain to cached roots and a shared lookup budget. A standby emitter
+  performs no lookup before acquiring its lease. Preserved public recipe and
+  declaration seams while extracting focused modules, without raising size
+  ceilings.
+- Finite metadata probes now hold native process-tree custody through captured
+  pipe EOF. A real Windows test exercises a leader that exits while its
+  descendant retains the pipes; timeout closes the non-breakaway Job and proves
+  the descendant has exited. This is finite-command custody, not independent
+  master-watchdog delivery.
+- Validation includes 421 dispatch compatibility tests, 19 repository-owner/
+  clone tests and 42 resource/capture tests after the finite-probe correction.
+  Native headless, module-size and fatal-lint gates pass. Review, promotion,
+  authorized rollout and actual adopter migration remain outstanding.
+
+### 2026-10-13 - Registered-resource provenance and custody follow-through
+
+- The next #6531 review exposed five remaining boundaries: derived recipe cwd
+  lost its repository class, reference effort state was treated as execution,
+  builtin loading/standby validation still resolved resources, the field
+  provenance walk used different roots, and POSIX retirement could signal a
+  reaped leader's reused PID.
+- Added failing regression coverage before correction. Named recipe directories
+  now survive relative nesting and delayed placeholders as named resources.
+  The field walk and merge share roots; cached class metadata is checked per
+  read/execution use. Builtin spec loading and standby ticks validate shape,
+  deferring identity and filesystem resolution to the held tick.
+- POSIX captured-pipe handling retains the original leader unreaped until group
+  retirement. Kernel child custody fences signaling without an external identity
+  query; reaped or unknown custody refuses cleanup. Pipe EOF alone does not
+  prematurely terminate a still-running leader.
+- The affected consumer suites pass 418 tests on Windows; three native POSIX
+  tests await the existing Linux CI lane. Native Windows containment remains
+  exercised. Fatal CI lint, module-size, headless and install-contract checks
+  pass. This is still source validation, not release, adoption or the separate
+  master-watchdog completion gate.
+
+### 2026-10-13 - Same-root implicit owner preservation
+
+- Review of #6531 identified implicit checkout-derived owners changing during
+  identity-only pointer migration when the checkout and registered names differ.
+  The new regression failed before correction; migration now materializes the
+  existing effective owner without changing explicit owner overrides.
+- Registrar/resource consumer coverage passes 137 tests on Windows with three
+  native POSIX skips; fatal lint and the install contract pass. The preceding
+  revision's native Linux agent-dispatch CI job passed its complete suite.
+- Required CI remains blocked by the independently tracked Windows launch
+  failure (#6266, owned by #6274) and a distinct MCP routing-publication failure.
+  Existing owners have been contacted before any overlapping implementation.
+  No merge, release, deployment, or recovery-record mutation is claimed.
+
+### 2026-10-13 - MCP cutover CI readiness prerequisite
+
+- Traced #6548 to the integration fixture accepting `active.json` existence.
+  Routing intentionally writes conservative custody history before the new
+  active route, so file existence does not prove control-endpoint publication.
+- The fixture now waits within its original startup deadline for the exact
+  spawned daemon's routing endpoint. Real cutover, predecessor exit, handle
+  flip, and data-plane assertions remain unchanged; production routing and
+  the separate #6533 orphan-watchdog investigation remain untouched.
+- Windows cutover coverage passes 27 tests, with eight native POSIX skips;
+  fatal lint passes. Native Linux CI must exercise the changed real-process
+  test before merge. No installation behavior changes, so a fresh-machine
+  installer scenario is not applicable. No admitted external Linux venue is
+  available; the existing native Linux CI lane is the integration witness.
+- The non-blocking platform documentation finding now distinguishes native
+  Windows and Linux evidence from unverified macOS custody. Missing unreaped
+  child primitives refuse before spawning; no unsafe fallback is promised.
+
+### 2026-10-13 - Discovery class and strict metadata boundaries
+
+- A registered read-only pointer lost its class when discovery expanded relative
+  executable fields against a bare path. Discovery now checks the registered
+  active-source class before expansion; reference and knowledge registrations
+  remain usable for recipe/state reads, never execution. This chooses explicit
+  source refusal rather than inventing path-based provenance after expansion.
+- Strict owner resolution now rejects non-string remotes before returning the
+  ready response. Empty or omitted string remotes and legacy non-strict readers
+  retain their prior behavior.
+- Three dispatch and three metadata regressions failed before the source fixes.
+  Final consumer suites pass 144 dispatch tests and 20 owner tests, including
+  cached read-only checks, inherited recipe/state reads and exact negative CLI
+  responses with unchanged registry bytes. Fatal lint, module ceilings and the
+  install contract pass.
+- Corrected MCP native Linux CI and the Windows launch check passed on the
+  preceding head. No unconditional retry or bypass was used; the tracked
+  independent Windows launch investigation remains owned separately.
+
+### 2026-10-13 - Registration validation remains pre-admission
+
+- Review identified eager callers of emitter validation at registration and
+  declaration loading. Nine validator/registration/declaration regressions
+  reproduced registry probes before any schedule lease.
+- Emitter validation now defaults to shape-only; held builtin ticks retain their
+  execution-time validation and resource resolution. Context forwarding covers
+  both shape-only and explicit resolution without changing cwd provenance.
+- The affected registration, declaration, resource and emitter contracts pass
+  273 tests; fatal lint and whitespace checks pass.
+
+### 2026-10-13 - Direct resource grammar admission
+
+- Twenty emitter/evaluator loader, validator, registry and declaration cases
+  reproduced accepting invalid named-resource grammar before execution.
+- A shared syntax-only helper now covers direct emitter argv/cwd/side-load,
+  evaluator registry argv/cwd, inline evaluator registration and existing
+  script-forge shape validation. No registry or filesystem lookup is added.
+  Positive admission coverage preserves valid not-yet-local named resources.
+- Final script/resource/registration consumer coverage passes 346 tests,
+  including positive not-yet-local admission. Fatal lint, module ceilings,
+  install-contract and whitespace checks pass.
+
+### 2026-10-13 - High-level expansion defers execution resources
+
+- Actual repository/effort loop expansion still called execution validation
+  before lease admission. Nine regressions reproduced the eager probe through
+  direct expansion, decoded-document expansion and trusted registrar discovery.
+- Both expansion callers now use shape-only validation. Generated specs retain
+  the original loop declaration, including named execution/state resources,
+  script-forge context and deferred worker identity. Held execution remains the
+  resource-resolution boundary.
+- Adjacent loop, resource, declaration and registrar contracts pass 350 tests.
+  This is source evidence, not release or deployment; adoption remains gated on
+  the reviewed promoted contract and actual consumer readiness.
