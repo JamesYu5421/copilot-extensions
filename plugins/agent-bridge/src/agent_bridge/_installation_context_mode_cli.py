@@ -56,7 +56,7 @@ def resolve_installation_mode(
     pid_is_live: Callable[[int], bool] | None = None,
     _publish_pointer: bool = True,
 ) -> dict[str, Any]:
-    """Resolve desired and actual installation mode without mutating state."""
+    """Resolve governance and publish its ready advisory runtime-root pointer."""
 
     environment = environment if environment is not None else os.environ
     current_environment, profile = _current_environment(
