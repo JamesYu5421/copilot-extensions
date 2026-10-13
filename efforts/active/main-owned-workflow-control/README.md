@@ -536,3 +536,32 @@ credential changes, broad policy weakening or unreviewed releases.
 - The campaign remains Active. First-wave measurement, independent-control
   preservation/admission, platform coverage and the two-release-cycle
   validation plan still require their own completion evidence.
+
+### 2026-10-13 - Inert preservation prerequisite prepared
+
+- #6332's signer transitively depends on the full validation jobs through its
+  builder. Its signed package index already binds dev/main/content, but does
+  not expose an authoritative suite/recipe evidence contract. It is not enough
+  by itself to remove candidate validation; the existing gates remain intact.
+- Prepared strict pinned-main preservation in the existing composer, shared
+  by trusted artifact recomposition. No manifest is active. Version 1 admits
+  only exact top-level workflow files and automatically preserves its own
+  declaration; dev cannot introduce or redefine that declaration.
+- Real-Git cases prove pinned rather than moving-main authority, exact blobs
+  despite candidate text/filemode policy, provenance, intentional retirement
+  and equivalent artifact recomposition. Negative cases cover unsafe Git
+  types, paths, aliases, missing targets and ambiguous declarations.
+- The contracts join existing path-gated Linux/Windows artifact jobs, not a
+  new workflow or required context. Source review and covering release remain
+  outstanding; atomic freshness, trusted admission, helper compatibility and
+  control-preserving rollback are still prerequisites to later activation.
+- This realizes the explicit-preservation vision item without changing its
+  intent. The repo's fail-loud, smallest-surface and cross-platform patterns
+  apply; no runtime, dependency, credential or branch-policy change is needed.
+- Native PR CI exposed #6322's previously unexplained Windows exit mismatch:
+  captured diagnostics show cold PowerShell compilation exceeding the fixture's
+  ten-second child timeout. Two such children also had only a twenty-second
+  enclosing budget. Repaired the ordinary fixture's nested deadline hierarchy,
+  without weakening any console, stream or exit assertion; the real five-second
+  timeout/tree-reap contract is unchanged. Both native local cases passed.
+  Current-head hosted Windows proof is still required, not waived as a flake.
