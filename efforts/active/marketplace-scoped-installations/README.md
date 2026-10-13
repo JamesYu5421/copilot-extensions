@@ -495,6 +495,58 @@ See [`design.md`](design.md), [`installation-mode-governance.md`](installation-m
 
 ## Journal
 
+### 2026-10-13 — Consumer acceptance merged; reconciliation wrapper is next
+
+- [#6527](https://github.com/ThomasMichon/copilot-extensions/pull/6527)
+  merged after corrected-head Copilot approval with zero open findings and
+  passing required aggregate/lockdown checks.
+- [Native Windows job 115310816437](https://github.com/ThomasMichon/copilot-extensions/actions/runs/38400697289/job/115310816437)
+  actually executed both acceptance steps on the corrected head:
+  the diagnostic/derived/peer selection passed 148 tests and skipped three
+  POSIX-only cases; the real Manager wrapper selection passed both cases.
+  These are step results, not inferences from a generic green job label.
+- Added real-subprocess coverage for Agent Worktrees' private
+  `probe-legacy` helper boundary and public runtime resolution wrapper.
+  Disposable fixtures retain legacy state and exercise absent and retained
+  foreign pointers. An explicit false fixture policy excludes the runner's
+  personal policy without authorizing a cell; resolver results are not
+  mocked. Byte/directory/modification-time snapshots remain unchanged.
+- The first contained run exposed the suite's existing autouse `Path.home`
+  override. Pinned that parent-process seam to the same fixture profile,
+  retained the direct home assertion, and reran the isolated selection:
+  `test-supervisor -- python3 tools/run_tests_in_devcontainer.py agent-worktrees -k runtime_resolution_real_helper_read_only --admission-wait 60 --timeout 120`.
+  Both cases passed in the network-disconnected devcontainer test phase.
+- Added the same focused selection to the existing path-gated Windows lane,
+  preserving the five-minute job budget and a two-minute step bound.
+  Its actual native result, wider reconciliation refusal cases, derived
+  PowerShell/POSIX per-copy CLI proof, release, and installed-copy freshness
+  remain open. No persistent-host restriction or Phase 8 checkbox is lifted.
+- The first native reconciliation step detected PowerShell's host startup
+  JIT profile, not an installation/discovery publisher:
+  `AppData/Local/Microsoft/PowerShell/StartupProfileData-NonInteractive`.
+  PowerShell records this even with `-NoProfile`. The Windows fixture now
+  prepares the ordinary empty host-cache directory and disables .NET profile
+  gathering for that test process only. The complete fixture-home snapshot
+  remains measured, with no cache-path exclusions.
+- Verified the profiling control against a real PowerShell child and a
+  positive control: disabling gathering left the prepared home unchanged;
+  normal gathering created the startup-profile file. The contained
+  reconciliation selection still passed both cases. Content hashes replace
+  raw-byte assertion values to preserve byte-change detection without
+  enormous failure logs. Corrected-head native evidence remains pending.
+- Review still identified a medium-severity POSIX profile escape despite
+  the API approval state: the child resolves its account home through
+  `pwd.getpwuid`, not the parent process's `Path.home` patch. Kept the merge
+  gate closed. The test now pins only that account-directory lookup inside
+  the child and executes the unchanged owned helper CLI through `runpy`.
+  Other passwd fields and real resolver results remain intact.
+- Removed the injected false policy. The real helper now reports the
+  fixture's canonical policy path, authoritative policy evidence, and the
+  established `missing` state for the implicit legacy default. The contained
+  selection passed both cases again. The earlier native profiling fix
+  passed its actual Windows step, but final acceptance still requires
+  fresh evidence and a review clearing the profile-escape finding.
+
 ### 2026-10-13 — Native Windows proof landed; wrapper acceptance remains scoped
 
 - [#6518](https://github.com/ThomasMichon/copilot-extensions/pull/6518)
