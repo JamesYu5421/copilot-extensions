@@ -495,6 +495,31 @@ See [`design.md`](design.md), [`installation-mode-governance.md`](installation-m
 
 ## Journal
 
+### 2026-10-13 — Diagnostic correction merged; native evidence is step-specific
+
+- #6497 merged with a genuine current-head approval and both required
+  checks green. The canonical diagnostic correction and onboarding fixes
+  are landed, not yet proof of promotion or installed runtime behavior.
+- Inspected CI steps rather than equating a green runner job with execution:
+  the Linux guard job ran installation-context smoke, but the generic
+  Windows runner's unrelated conditional test steps were skipped. Native
+  Windows diagnostic acceptance therefore remains pending.
+- Added a path-gated, two-minute diagnostic selection inside the existing
+  Windows runner lane, explicitly using Windows PowerShell 5.1. Linux and
+  Windows share one change-scope detector; no new job, daemon, fleet, or
+  unconditional exhaustive matrix is introduced.
+- The Phase 8 diagnostic prerequisite is not marked complete merely because
+  the source correction merged. Actual native-platform step evidence and
+  covered-wrapper inventory remain required before lifting host restrictions.
+- The first native Windows selection ran and exposed a test fixture using a
+  POSIX activation for the Windows Python API. The resolver correctly
+  refused the foreign environment; the fixture now uses the existing
+  platform-aware environment helper without weakening mutation tripwires.
+  The shared runner's original five-minute budget is retained.
+- That CI attempt also reproduced the unrelated, already tracked Manager
+  routing-lock flake [#6490](https://github.com/ThomasMichon/copilot-extensions/issues/6490).
+  Its ownership is separate; required checks still need to pass.
+
 ### 2026-10-13 — Reviewed defaults plan landed; diagnostic recovery implementation
 
 - Plan amendment #6140 merged after a current-head review cleared the
