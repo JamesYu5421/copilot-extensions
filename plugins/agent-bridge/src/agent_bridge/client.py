@@ -732,25 +732,6 @@ class BridgeClient(SessionStartClientMixin, CliModeClientMixin, SessionStopClien
             {"summary": summary, "phase": phase, "blocker": blocker, "pr": pr},
         ) or {}
 
-    def resolve_live_session(self, handle: str) -> dict[str, Any]:
-        """GET /api/v1/live-sessions/resolve?handle=...; {} if unresolvable.
-
-        Resolves a handle (an exact ``session_id`` OR a **worktree handle**) to
-        its current live session -- the D3 addressing primitive that lets a peer
-        address an agent by worktree and reach whichever session is live now, so
-        ``reply-to`` survives a handoff. Used by ``send`` to detect a live target
-        (worktree handle or session id) before falling back to an ACP agent.
-        """
-        try:
-            return self._request(
-                "GET", "/api/v1/live-sessions/resolve",
-                params={"handle": handle},
-            ) or {}
-        except BridgeClientError as exc:
-            if exc.status == 404:
-                return {}
-            raise
-
     def resolve_live_result_target(self, handle: str) -> dict[str, Any]:
         """Resolve a represented live or wedged target for result inspection."""
         self._require_represented_result_snapshots()
@@ -1405,20 +1386,6 @@ class BridgeClient(SessionStartClientMixin, CliModeClientMixin, SessionStopClien
             params={"caller_id": caller_id},
         ) or {}
 
-    def resolve_remote_live_session(
-        self, host: str, target: str
-    ) -> dict[str, Any]:
-        """Resolve an exact session or worktree handle on a hosting Bridge."""
-        self._require_remote_operations()
-        return self._request(
-            "GET",
-            self._remote_path(
-                host,
-                "/live-sessions/"
-                + urllib.parse.quote(target, safe=""),
-            ),
-        ) or {}
-
     def create_remote_session(
         self,
         host: str,
@@ -1508,9 +1475,19 @@ class BridgeClient(SessionStartClientMixin, CliModeClientMixin, SessionStopClien
         expected_session_id: str | None = None,
         idempotency_key: str | None = None,
         timeout: float = 20.0,
+        reply_to: str | None = None,
+        wait: bool = False,
+        wait_timeout: float = 120.0,
+        qualified_peer: bool = False,
     ) -> dict[str, Any]:
         """Deliver to a represented remote session through the carrier."""
         self._require_remote_commands()
+        from .live_peer_address import peer_operation_timeout
+        from .protocol import QUALIFIED_LIVE_PEER_PROTOCOL_VERSION
+        timeout = peer_operation_timeout(timeout, wait=wait, wait_timeout=wait_timeout)
+        if (qualified_peer or reply_to is not None or wait):
+            if not self.daemon_supports(QUALIFIED_LIVE_PEER_PROTOCOL_VERSION):
+                raise BridgeClientError(426, f"remote peer replies require HTTP protocol {QUALIFIED_LIVE_PEER_PROTOCOL_VERSION}")
         return self._request(
             "POST",
             self._remote_path(
@@ -1527,6 +1504,10 @@ class BridgeClient(SessionStartClientMixin, CliModeClientMixin, SessionStopClien
                 "expected_session_id": expected_session_id,
                 "idempotency_key": idempotency_key,
                 "timeout": timeout,
+                "reply_to": reply_to,
+                "wait": wait,
+                "wait_timeout": wait_timeout if wait else 120.0,
+                **({"qualified_peer": True} if qualified_peer else {}),
             },
             request_timeout=timeout + 15.0,
         ) or {}

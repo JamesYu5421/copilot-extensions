@@ -15,6 +15,31 @@ refuses legacy daemons without an authoritative effective-config snapshot.
 Production capture/attestation is not yet wired; ordinary explicit cutover is
 unchanged. Anonymous health and authenticated control remain distinct contracts.
 
+Windows and WSL on one physical host are independent logical machines.
+The shared machine owner projects a legacy Windows/WSL roster into `host`
+and `host-wsl`, preserving their exact SSH profiles and physical association.
+Bridge applies its missing SSH-alias default only after projection, using each
+logical entry's own key. Explicit aliases (including an empty alias) are retained.
+The bridge's topology loader consumes that projection; its raw parser retains
+legacy parsing compatibility. Known-platform local detection selects a
+projected legacy sibling, while explicitly declared execution spaces still
+require their canonical `local_execution_space` selection. Physical grouping
+is not transport, session or ownership identity.
+The live-session extension obtains the machine key from Agent Worktrees.
+A failed owner lookup remains incomplete and is retried with bounded backoff;
+it never freezes a physical hostname as a guessed logical machine.
+An incomplete lookup explicitly clears the registration's prior targeting
+metadata atomically. Ordinary id-only heartbeats still retain metadata;
+`clear_targeting_metadata: true` opts into session-only addressing until the
+complete logical machine/project/worktree tuple is available again.
+Exact registered session IDs retain lookup precedence, including legacy IDs
+beginning with `live:`. Only a handle without an exact registered match is
+interpreted as a qualified peer address; the prefix does not rename or reserve
+previously accepted session IDs.
+Explicit HTTP/client `qualified_peer: true` opts into tuple-only resolution
+and the new protocol; qualified CLI forwarding supplies it. Prefix text alone
+never upgrades a legacy exact-ID request to a newer carrier operation.
+
 [Session preference authority](docs/session-preferences.md) documents optional
 execution-user defaults, the unchanged caller-settings default, and the
 execution/ACP capability limits.

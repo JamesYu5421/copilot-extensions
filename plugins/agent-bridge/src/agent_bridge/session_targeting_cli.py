@@ -210,7 +210,9 @@ def _send(args: argparse.Namespace) -> None:
         core._submit_and_stream(client, args, target, prompt, caller_id=core._caller_id_for(args))
         return
 
+    from .live_peer_address import peer_target_after_lookup
     live = client.resolve_live_session(target)
+    address = peer_target_after_lookup(target, prompt, live=bool(live))
     if live:
         expected_session_id = getattr(args, "expected_session_id", None)
         # The delivery carries expected_session_id, which an alias-aware daemon checks
@@ -238,6 +240,9 @@ def _send(args: argparse.Namespace) -> None:
             sys.exit(2)
         _deliver_to_live_session(client, args, live["session_id"], prompt)
         return
+    if address is not None:
+        _deliver_to_live_session(client, args, target, prompt, remote_address=address)
+        return
     if getattr(args, "expected_session_id", None):
         raise SendRefused(
             "refused_unavailable", reason="not_found", retryable=False, target=target,
@@ -259,13 +264,8 @@ def _caller_worktree_handle() -> str | None:
 
 
 def _live_reply_to(args: argparse.Namespace) -> str | None:
-    explicit = getattr(args, "reply_to", None)
-    if explicit:
-        return explicit
-    handle = _caller_worktree_handle()
-    if handle:
-        return handle
-    return os.environ.get("AGENT_BRIDGE_SESSION_ID") or os.environ.get("SESSION_ID")
+    from .live_peer_address import caller_reply_address
+    return caller_reply_address(args, lambda: _core()._get_client(), _caller_worktree_handle)
 
 
 def _live_sender_label(args: argparse.Namespace) -> str:
@@ -308,7 +308,8 @@ def _live_message_delivery(args: argparse.Namespace) -> str:
     return getattr(args, "delivery", None) or "steer"
 
 
-def _deliver_to_live_session(client, args: argparse.Namespace, session_id: str, prompt: str) -> None:
+def _deliver_to_live_session(client, args: argparse.Namespace, session_id: str, prompt: str,
+                             *, remote_address=None) -> None:
     from .client import BridgeClientError
     from .send_outcome import emit, live_outcome, refusal_from_live_error
 
@@ -327,17 +328,24 @@ def _deliver_to_live_session(client, args: argparse.Namespace, session_id: str, 
     if expected_session_id:
         delivery_options["expected_session_id"] = expected_session_id
     try:
-        result = client.send_live_message(
-            session_id,
-            sender=sender,
-            body=prompt,
-            reply_to=reply_to,
-            kind=kind,
-            delivery=delivery,
-            wait=wait,
-            wait_timeout=wait_timeout,
-            **delivery_options,
-        )
+        if remote_address is not None:
+            from .live_peer_address import send_remote_peer
+            result = send_remote_peer(
+                client, args, remote_address, sender=sender, reply_to=reply_to,
+                kind=kind, delivery=delivery, prompt=prompt,
+            )
+        else:
+            result = client.send_live_message(
+                session_id,
+                sender=sender,
+                body=prompt,
+                reply_to=reply_to,
+                kind=kind,
+                delivery=delivery,
+                wait=wait,
+                wait_timeout=wait_timeout,
+                **delivery_options,
+            )
     except BridgeClientError as exc:
         refused = refusal_from_live_error(exc, session_id)
         if refused is None:
@@ -952,7 +960,7 @@ def register_session_targeting_commands(sub: argparse._SubParsersAction) -> None
     send_p.add_argument("prompt", nargs="?", default=None, help="Prompt text to send (omit and use --prompt-file for multi-line prompts that shouldn't transit the shell's argv)")
     send_p.add_argument("--prompt-file", dest="prompt_file", default=None, metavar="PATH", help="Read the prompt from PATH (or '-' for stdin) instead of the positional argument. Use this for multi-line prompts to avoid shell argv mangling (e.g. PowerShell word-splitting a prompt at the first embedded double-quote). Mutually exclusive with the positional prompt.")
     send_p.add_argument("--sender", "--from", dest="sender", default=None, help="Attribution label when the target is a live interactive session (default: this caller's worktree/user). Legibility only, not routing.")
-    send_p.add_argument("--reply-to", dest="reply_to", default=None, help="Routable handle a reply should target when delivering to a live session -- a worktree handle (survives handoff) or a session id (default: this caller's own worktree handle, else its session id from the environment). Rendered as the envelope's reply-to.")
+    send_p.add_argument("--reply-to", dest="reply_to", default=None, help="Routable peer reply address: live:<machine>:<project>:<worktree>, a legacy local worktree handle, or an exact session id. Defaults to the caller's registered qualified worktree address. Rendered as the envelope's reply-to.")
     send_p.add_argument("--kind", choices=["prompt", "notify", "status-check"], default="prompt", help="Typed intent when delivering to a live session: 'prompt' (a work directive, default) vs 'notify'/'status-check' (asks only for a terse out-of-band ack, never treated as new work).")
     send_p.add_argument("--notify", action="store_true", help="Shorthand for --kind notify (informational; no work expected).")
     send_p.add_argument("--status-check", dest="status_check", action="store_true", help="Shorthand for --kind status-check (asks for a terse status ack).")
