@@ -251,3 +251,18 @@ No production secret is read or written by the planning slice.
   validation reconciliation are still completion gates.
 - Host installation is owned by the adopter's authorized maintenance lane.
   This effort did not force-update plugins or manually synchronize projections.
+- An explicitly authorized read-only fleet inspection found no existing
+  protected-cache files or owner-key source configuration on either reachable
+  remote Windows target. Two other declared targets could not be reached
+  through their configured tunnel profiles. No remote cache was populated,
+  vault unlocked, software updated, or key created or replaced. The operator
+  selected retaining fleet deployment as an open, blocked item in this effort,
+  rather than provisioning or transferring it. Local success does not close
+  that item.
+- The first post-implementation promotion run
+  [38395806291](https://github.com/ThomasMichon/copilot-extensions/actions/runs/38395806291)
+  failed in unrelated receiving-authority fixtures. A later run
+  [38474138013](https://github.com/ThomasMichon/copilot-extensions/actions/runs/38474138013)
+  uncovered incomplete obligation-settlement fixtures, tracked in #6589-#6592
+  and owned by #6593. No required release gate was bypassed; the trusted source
+  validator is not yet present on main.

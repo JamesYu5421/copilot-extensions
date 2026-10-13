@@ -113,3 +113,19 @@ definition, not infer successful deployment from a same-named check alone.
 - #6296 reviewed and merged before implementation. The rollout refinement
   above was explicitly authorized afterward; it preserves the same trusted
   workflow and accepted publisher boundary while covering existing PRs.
+- #6356 merged after current-head approving review and CI
+  [38388369063](https://github.com/ThomasMichon/copilot-extensions/actions/runs/38388369063).
+  Dev-push CI
+  [38391631615](https://github.com/ThomasMichon/copilot-extensions/actions/runs/38391631615)
+  passed. The implementation includes Markdown/HTML-aware format validation,
+  independently scoped protected-path checks, bounded current-body backfill,
+  shared-head failure fences and peer-departure recovery.
+- The authorized operator-only exception label was defined after confirming
+  it was absent. It was not assigned to or removed from any PR. Its definition
+  does not activate enforcement or waive independent checks.
+- Main promotion remains blocked by unrelated full-suite fixture failures;
+  #6593 owns the latest obligation-settlement correction. The existing
+  no-bypass ruleset still requires only its original workflow-lockdown context.
+  Source-attribution activation is deliberately pending actual deployment and
+  trusted-workflow live negative/body-only repair proof, not merely a dev merge
+  or a same-named check.
