@@ -5,6 +5,7 @@ from __future__ import annotations
 from rich.text import Text
 from textual.app import ComposeResult
 
+from .deferred_row import DeferredRow
 from .engine_helpers import C_BAND, C_BTN_SEL, C_DIM, C_DISABLED, C_ENV, C_FAINT, C_HINT, C_HINT_ON, C_LABEL, C_LOAD, C_META, C_PULSE, C_READY, C_SECTION, C_SPIN, C_TAB_ACTIVE, C_TAB_FOCUS_ON, C_TABOFF, C_WARN, VERSION, VRow, _size_mb
 from .engine_regions import _PickerButtons, _PickerMachine, _PickerNativeData, _PickerPivots, _PickerSegment, _PickerStickyHeader
 
@@ -12,7 +13,7 @@ from .engine_navigation_rendering import PickerNavigationRenderingMixin
 
 
 class PickerScreenRenderingMixin(PickerNavigationRenderingMixin):
-    def build_body(self, width):
+    def build_body(self, width, *, deferred=False):
         vrows = []
         cur_band = None
         cur_section = None
@@ -34,7 +35,8 @@ class PickerScreenRenderingMixin(PickerNavigationRenderingMixin):
 
         sel = self.sel
         if self._kind() == "worktrees":
-            self.worktrees_view.build(add, width, sel)
+            self.worktrees_view.build_chrome(add, width, sel)
+            self.worktrees_view.build_data(add, width, sel, deferred=deferred)
         elif self._kind() == "maintenance":
             self.maintenance_view.build(add, width, sel)
         elif self._kind() == "registered":
@@ -135,7 +137,11 @@ class PickerScreenRenderingMixin(PickerNavigationRenderingMixin):
             vrows.append(vr)
             return vr
 
-        self._current_view().build_data(add, width, use_sel)
+        view = self._current_view()
+        if view is self.worktrees_view:
+            view.build_data(add, width, use_sel, deferred=True)
+        else:
+            view.build_data(add, width, use_sel)
         return vrows
     def _build_chrome_vrows(self, width, sel=None):
         """Chrome-only VRows (machine-scope + button rows) -- no data body.
@@ -432,7 +438,7 @@ class PickerScreenRenderingMixin(PickerNavigationRenderingMixin):
         t.append_text(use)
         t.append(" " * max(0, W - t.cell_len))
         return t
-    def _frame_segments(self):
+    def _frame_segments(self, *, include_body=True):
         """Compute the four screen segments -- header / chrome / body / footer --
         as lists of ``Text`` line-rows, plus the working width ``W`` (#88 NF2).
 
@@ -444,7 +450,7 @@ class PickerScreenRenderingMixin(PickerNavigationRenderingMixin):
         """
         W = self.size.width or 100
         H = self.size.height or 30
-        key = self._render_sig(W, H)
+        key = (self._render_sig(W, H), include_body)
         cache = self._frame_cache
         if cache is not None and cache[0] == key:
             return cache[1]
@@ -452,20 +458,31 @@ class PickerScreenRenderingMixin(PickerNavigationRenderingMixin):
         foot = self.footer(W)
         # chrome rows: title, htabs, header-border, stats, bottom-border, footer
         body_h = max(1, H - len(top) - 4)
-        vrows = self.build_body(W)
-        self._ensure_visible(vrows, body_h)
-        window = vrows[self.top: self.top + body_h]
-        sticky = self._sticky(vrows, body_h)
-        for i, s in enumerate(sticky):
-            if i < len(window):
-                window[i] = s
-            else:
-                window.append(s)
-        body_lines = [vr.text if isinstance(vr, VRow) else vr for vr in window]
-        while len(body_lines) < body_h:
-            body_lines.append(Text(""))
-        more_above = self.top > 0
-        below = len(vrows) - (self.top + body_h)
+        body_lines = []
+        more_above = False
+        below = 0
+        if include_body:
+            vrows = self.build_body(W, deferred=True)
+            self._ensure_visible(vrows, body_h)
+            window = vrows[self.top: self.top + body_h]
+            sticky = self._sticky(vrows, body_h)
+            for i, s in enumerate(sticky):
+                if i < len(window):
+                    window[i] = s
+                else:
+                    window.append(s)
+            body_lines = [vr.text if isinstance(vr, VRow) else vr for vr in window]
+            body_lines = [line.as_text() if isinstance(line, DeferredRow) else line
+                          for line in body_lines]
+            while len(body_lines) < body_h:
+                body_lines.append(Text(""))
+            more_above = self.top > 0
+            below = len(vrows) - (self.top + body_h)
+        elif self._nf_mounted:
+            native = self.query_one("#nf-body-data", _PickerNativeData)
+            y = native.scroll_offset.y
+            more_above = y > 0
+            below = native.virtual_size.height - y - native.size.height
         header_border = self._border_row(W, "▲", more_above)
         bottom_border = self._border_row(W, "▼", below > 0)
         stats = self._stats_row(W)
