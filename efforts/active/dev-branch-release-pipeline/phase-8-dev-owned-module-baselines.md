@@ -41,8 +41,8 @@ The publication-attestation work under #6332 retains its existing owner.
 ## Scope and Design Contract
 
 _(Agent-recommended)_ The authority migration below and its adversarial
-validation scenarios are the proposed mechanism for satisfying the operator's
-prevention request, subject to the normal plan review.
+validation scenarios are the reviewed mechanism for satisfying the operator's
+prevention request (plan PR #6436).
 
 - Baseline maintenance reads one pinned, committed `dev` snapshot as data and
   proposes a baseline-only PR to `dev`. Normal review and contribution CI
@@ -70,8 +70,8 @@ prevention request, subject to the normal plan review.
 
 ## Plan
 
-- [ ] Land this reviewed design before changing the mechanism.
-- [ ] Inspect and reuse the trusted-main admission/implementation pattern and
+- [x] Land this reviewed design before changing the mechanism (PR #6436).
+- [x] Inspect and reuse the trusted-main admission/implementation pattern and
   existing module-size refresh semantics.
 - [ ] Implement pinned-data measurement and reviewed `dev`-targeted
   maintenance, preserving the workflow's release-control trust boundary.
@@ -129,7 +129,38 @@ lock wait used `functools.partial`, but the production call's explicit
 two-second argument overrode that partial keyword. The fixture now sets the
 constant read by that call; production best-effort logging is unchanged. The
 named regression passed through the bounded supervisor on Windows. Required CI
-and plan review remain pending.
+and plan review subsequently passed; PR #6436 merged as `df15d7ce2`.
+
+### 2026-10-13 - Prevention implementation and isolated proofs
+
+The same worktree advanced from the reviewed plan to Git-object measurement
+under trusted policy and a leased dev-only proposal publisher. The producer
+does not check out or execute the measured source's tooling. Its write
+credential is confined to publication; source freshness and proposal ownership
+are independently checked.
+
+The legacy main-baseline admission path is removed from both gate and reminder
+recognition. Targeted Windows contracts passed with explicit Linux-only Bash
+skips, and native Linux executed the actual Bash publisher and admission
+contracts against disposable Git remotes. A real promotion fixture proved
+that dev baseline policy survives modern editable-reference materialization
+and protects both canonical and generated modules.
+
+The first materialization fixture used a retired directory-pointer schema and
+was correctly refused. Replacing that fixture with the supported editable
+reference exercised the actual current generator successfully; production
+materialization and signing code were not changed.
+
+Implementation review, merge, and actual trusted-control rollout remain open.
+No live candidate recovery or production workflow dispatch was performed here.
+
+Independent review identified the steady-state existing-PR race: a branch
+update could change an already-reviewable proposal before a stale-source
+postcheck failed. The publisher now parks existing ready proposals before
+mutation, creates new ones as drafts, and checks source/head freshness before
+review admission. Earlier draft holds are preserved without cross-run
+inference, and armed auto-merge requests are refused. Native Bash regressions
+cover the ordering and stale-source hold; the reviewer verified the named fix.
 
 ## See Also
 

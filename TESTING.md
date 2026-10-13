@@ -9,6 +9,14 @@ How to run the plugin test suites, the fast gates to run before a push, and the
 
 ## The turn-key runner
 
+Dev-owned module-baseline maintenance uses
+`tools/test_prepare_module_baseline.py` with the existing module-size guard
+tests. It reads real committed Git objects under trusted policy and executes the
+workflow's actual Bash publisher against a disposable local remote on Linux.
+The publisher cases prove that `main`, `dev`, and an existing promotion candidate
+remain unchanged, including dev-advancement and exact-lease rejection. Windows
+runs the Git-data cases; Bash publisher cases are explicitly Linux-only.
+
 The review-request workflow's fast contract uses
 `node --test tools/test_copilot_review_gate.cjs`. To exercise its exact script
 against the bundled `actions/github-script` runtime as well, download

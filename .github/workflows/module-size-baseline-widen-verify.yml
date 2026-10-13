@@ -8,6 +8,9 @@
 name: Module size baseline widen verify
 
 on:
+  pull_request:
+    branches: [dev]
+    paths: [tools/module-size-baseline.json]
   workflow_dispatch:
 
 permissions:
@@ -20,15 +23,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v9.0.0
       - name: Install tooling
         run: uv pip install --system --upgrade pip pytest pyyaml
-      - name: Version consistency
-        run: python tools/check-version-consistency.py
+      - name: Reject a stale automation proposal
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.ref == 'automation/module-size-baseline-dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh auth setup-git
+          git fetch --no-tags origin dev
+          source=$(git show -s --format=%P HEAD)
+          if [ "$source" != "$(git rev-parse origin/dev)" ]; then
+            echo "::error::dev advanced since this baseline was measured; refresh the proposal before landing."
+            exit 1
+          fi
       - name: Module size (hard cap + shrink-only baseline)
         run: python tools/check-module-size.py
       - name: Module size guard tests

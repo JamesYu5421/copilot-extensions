@@ -684,7 +684,8 @@ Full design (Request, Context, Plan, Design points, Validation Plan):
 Design and validation contract:
 [phase-8-dev-owned-module-baselines.md](phase-8-dev-owned-module-baselines.md).
 
-- [ ] Review the bounded baseline-authority correction before implementation.
+- [x] Review the bounded baseline-authority correction before implementation
+      (PR #6436).
 - [ ] Make trusted post-merge baseline maintenance propose reviewed changes to
       `dev`, never independently publish baseline changes to `main`.
 - [ ] Preserve trusted-main execution, hard-cap enforcement, and generated-tree
@@ -2666,7 +2667,6 @@ than fully pre-solved in the plan — operator direction: land the plan now
 and resolve those with tests during implementation.
 
 Phase 7 implementation can now begin.
-
 
 
 

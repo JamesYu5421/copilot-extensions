@@ -179,6 +179,46 @@ def test_promote_refuses_when_a_pointer_does_not_resolve(repo: Path):
     assert worktrees.count("\n") == 0 or len(worktrees.splitlines()) == 1
 
 
+def test_promoted_dev_baseline_protects_materialized_library(repo: Path) -> None:
+    import prepare_module_baseline as baseline_update
+
+    _git(["checkout", "-q", "dev"], repo)
+    canonical = "libs/shared/src/shared/legacy.py"
+    generated = "plugins/demo-plugin/libs/shared/src/shared/legacy.py"
+    path = repo / canonical
+    path.parent.mkdir(parents=True)
+    path.write_text("pass\n" * 1300, encoding="utf-8")
+    (repo / "libs/shared/pyproject.toml").write_text(
+        '[project]\nname = "shared"\nversion = "0.1.0-dev1"\n', encoding="utf-8",
+    )
+    (repo / "plugins/demo-plugin/pyproject.toml").write_text(
+        '[project]\nname = "demo-plugin"\nversion = "0.1.0-dev1"\n'
+        'dependencies = ["shared"]\n[tool.uv.sources]\n'
+        'shared = { path = "../../libs/shared", editable = true }\n', encoding="utf-8",
+    )
+    # The fixture's already-existing tooling is deliberately grandfathered,
+    # independently of the library that the promotion actually materializes.
+    caps = {
+        str(file.relative_to(repo)).replace("\\", "/"): len(file.read_text(encoding="utf-8").splitlines())
+        for file in (repo / "tools").glob("*.py")
+        if len(file.read_text(encoding="utf-8").splitlines()) > 1000
+    }
+    caps.update({canonical: 1200, generated: 1300})
+    (repo / baseline_update.BASELINE).write_text(json.dumps(caps), encoding="utf-8")
+    source = _commit(repo, "committed library and generated-path policy")
+    prepared = baseline_update.prepare(repo, source)
+    _git(["merge", "--ff-only", prepared.commit_sha], repo)
+    _git(["checkout", "-q", "main"], repo)
+    main_before = _git(["rev-parse", "main"], repo)
+
+    report = pr.promote(repo=repo, dev_ref="dev", main_ref="main", push=False)
+    baseline, counts = baseline_update.measure(repo, report["commit"])
+    assert counts[canonical] == counts[generated] == 1300
+    assert baseline[canonical] == baseline[generated] == 1300
+    assert baseline_update.policy().check(baseline, line_counts=counts) == []
+    assert _git(["rev-parse", "main"], repo) == main_before
+
+
 def test_promote_refuses_when_a_uv_editable_reference_does_not_resolve(repo: Path):
     # A malformed/unresolvable uv-editable canonical reference on dev must
     # abort promotion the same way a dangling VENDOR_POINTER.json does.

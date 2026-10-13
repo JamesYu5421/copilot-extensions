@@ -38,9 +38,9 @@ touched the grown file -- to carry an unrelated manual baseline-widening
 diff just to pass CI. ``--refresh-baseline --allow-widen`` additionally
 *raises* a ceiling up to a file's current size when it is over its recorded
 ceiling. This is still never silent: it is restricted by convention (see
-``.github/workflows/module-size-baseline-widen.yml``) to a scheduled/
-post-merge run directly against ``main`` after the fact, producing its own
-reviewable PR -- **never** something a PR branch's own CI run does to its
+``.github/workflows/module-size-baseline-widen.yml``) to trusted-main-controlled
+post-merge measurement of pinned ``dev`` data, producing a reviewed ``dev``
+PR that normal promotion carries to ``main`` -- **never** something a PR branch's own CI run does to its
 own diff, which would let a PR silently launder its own growth past review.
 
 **PR-time scoping (``--changed-since REF``).** ``--allow-widen`` closes the
@@ -99,6 +99,7 @@ Exit code 0 = conformant, 1 = a file exceeds its cap/ceiling.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import json
 import subprocess
 import sys
@@ -250,7 +251,10 @@ def _changed_baseline_keys(base_ref: str, head_ref: str = "HEAD") -> set[str]:
     return changed
 
 
-def check(baseline: dict[str, int], *, only_paths: set[str] | None = None) -> list[str]:
+def check(
+    baseline: dict[str, int], *, only_paths: set[str] | None = None,
+    line_counts: Mapping[str, int] | None = None,
+) -> list[str]:
     """Return one message per file exceeding its cap/ceiling.
 
     ``only_paths``, when given, scopes enforcement to that set (see
@@ -258,10 +262,10 @@ def check(baseline: dict[str, int], *, only_paths: set[str] | None = None) -> li
     regardless of its current size.
     """
     violations: list[str] = []
-    for path in sorted(_tracked_py_files()):
+    for path in sorted(line_counts if line_counts is not None else _tracked_py_files()):
         if only_paths is not None and path not in only_paths:
             continue
-        lines = _line_count(path)
+        lines = line_counts[path] if line_counts is not None else _line_count(path)
         ceiling = baseline.get(path, CAP_LINES)
         if lines > ceiling:
             if path in baseline:
@@ -281,6 +285,7 @@ def check(baseline: dict[str, int], *, only_paths: set[str] | None = None) -> li
 
 def refresh_baseline(
     baseline: dict[str, int], *, allow_widen: bool = False,
+    line_counts: Mapping[str, int] | None = None,
 ) -> dict[str, int]:
     """Tighten (and, with ``allow_widen``, ratchet up) the baseline.
 
@@ -294,16 +299,17 @@ def refresh_baseline(
     newly grandfathers a file that has never been baselined before, even if
     that file now exceeds the cap. A brand-new offender is a genuinely new
     hard-cap violation (split it or, per the module docstring, a deliberate
-    manual JSON edit), never something the automated, main-only widen job
+    manual JSON edit), never something the trusted post-merge updater
     should silently absorb; that would let ordinary (non-widen) growth past
     the cap sneak in through the automation's own back door. Plain
     ``refresh_baseline`` (``allow_widen=False``) keeps its prior behaviour of
     recording a new offender, since it is always a manual, deliberate,
-    reviewed invocation.
+    reviewed invocation. ``line_counts`` optionally supplies inert, pinned Git
+    measurements under the same policy rather than reading the working tree.
     """
     updated = dict(baseline)
-    for path in sorted(_tracked_py_files()):
-        lines = _line_count(path)
+    for path in sorted(line_counts if line_counts is not None else _tracked_py_files()):
+        lines = line_counts[path] if line_counts is not None else _line_count(path)
         if path in updated:
             if lines <= CAP_LINES:
                 del updated[path]  # graduated: no longer needs grandfathering
@@ -331,7 +337,7 @@ def main() -> int:
         action="store_true",
         help=(
             "With --refresh-baseline, also raise a grown file's ceiling to its "
-            "current size. Post-merge/main-only by convention -- never run this "
+            "current size. Trusted post-merge maintenance only -- never run this "
             "against a PR branch's own diff (see module docstring)."
         ),
     )
