@@ -379,3 +379,74 @@ The optional shared-library observation boundary is complete, not the wider
 CPU budget or process-tree contract. The next slice connects owned CLI spawn
 receipts and the existing telemetry seam while keeping sampling holders
 accounted for independently from command completion.
+
+### 2026-10-13 - CLI reader CPU lifecycle prepared
+
+The reviewed wiring contract landed in #6514. Agent Bridge now opts into the
+metrics extra and observes only native namespace enumeration. The owned
+command adapter captures identity before communicate/reap, preserving direct
+child execution deadlines and output/fallback semantics. Native Windows
+FILETIME receipts match the metrics backend exactly, including a virtual
+environment launcher's distinct interpreter descendant.
+
+Sampling is provider-local, one-second completion-based cadence with 100ms
+joins. Native sampling futures remain owned across command completion,
+cancelled scan awaiters and provider replacement; bounded cache shutdown
+observes them without cancellation. A stuck sample suppresses later sampling
+instead of multiplying threads. Existing telemetry exports bounded lower-bound
+CPU observations and explicit uncertainty without arguments, output or paths.
+
+The focused Windows selection passed 133 tests, including native CPU export
+and two console-child cycles from a windowless parent with zero new visible
+windows or foreground transitions. The initial native fixture incorrectly
+equated a virtual environment launcher with its interpreter; the corrected
+fixture pins the owned root independently and verifies the observed descendant.
+A cadence regression also showed that starting the next bridge interval at
+sample admission could hit procutil's completion-based cache; cadence now
+starts at sample completion. Linux native proof remains pending the PR's
+canonical CI run. Numeric CPU limits, cumulative role accounting, sampler
+overhead and process-tree reclamation remain separate open items.
+
+The implementation PR's guard caught the roster cache crossing the module
+cap. Native command/sample ownership is now a focused helper rather than
+another cache responsibility. Validation also caught a sample that exceeded
+its 100ms join but completed during command execution: the observer now
+retains its shielded delivery waiter and consumes the completed observation
+at the bounded final join, without confusing waiter lifetime with the
+separately retained raw future. A deterministic delayed-sample regression
+and the complete focused Windows selection pass (134 tests).
+
+Review identified Python 3.10's distinct asyncio timeout class and unrelated
+desktop activity in the native launch regression. Observation and shutdown
+now classify both timeout classes consistently; a distinct-class regression
+proves ordinary join exhaustion remains pending rather than sampling failure.
+Windows visibility/focus counters are scoped to the owned parent/descendant
+PID set, not other applications. The focused selection passes 135 tests.
+
+Further review identified a late native completion after its join deadline
+and detached asyncio tasks whose eventual exceptions were not consumed.
+The provider now records sample completion through a native-future callback,
+with a conservative delivery-task fallback when the native future has already
+finished. A completion receipt blocks new sampling until its timestamp is
+known, then enforces the full one-second interval even across a later reader.
+Command and sampling task callbacks consume and explicitly log late failures
+without arguments or captured output; normal awaiters still receive errors.
+Late-completion cadence and cancelled-observer failure regressions pass, as
+does the complete focused selection (137 tests).
+
+Wall telemetry now uses the command worker's own completion-written duration,
+not the asyncio task's done state. A cancelled command task can leave its
+thread alive, so that case reports unknown duration rather than invented zero.
+The dedicated thread-backed cancellation regression and the complete focused
+selection pass (138 tests).
+
+The approved implementation's canonical CI then reached an integration
+fixture that still mocked the old subprocess seam. Both registry list-only
+fixtures now use the owned adapter, so deadline forwarding and non-zero
+failure exercise the intended boundary rather than accidental launch failure.
+The expanded namespace/provider selection passes 346 tests. The complete
+bounded Windows Agent Bridge portfolio passes all nine sub-suites: 4,239
+passed, 94 skipped. The non-blocking documentation observation was corrected
+as well: uncertainty retains an earlier valid CPU lower bound; `null` applies
+only when none was observed. Current-head review and Linux CI must pass again
+before landing this correction.
