@@ -431,6 +431,53 @@ def _module_names(plugin_dir: Path) -> set[str]:
     return out
 
 
+MACHINE_GATED_SKIP = "SKIPPED (not allowed on this machine)"
+
+
+class MachineDetectionError(Exception):
+    """The machine gate can't be decided: the enabling repository or the
+    machine identity could not be resolved."""
+
+
+def _machine_gate_blocks(name: str, scope: str, context: Path | None) -> bool:
+    """Whether the machine gate forbids reconciling *name*'s runtime here.
+
+    Mirrors the session-start reconcile (``reconcile.build_plan``): only a
+    ``machine-gated`` runtime is subject to the gate, the gate manifest and the
+    machine identity are resolved from the repository that enables the plugin
+    (falling back to the active project's anchor), and the decision itself is
+    ``reconcile.runtime_allowed`` -- so ``update`` never provisions a runtime the
+    launch-time reconcile would refuse on this machine.
+    """
+    if scope != "machine-gated":
+        return False
+    from . import reconcile
+
+    repo_dir = context
+    if repo_dir is None:
+        # Resolve the active project's anchor directly: falling back to the
+        # current directory would let an unrelated checkout with no gate
+        # manifest authorize a machine-gated runtime.
+        try:
+            repo_dir = Path(cfg.load_config().default_repo.anchor)
+        except Exception as error:
+            raise MachineDetectionError(
+                f"could not resolve the repository that enables {name}: {error}"
+            ) from error
+    try:
+        machine = cfg.detect_machine(repo_dir)
+    except Exception as error:
+        # Never fall back to a bare hostname: detection raises on purpose when
+        # an explicit execution space is required or the machine registry is
+        # invalid, and launch-time reconcile refuses in that case too.
+        raise MachineDetectionError(str(error)) from error
+    gate = reconcile.load_runtime_gate(repo_dir)
+    gate_present = reconcile.gate_manifest_present(repo_dir)
+    return not reconcile.runtime_allowed(
+        scope, name, machine, gate, gate_present=gate_present
+    )
+
+
 def _reconcile_registered_runtimes(
     plugin_dir: Path,
     platform_name: str,
@@ -460,7 +507,17 @@ def _reconcile_registered_runtimes(
     reconcile_one_runtime = _core_helper("_reconcile_one_runtime", _reconcile_one_runtime)
     results: list[tuple[str, str]] = []
     for name in sorted(names):
-        results.append((name, reconcile_one_runtime(name, platform_name, force=force)))
+        results.append(
+            (
+                name,
+                reconcile_one_runtime(
+                    name,
+                    platform_name,
+                    force=force,
+                    gate_context=targets[name].context,
+                ),
+            )
+        )
 
     acted = [(n, s) for n, s in results if s not in ("SKIPPED (current)", "payload-only")]
     if acted:
@@ -468,16 +525,30 @@ def _reconcile_registered_runtimes(
         for name, status in acted:
             if status.startswith("OK"):
                 output.ok(f"{name} ({status})")
+            elif status.startswith("SKIPPED"):
+                output.info(f"{name} ({status})")
             else:
                 output.warn(f"{name}: {status}")
     return all(
-        status.startswith("OK") or status in {"SKIPPED (current)", "payload-only"}
+        status.startswith("OK") or status.startswith("SKIPPED") or status == "payload-only"
         for _, status in results
     )
 
 
-def _reconcile_one_runtime(name: str, platform_name: str, *, force: bool) -> str:
-    """Reconcile a single registered plugin's runtime; returns a status string."""
+def _reconcile_one_runtime(
+    name: str,
+    platform_name: str,
+    *,
+    force: bool,
+    gate_context: Path | None = None,
+) -> str:
+    """Reconcile a single registered plugin's runtime; returns a status string.
+
+    ``gate_context`` is the repository that enables the plugin; it locates the
+    machine-gate manifest exactly as the session-start reconcile does. A
+    ``machine-gated`` runtime the gate does not allow on this machine is reported
+    as :data:`MACHINE_GATED_SKIP` (even under ``--force``) and never installed.
+    """
     from . import reconcile
 
     pdir = reconcile.core_installed_payload_dir(name)
@@ -486,6 +557,11 @@ def _reconcile_one_runtime(name: str, platform_name: str, *, force: bool) -> str
     scope = reconcile.manifest_runtime_scope(pdir) or "none"
     if scope == "none":
         return "payload-only"
+    try:
+        if _machine_gate_blocks(name, scope, gate_context):
+            return MACHINE_GATED_SKIP
+    except MachineDetectionError as error:
+        return f"machine detection failed: {error}"
 
     pver = reconcile.payload_version(pdir)
     try:
@@ -721,6 +797,29 @@ def _update_modules(
 
         from . import reconcile as _reconcile
 
+        module_scope = _reconcile.manifest_runtime_scope(module_dir)
+        if module_scope is None:
+            # A module always ships a runtime installer; a missing or malformed
+            # scope must not bypass the machine gate on its way to it.
+            output.warn(f"{name}: module manifest has no valid runtimeScope -- not installing")
+            results.append((name, "invalid runtimeScope"))
+            continue
+        if module_scope == "none":
+            results.append((name, "SKIPPED (payload-only)"))
+            continue
+        try:
+            gate_blocks = _machine_gate_blocks(
+                name, module_scope, target.context if target is not None else None
+            )
+        except MachineDetectionError as error:
+            output.warn(f"{name}: machine detection failed: {error}")
+            results.append((name, "machine detection failed"))
+            continue
+        if gate_blocks:
+            output.info(f"Skipping module runtime not allowed on this machine: {name}")
+            results.append((name, MACHINE_GATED_SKIP))
+            continue
+
         try:
             runtime_env, runtime_root = _reconcile.runtime_installer_environment(name, module_dir)
         except ValueError as error:
@@ -827,6 +926,8 @@ def _update_modules(
                 output.ok(f"{name}")
             elif status == "SKIPPED":
                 output.info(f"{name} (skipped)")
+            elif status.startswith("SKIPPED"):
+                output.info(f"{name} ({status})")
             else:
                 output.warn(f"{name}: {status}")
     return all(status.startswith("OK") or status.startswith("SKIPPED") for _, status in results)
