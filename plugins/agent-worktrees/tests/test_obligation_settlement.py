@@ -58,6 +58,15 @@ def test_settle_persists_and_reloads(tmp_path):
 
 # ── _settle_parent_obligation hook ───────────────────────────────────────────
 
+def _child(project_root: Path, owner_ref: str | None = None) -> WorktreeRecord:
+    child = tracking.create_new_record(
+        "wt-child", "worktree/wt-child", str(project_root / "wt-child"),
+        "childproj", "machine-x", "windows", project_root,
+    )
+    child.owner_ref = owner_ref
+    return child
+
+
 def _write_parent(project_root: Path, project: str, parent_id: str,
                   child_ref: str) -> Path:
     """Write a parent record (with an active claim on the child) to its tracking
@@ -91,7 +100,7 @@ def test_parent_claim_settled_on_child_finalize(_project_root, monkeypatch):
     parent_ref = tracking.format_claim_ref("machine-x", "parentproj", "wt-parent")
     parent_path = _write_parent(_project_root, "parentproj", "wt-parent", child_ref)
 
-    child = SimpleNamespace(owner_claim_ref=tracking.parse_claim_ref(parent_ref))
+    child = _child(_project_root, parent_ref)
     config = SimpleNamespace(machine="machine-x", repo_name="childproj")
 
     _settle_parent_obligation(child, config, child_id)
@@ -106,7 +115,7 @@ def test_cross_machine_parent_is_skipped(_project_root):
     parent_ref = tracking.format_claim_ref("other-machine", "parentproj", "wt-parent")
     parent_path = _write_parent(_project_root, "parentproj", "wt-parent", child_ref)
 
-    child = SimpleNamespace(owner_claim_ref=tracking.parse_claim_ref(parent_ref))
+    child = _child(_project_root, parent_ref)
     config = SimpleNamespace(machine="machine-x", repo_name="childproj")
 
     _settle_parent_obligation(child, config, "wt-child")
@@ -115,7 +124,7 @@ def test_cross_machine_parent_is_skipped(_project_root):
 
 
 def test_no_owner_ref_is_noop(_project_root):
-    child = SimpleNamespace(owner_claim_ref=None)
+    child = _child(_project_root)
     config = SimpleNamespace(machine="machine-x", repo_name="childproj")
     # Must simply not raise.
     _settle_parent_obligation(child, config, "wt-child")
@@ -123,6 +132,6 @@ def test_no_owner_ref_is_noop(_project_root):
 
 def test_missing_parent_record_is_noop(_project_root):
     parent_ref = tracking.format_claim_ref("machine-x", "parentproj", "ghost")
-    child = SimpleNamespace(owner_claim_ref=tracking.parse_claim_ref(parent_ref))
+    child = _child(_project_root, parent_ref)
     config = SimpleNamespace(machine="machine-x", repo_name="childproj")
     _settle_parent_obligation(child, config, "wt-child")  # no file -> no-op, no raise

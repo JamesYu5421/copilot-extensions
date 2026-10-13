@@ -147,6 +147,11 @@ repository scenario, retaining both real Git contracts within each item budget.
 The landing fixture isolates the unrelated CodeSpace-claim warning; that
 provider adapter has its own dedicated tests.
 
+Parent-obligation settlement tests use complete `WorktreeRecord` fixtures.
+Execution-space admission still precedes settlement and the absent-owner,
+cross-machine and missing-parent branches; the tests retain their original
+ledger assertions without mocking the identity fence.
+
 Agent-worktrees installer command resolution, pipefail execution and POSIX
 background-prune tests are explicit T3 native contracts. Collection never probes
 Bash or PowerShell. A lazy session fixture admits native shells only after

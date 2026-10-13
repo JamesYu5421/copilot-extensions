@@ -1,0 +1,9 @@
+{
+  "comment": "Use identity-complete parent-obligation settlement fixtures without weakening ownership admission",
+  "changes": [
+    {
+      "plugin": "agent-worktrees",
+      "type": "dev"
+    }
+  ]
+}
