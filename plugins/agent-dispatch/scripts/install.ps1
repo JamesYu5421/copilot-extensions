@@ -1995,12 +1995,8 @@ function Install-Runtime {
             }
             Deploy-SelfProvisioningBinstub
             Write-Manifest
-            # Register-PickerPivot ALSO writes shared, version-sensitive
-            # content (pivots/agent-dispatch.json, from THIS invocation's
-            # own $PluginDir) another invocation could race the exact same
-            # way as the binstub/manifest above -- keep it inside this same
-            # protected span rather than letting it run after the mutex is
-            # released.
+            # The Picker materializes templates only from its verified active
+            # payload roots; this installer does not publish shared pivot data.
             Register-PickerPivot
         } finally {
             [void]$publishMutex.ReleaseMutex()
@@ -2068,19 +2064,9 @@ function Write-Manifest {
 }
 
 function Register-PickerPivot {
-    $pivotSrc = Join-Path $PluginDir 'pivots\agent-dispatch.json'
-    $pivotDir = Join-Path $env:USERPROFILE '.agent-worktrees\pivots'
-    if (Test-Path $pivotSrc) {
-        try {
-            if (-not (Test-Path $pivotDir)) { New-Item -ItemType Directory -Force -Path $pivotDir | Out-Null }
-            Copy-Item -Force $pivotSrc (Join-Path $pivotDir 'agent-dispatch.json')
-            Write-Ok "Picker pivot registered: $pivotDir\agent-dispatch.json"
-        } catch {
-            Write-Skip 'Could not register picker pivot (agent-worktrees runtime root not writable)'
-        }
-    } else {
-        Write-Skip "Picker pivot manifest not found at $pivotSrc"
-    }
+    # The consumer verifies activation and root identity before publishing v3
+    # pointers for both templates. An optional Picker is not an installer dependency.
+    Write-Ok 'Picker owns attributed pivot discovery from active payload templates'
 }
 
 # -- Coordinator Scheduled Task (default-on on deploy machines) --------------

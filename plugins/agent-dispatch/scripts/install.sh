@@ -1291,11 +1291,8 @@ _ensure_runtime() {
         fi
         deploy_binstub
         _write_manifest
-        # _register_pivot ALSO writes shared, version-sensitive content
-        # (pivots/agent-dispatch.json, from THIS invocation's own
-        # PLUGIN_DIR) another invocation could race the exact same way as
-        # the binstub/manifest above -- keep it inside this same protected
-        # span rather than letting it run after the lock is released.
+        # The Picker materializes templates only from its verified active
+        # payload roots; this installer does not publish shared pivot data.
         _register_pivot
         _unlock_publish
     else
@@ -1336,19 +1333,9 @@ _write_manifest() {
         "$PLUGIN_DIR" "$VENV_DIR" "" "${COPILOT_PLUGIN_STAGED_FROM:-$PLUGIN_DIR}" "$SRC_VERSION"
 }
 
-# Register the worktree-picker "Tasks" pivot (best-effort; never fatal).
+# The optional Picker owns activation-aware v3 pointer materialization.
 _register_pivot() {
-    local src="$PLUGIN_DIR/pivots/agent-dispatch.json"
-    local dir="$HOME/.agent-worktrees/pivots"
-    if [[ -f "$src" ]]; then
-        if mkdir -p "$dir" 2>/dev/null && cp -f "$src" "$dir/agent-dispatch.json" 2>/dev/null; then
-            _ok "Picker pivot registered: $dir/agent-dispatch.json"
-        else
-            _skip "Could not register picker pivot (agent-worktrees runtime root not writable)"
-        fi
-    else
-        _skip "Picker pivot manifest not found at $src"
-    fi
+    _ok "Picker owns attributed pivot discovery from active payload templates"
 }
 
 # -- Coordinator service (systemd user unit; default-on on deploy machines) --
