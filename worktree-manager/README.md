@@ -74,6 +74,9 @@ aggregate plan timeout. Preparation stages and elapsed-time heartbeats stream
 to the launch terminal; the final plan remains JSON on stdout. Individual
 engine operations keep their own failure bounds, and automation can explicitly
 request a bounded plan call.
+An explicitly bounded SSH prompt plan allows at least 240 seconds for the
+target's 180-second admission call and host overhead; an unbounded preparation
+call remains unbounded.
 Captured preparation owns a kill-on-close Job on Windows and a dedicated
 process group on POSIX. A POSIX group owner stays unreaped until the engine's
 completion receipt has been read and the entire group has been cleaned up,
@@ -109,7 +112,7 @@ available; a genuinely empty, unowned worktree still offers **Open**.
 A successful explicit task embodiment may attach its newly launched session
 even while the Picker's pre-transaction workspace snapshot is still sessionless.
 
-For a local, stopped worktree, **Actions > Resume prompt…** supplies the first
+For a stopped worktree, **Actions > Resume prompt…** supplies the first
 turn of the cold Copilot start alongside its prior `--resume=<session>` target.
 It uses the full `--interactive` argument, including with **No Mux**. A live
 session offers **Open**, not Resume with a prompt; Open neither queues nor
@@ -125,6 +128,24 @@ staged Resume prompt. Uncertain handoff acknowledgement keeps the intent
 visible but refuses automatic resubmission, avoiding a duplicate turn.
 A later explicitly supplied prompt replaces the pending intent; a stale
 handoff acknowledgement cannot discard that replacement.
+
+For SSH machine sources, the host renders the same composer and sends a bounded
+structured request to the target engine before opening its interactive SSH
+launch. The target daemon admits the request, allocates at most one New
+worktree, and stages the prompt in that target's worktree state. The launch then
+carries only the target worktree and seed identity. Arbitrary prompt text is
+encoded, not interpolated into the remote shell. Requests are limited to an
+7 KiB UTF-8 envelope, including JSON metadata, to stay within remote command
+limits after PowerShell's UTF-16LE/Base64 wrapping. Oversized envelopes or shell
+commands are rejected before SSH admission.
+
+An old target engine refuses the structured request before creating or staging
+anything; seedless remote launches remain compatible. An uncertain response
+reports the target and request identity. Do not repeat New: on the target,
+`<project> resolve --json --launch-request-status <id>` reports the already
+allocated worktree and staged intent without submitting another prompt.
+Resume that existing worktree only when its state is `staged`; an incomplete
+creation or unconfirmed handoff requires explicit inspection.
 
 Prompted requests require `--stage-launch-seed` support; ordinary seedless
 launches retain older-engine compatibility. Uninstrumented legacy/custom

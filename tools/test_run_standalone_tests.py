@@ -70,6 +70,18 @@ def test_prepare_composes_local_core_and_declared_service_extras(tmp_path, monke
     assert not Path(calls[1][calls[1].index("--override") + 1]).exists()
 
 
+def test_manager_preparation_retains_source_payload_layout(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "REPO", tmp_path)
+    calls = []
+    monkeypatch.setattr(runner.subprocess, "run", lambda argv, **kwargs: calls.append(argv))
+    python = tmp_path / ".test-venvs" / "worktree-manager" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    (python.parent.parent / "pyvenv.cfg").write_text("home = fixture-base\n")
+    python.touch()
+    runner.prepare("worktree-manager", python)
+    assert calls[-1][-2:] == ["--editable", str(tmp_path / "worktree-manager") + "[dev]"]
+
+
 def test_prepare_rejects_host_interpreter_before_admission(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "REPO", tmp_path)
     called = []
@@ -166,6 +178,26 @@ def test_smoke_rejects_undefined_component_before_admission(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         runner.main(["worktree-manager", "--smoke"])
     assert exc.value.code == 2
+
+
+def test_venv_interpreter_symlink_is_not_resolved_out_of_its_environment(tmp_path, monkeypatch):
+    root = tmp_path / "worktree-manager"
+    (root / "tests").mkdir(parents=True)
+    base = tmp_path / "base-python"
+    base.touch()
+    python = tmp_path / ".test-venvs" / "worktree-manager" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    (python.parent.parent / "pyvenv.cfg").write_text("home = fixture-base\n")
+    try:
+        python.symlink_to(base)
+    except OSError:
+        pytest.skip("Symlink creation is unavailable")
+    monkeypatch.setattr(runner, "REPO", tmp_path)
+    monkeypatch.setattr(runner, "acquire", lambda wait, root: type("Lease", (), {"release": lambda self: None})())
+    commands = []
+    monkeypatch.setattr(runner, "run_contained", lambda command, **kwargs: commands.append(command) or 0)
+    assert runner.main(["worktree-manager", "--python", str(python)]) == 0
+    assert commands[0][0] == str(python)
 
 
 @pytest.mark.parametrize("timeout", ["nan", "inf", "-inf", "0", "-1"])

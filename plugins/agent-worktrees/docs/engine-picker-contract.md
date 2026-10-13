@@ -7,6 +7,44 @@ boundary is what keeps the coupling one-way and dependency-free (the Picker owns
 no worktree logic or state), and it is why the TUI framework (Textual) stays
 entirely out of the plugin engine.
 
+## SSH launch-prompt admission
+
+The Worktrees composer is host-rendered for local and machine-SSH sources.
+Prompted remote `resolve --json --machine <target>` invokes the target's own
+`resolve --json --launch-request-b64 <envelope>` first. The UTF-8 JSON envelope
+is bounded to 7168 bytes (7 KiB, including JSON metadata) and carries version 1, a 32-character hexadecimal
+`request_id`, `kind` (`new` or `resume`), `worktree_id` (null for New), `text`
+and Boolean `no_mux`. POSIX shell arguments are quoted; PowerShell commands
+are encoded. Prompt text never enters the interactive SSH launch string.
+Structured admission/status accepts only its protocol options and `--json`;
+ordinary resolve selectors, modifiers and positional Copilot arguments are
+rejected before reading or mutating target launch state. Exactly one nonempty
+protocol option is required; an empty value never enters ordinary resolve.
+
+The target's existing tracking-write daemon owns admission and seed staging.
+Admission retains a text-free fingerprint and allocated worktree/intent IDs
+under external tracking state. The returned receipt carries those identities,
+not prompt text. The host's subsequent remote plan launches the same worktree
+with `--stage-launch-seed --seed-id <id>`. The existing target setup and native
+backend boundary perform cold checks, reservation, failed-start release and
+successful handoff discard.
+
+`resolve --json --launch-request-status <request-id>` is read-only recovery.
+It returns `staged`, `handoff-unconfirmed`, `creation-incomplete`,
+`admission-incomplete` or
+`completed-or-superseded`, plus the allocated identities. A repeated admitted
+request cannot allocate another New worktree or restore a completed/replaced
+prompt. A matching durable seed is recoverable even if acceptance-receipt
+publication was interrupted, but an incomplete New creation is never ready.
+A machine/platform change that cannot honor the persisted New allocation
+refuses before creation rather than allocating a differently prefixed worktree.
+Every admission-file read validates its stored identity and field types;
+corrupt state returns a structured error without disconnecting the writer.
+Replay also checks the stored fingerprint and prompt kind against the request,
+and Resume must retain its requested worktree identity, including after the
+locked receipt reload.
+A target without the request capability rejects before mutation.
+
 ## Provider-backed source registry
 
 Venue providers may add project-scoped Picker sources by writing JSON registry
