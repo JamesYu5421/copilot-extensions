@@ -33,6 +33,10 @@ effects. Those cannot roll back with SQLite. Do not expose arbitrary callback
 selection or SQL through a remote protocol. This is an internal cooperative
 effect-owner seam, not a general remote-code executor. The connection authorizer
 refuses callback transaction/savepoint, attach/detach and PRAGMA operations.
+It also refuses writes and schema/index/trigger changes to journal-owned
+identity, operations, receipts, allocation ownership and permanent release
+history, while allowing ordinary SQLite effect-table writes and creation.
+This protects earlier tombstones as well as the callback's current binding.
 Callbacks remain trusted local code, not a security sandbox; they must not alter
 the journal's own schema/state or invoke privileged connection methods.
 The callback's effect table and result reference must contain no secrets.
@@ -70,10 +74,40 @@ Generic `accept` remains available for legacy journal records, not permission
 to execute an unbound allocation.
 
 `allocation_owner(resource=...)` returns the immutable owning intent, or null,
-as local evidence only. There is no TTL, release or generation-transfer API.
-Succeeded or failed outcomes do not relinquish ownership; competing generations
-remain blocked after an outcome or controller disconnection. Verified retirement
-and release evidence are the next contract, not inferred from elapsed time.
+as local evidence only. Succeeded or failed outcomes do not relinquish ownership;
+competing generations remain blocked after an outcome or controller disconnection.
+
+`release_cooperative(intent, retire, resource=...)` requires exact held ownership
+and runs a trusted short SQLite-only retirement callback under the same callback
+restrictions as effect commit. The callback returns `None` and must actually
+retire its resource in this connection's transaction. Retirement, an immutable
+`AllocationRelease` tombstone and held-owner removal commit together; any callback,
+storage or binding failure rolls everything back. This seam trusts the adapter
+to implement retirement correctly; it cannot discover arbitrary effect tables or
+prove external work stopped. Retirement can precede a resource's effect, but still
+requires explicit adapter evidence, not an inferred receipt outcome.
+
+`allocation_release(intent)` reads the original operation's permanent proof,
+or null if it has not been retired; the operation must be accepted. Exact
+retirement repeats return that proof without invoking the callback. Historical
+acceptance repeats still return the original receipt, **not new ownership**.
+Old effects fail held-owner checks even after a successor is accepted.
+New operations on that resource require an allocation generation strictly higher
+than every recorded released generation, across principal/account identities.
+The release table stores the generation separately with a verified
+resource/generation-descending index; admission reads one indexed maximum,
+not every historical proof. Index integrity is checked when opening and
+within operation transactions. Permanent history need not be scanned or decoded
+to admit a new generation.
+The generation is resource-specific, not a connector/installation epoch.
+Old proofs cannot retire successors. There is no TTL, automatic release or
+proof garbage collection; storage retention remains a separate contract.
+
+The Gateway must consume attributable exact release evidence explicitly before
+admitting a successor; it does not infer release from spool receipts or lack
+of ownership. Proof transport/authentication remains the caller's responsibility.
+This supplies safe transfer for this one cooperative local SQLite effect owner,
+not a fence for resources shared by different journals or external executors.
 
 ## Noncooperative effects and uncertainty
 
@@ -117,10 +151,11 @@ synchronous commits and local serialized writers. Every transaction verifies
 schema and exact authority/installation/target identity. Only construction can
 create storage; operations fail without recreating a removed database.
 Unsupported/foreign databases are refused, and storage errors propagate.
-Construction upgrades known schema 1 to schema 2 transactionally, preserving
+Construction upgrades known schema 1 or 2 to schema 3 transactionally, preserving
 existing acceptance, receipt history and cooperative effect tables while adding
-empty resource ownership. It refuses incompatible core columns or a preexisting
-reserved ownership-table/view name. No ownership is invented for old operations.
+empty resource ownership where missing and an empty release history.
+It refuses incompatible core columns or a preexisting reserved
+ownership/release-table/view name. No ownership or retirement is invented for old operations.
 Old schema writers/readers fail closed after upgrade; no downgrade or stale
 backup restore is supplied.
 It is not a V1 authority-migration mechanism, hostile-client isolation, network-share
@@ -136,3 +171,9 @@ competing identities/generations, effect crash rollback with retained ownership,
 lost postcommit replies with one effect, atomic spool rollback and legacy schema
 upgrade without historical ownership. These local proofs do not establish
 cross-host fencing, revocable delegated grants or live Gateway/node readiness.
+Release tests add installed node/Gateway precommit crashes and postcommit lost
+replies, concurrent retirement exactly once, competing successors and a stale
+effect after reassignment. Permanent proof replay never removes successor ownership.
+Callback-corruption regressions exercise both allocation and generic effect paths.
+The generation lookup uses a verified covering index and stays below a fixed
+SQLite instruction budget with 5,000 retained releases.

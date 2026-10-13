@@ -4,7 +4,9 @@ from contextlib import contextmanager
 from pathlib import Path
 import sqlite3
 
-from .operations import OperationIntent, TargetReceipt
+from .allocation import (RELEASE_INDEX, check_released_generation, create_release_history,
+                         verify_release_index)
+from .operations import AllocationRelease, OperationIntent, TargetReceipt
 from .planning import PlanError, identifier, integer
 
 
@@ -54,9 +56,18 @@ class NodeJournal:
                     "operation_id INTEGER NOT NULL UNIQUE REFERENCES operations(id))"
                 )
                 connection.execute("PRAGMA user_version=2")
+                version = 2
+            if version == 2:
+                if connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='allocation_releases' COLLATE NOCASE"
+                    " OR name=? COLLATE NOCASE", (RELEASE_INDEX,),
+                ).fetchone():
+                    raise PlanError("unrecognized node release schema")
+                create_release_history(connection)
+                connection.execute("PRAGMA user_version=3")
 
-    def _verify(self, connection, *, version=2):
-        if version not in (1, 2) or connection.execute(
+    def _verify(self, connection, *, version=3):
+        if version not in (1, 2, 3) or connection.execute(
             "PRAGMA user_version"
         ).fetchone()[0] != version:
             raise PlanError("unsupported node journal schema")
@@ -65,8 +76,11 @@ class NodeJournal:
             "operations": ("id", "principal", "account", "operation", "intent"),
             "receipts": ("cursor", "operation_id", "sequence", "receipt"),
         }
-        if version == 2:
+        if version >= 2:
             columns["allocation_owners"] = ("resource", "operation_id")
+        if version >= 3:
+            columns["allocation_releases"] = ("operation_id", "resource", "generation", "proof")
+            verify_release_index(connection)
         for name, expected in columns.items():
             kind = connection.execute(
                 "SELECT type FROM sqlite_master WHERE name=?", (name,),
@@ -174,18 +188,30 @@ class NodeJournal:
             prior = self._find(connection, value)
             if prior:
                 OperationIntent(bytes(prior[1])).check_repeat(intent)
+                release = self._release(connection, prior[0])
+                if release is not None:
+                    release.check_intent(intent, resource=resource, installation=self.installation)
+                    return self._latest(connection, prior[0])
                 self._check_owner(connection, prior[0], resource)
                 return self._latest(connection, prior[0])
             if connection.execute(
                 "SELECT 1 FROM allocation_owners WHERE resource=?", (resource,),
             ).fetchone():
                 raise PlanError("node allocation resource is already owned")
+            check_released_generation(connection, value["generation"], resource)
             accepted = self._accept(connection, value, intent)
             operation_id = self._find(connection, value)[0]
             connection.execute(
                 "INSERT INTO allocation_owners VALUES(?,?)", (resource, operation_id),
             )
             return accepted
+
+    @staticmethod
+    def _release(connection, operation_id):
+        row = connection.execute(
+            "SELECT proof FROM allocation_releases WHERE operation_id=?", (operation_id,),
+        ).fetchone()
+        return AllocationRelease(bytes(row[0])) if row else None
 
     def _allocation_scope(self, intent, resource):
         identifier(resource, "node allocation resource")
@@ -212,6 +238,78 @@ class NodeJournal:
             ).fetchone()
             return OperationIntent(bytes(row[0])) if row else None
 
+    def allocation_release(self, intent):
+        """Read permanent release evidence; no absence-based permission or transport ack."""
+        with self._transaction(write=False) as connection:
+            operation_id, _ = self._accepted(connection, intent)
+            return self._release(connection, operation_id)
+
+    @contextmanager
+    def _cooperative(self, connection):
+        owned = {"identity", "operations", "receipts", "allocation_owners", "allocation_releases"}
+        def authorize(action, first, second, *_):
+            if action in (
+                sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT,
+                sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH, sqlite3.SQLITE_PRAGMA,
+            ):
+                return sqlite3.SQLITE_DENY
+            table = None
+            if action in (
+                sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE,
+                sqlite3.SQLITE_CREATE_TABLE, sqlite3.SQLITE_DROP_TABLE,
+                sqlite3.SQLITE_CREATE_TEMP_TABLE, sqlite3.SQLITE_DROP_TEMP_TABLE,
+                sqlite3.SQLITE_CREATE_VIEW, sqlite3.SQLITE_DROP_VIEW,
+                sqlite3.SQLITE_CREATE_TEMP_VIEW, sqlite3.SQLITE_DROP_TEMP_VIEW,
+                sqlite3.SQLITE_CREATE_VTABLE, sqlite3.SQLITE_DROP_VTABLE,
+            ):
+                table = first
+            elif action in (
+                sqlite3.SQLITE_ALTER_TABLE, sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_DROP_INDEX,
+                sqlite3.SQLITE_CREATE_TEMP_INDEX, sqlite3.SQLITE_DROP_TEMP_INDEX,
+                sqlite3.SQLITE_CREATE_TRIGGER, sqlite3.SQLITE_DROP_TRIGGER,
+                sqlite3.SQLITE_CREATE_TEMP_TRIGGER, sqlite3.SQLITE_DROP_TEMP_TRIGGER,
+            ):
+                table = second
+            elif action == sqlite3.SQLITE_REINDEX and first == RELEASE_INDEX:
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_DENY if table and table.lower() in owned else sqlite3.SQLITE_OK
+        connection.set_authorizer(authorize)
+        try:
+            yield
+        finally:
+            connection.set_authorizer(None)
+
+    def release_cooperative(self, intent, retire, *, resource):
+        """Trusted SQLite-only retirement, tombstone and owner removal commit together."""
+        value = self._allocation_scope(intent, resource)
+        with self._transaction() as connection:
+            operation_id, _ = self._accepted(connection, intent)
+            prior = self._release(connection, operation_id)
+            if prior is not None:
+                prior.check_intent(intent, resource=resource, installation=self.installation)
+                return prior
+            self._check_owner(connection, operation_id, resource)
+            with self._cooperative(connection):
+                if retire(connection) is not None:
+                    raise PlanError("cooperative retirement must return None")
+            self._verify(connection)
+            self._accepted(connection, intent)
+            self._check_owner(connection, operation_id, resource)
+            del value["parameters"]
+            value.update(schema="fleet-manager.allocation-release",
+                         request_digest=intent.request_digest, resource=resource,
+                         installation=self.installation)
+            proof = AllocationRelease.from_dict(value)
+            connection.execute(
+                "INSERT INTO allocation_releases VALUES(?,?,?,?)",
+                (operation_id, resource, value["generation"], proof.encoded),
+            )
+            connection.execute(
+                "DELETE FROM allocation_owners WHERE resource=? AND operation_id=?",
+                (resource, operation_id),
+            )
+            return proof
+
     def commit_cooperative(self, intent, apply, *, resource=None):
         """Trusted short SQLite-only callback returns a succeeded result reference.
 
@@ -232,16 +330,8 @@ class NodeJournal:
                 return prior
             if status == "unknown":
                 raise PlanError("uncertain effect requires explicit reconciliation")
-            connection.set_authorizer(
-                lambda action, *_: sqlite3.SQLITE_DENY if action in (
-                    sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT,
-                    sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH, sqlite3.SQLITE_PRAGMA,
-                ) else sqlite3.SQLITE_OK
-            )
-            try:
+            with self._cooperative(connection):
                 result_ref = apply(connection)
-            finally:
-                connection.set_authorizer(None)
             self._verify(connection)
             if value["command"] == "workspace.allocate":
                 self._accepted(connection, intent)
