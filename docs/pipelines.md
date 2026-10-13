@@ -476,10 +476,86 @@ account — it's an Enterprise-only feature.)
 > completes and a subsequent PR confirms the check actually reports
 > successfully — only then is it flipped to `active`.
 
+### Required dev source metadata
+
+`source-attribution` is a distinct check in the same trusted
+`workflow-lockdown-guard.yml` workflow. Its script is checked out at
+`github.workflow_sha`, never the PR head, and reads the current description
+through the GitHub API. Body/base edits and metadata changes reevaluate the
+same head; repository automation and manually opened PRs are covered too.
+Both native enforcement and refresh fail closed when multiple open dev PRs
+share a head commit: GitHub's commit-scoped checks cannot safely express
+independent per-PR results. Each PR needs a distinct head. Refresh snapshots
+include current same-head PR membership, so a peer joining or leaving during
+publication invalidates the result just like a concurrent metadata edit.
+Freshness rereads normally query only PRs associated with that head commit,
+not the entire repository's open-PR list. If this endpoint omits the current
+PR (as it can for a commit already on the default branch), a full current
+listing is required rather than assuming a unique head.
+The association response supplies current PR metadata too; normal refreshes
+do not add a separate per-PR GET to each freshness read. New checks remain
+pending during pacing and are completed only after a fresh matching snapshot.
+The 150-distinct-head contract counts every read, write and pagination request
+(902 total), below the standard 1,000-request Actions quota for that pass.
+Backfill also enforces a 950-request per-run budget, including every pagination
+page, metadata read, check write and retry. It reserves failure-fencing requests
+before inspecting a head, including deduplication of an existing result, so
+exhaustion cannot strand a pending check or leave an inspected but unverifiable
+completed success as the latest result. Transport retries are disabled in all
+trusted metadata script steps; policy retries consume the same budget. A larger or
+unstable batch stops with an explicit incomplete-refresh error instead of
+hammering the exhausted quota or reporting that every PR was checked.
+Retry after the rate-limit reset, or refresh remaining PRs through their normal
+metadata events; native per-PR enforcement remains independent of this batch.
+The trusted checkout's integrity-locked CommonMark and HTML parsers identify
+actual HTML comments, excluding fenced/indented code and quoted examples even
+inside continuation list items. HTML containers cannot conceal additional
+source comments; attribute strings and raw-text elements are not comments.
+All metadata jobs install these pinned dependencies
+with `npm ci --ignore-scripts`; no PR-head package or lifecycle script runs.
+CONTRIBUTING.md and failure output publish the accepted codename, workflow and
+native gh-aw origin forms and concrete manual repair steps. Encryption remains
+optional, and syntax validation is not proof of actual source ownership.
+
+`source-attribution-departures.yml` reevaluates remaining dev PRs on a head
+that another PR leaves by pushing, closing, or retargeting away from dev.
+Its trusted, checks-writing job has a distinct non-required name and publishes
+the actual source context only for current dev peers. It is not branch-filtered,
+so a retarget away from dev is observable; it never creates a skipped
+`source-attribution` or `workflow-lockdown-guard` result that could bless a peer.
+This clears collision failures without requiring an unrelated edit to the
+remaining PR. It uses the same validator, freshness checks and request budget.
+
+Pushes to the default release branch and trusted manual dispatches refresh the
+distinct context on current open dev PR heads without editing their descriptions
+or labels. Unchanged metadata/validator decisions are deduplicated and writes
+are paced. This refresh closes the rollout gap for already-open PRs whose old
+green lockdown runs never examined attribution.
+An unstable or unreadable PR fails its refresh without starving later heads;
+the job reports sanitized failures after processing the batch.
+Refresh publication starts pending, rereads metadata before and after completing
+its result, and supersedes any changed/unverifiable snapshot with a failure
+before a bounded retry. A delayed refresh must not leave a stale successful
+result after a concurrent description or metadata edit.
+Completed check conclusions are not rewritten: superseding failure uses a new
+check, and only an unfinished original is closed out directly.
+
+**Activation is separate from implementation merge.** After promotion to
+`main`, verify a real source-check failure and a body-only repair from the
+actual trusted workflow. Only then extend the existing no-bypass required-check
+ruleset with `source-attribution`, preserving its other checks and conditions.
+Do not report enforcement live based only on a dev merge or an unrelated
+same-named check. The existing context-name/publisher forgery residual risk
+described above applies here too.
+
+Source-policy decisions do not waive protected-path authorization, review, or
+other required CI. Agents repair missing metadata and do not apply or remove
+operator-only policy labels.
+
 ### Everyone else
 
 Anyone who hasn't been invited as a collaborator at all **gets no
-automatic CI, no automatic Copilot review, and no agentic-workflow
+automatic code CI, no automatic Copilot review, and no agentic-workflow
 support**, only the strictest built-in fork-PR-approval gate (Settings →
 Actions → General → "Fork pull request workflows" → **"Require approval
 for all outside collaborators"**), which already blocks every Actions run
@@ -487,7 +563,8 @@ for all outside collaborators"**), which already blocks every Actions run
 the trusted review job's own collaborator check (above) for review. A
 Maintainer can still manually approve a run or request a review for an
 outside PR at their discretion — this only removes the automatic path for
-someone the repo owner never invited.
+someone the repo owner never invited. Trusted metadata checks may still run
+without executing any fork/PR-head content.
 
 **This also means an unapproved fork PR against `main` gets zero automated
 feedback**, including from `main-gate` (below) — GitHub holds the *entire*
@@ -503,13 +580,15 @@ does. Grouped by role; see each file's own header comment for full
 rationale and any known limitations.
 
 **PR-related gating** (not all run on every PR — `ci.yml` runs on every
-PR; the review and lockdown workflows target only `dev`; the reminder
+PR; trusted review, lockdown, and source-attribution PR checks target `dev`,
+with source-attribution refreshes on `main` push/manual dispatch; the reminder
 targets only `main`; `trusted-ci.yml` is path-scoped and opt-in):
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `ci.yml` | `pull_request`, `push` (`main`/`dev`), `workflow_dispatch` | The fast smoke-CI suite (guards, lint, per-plugin tests) that gates every PR. Contains `main-gate` (rejects a non-promotion PR against `main`) and the `PR gate` fixed-name required-check aggregate, including native Windows archive-source/chronicler smoke when `agent-logger` is selected. |
-| `workflow-lockdown-guard.yml` | `pull_request_target` → `dev` | One trusted run hosts the unchanged required `workflow-lockdown-guard` check and the Maintainer-only review fallback, with independent jobs and job-scoped review permissions/concurrency. Workflow and check names stay unchanged; no PR code executes. |
+| `workflow-lockdown-guard.yml` | `pull_request_target` → `dev` (including body/label edits), `push` → `main`, `workflow_dispatch` | Independent trusted jobs host the existing required `workflow-lockdown-guard` check, the separate `source-attribution` metadata check, and the Maintainer-only review fallback. Default-branch push/manual runs refresh source-attribution checks for already-open `dev` PRs; job-scoped permissions/concurrency preserve the review boundary. No PR code executes. |
+| `source-attribution-departures.yml` | `pull_request_target` (`synchronize`, `closed`, `edited`) | Trusted metadata-only refresh of remaining dev PRs on a departed shared head, including retargets away from dev. Publishes no required-context skipped jobs and never executes PR content. |
 | `base-branch-reminder.yml` | `pull_request_target` → `main` | Posts a one-time comment asking a non-owner author to retarget a PR against `main` to `dev` (see [If you opened a PR against `main` by mistake](#if-you-opened-a-pr-against-main-by-mistake)). Never checks out or executes PR code. |
 | `trusted-ci.yml` | `pull_request_target`, paths-scoped to `.github/workflows/trusted-ci.yml`/`libs/**`/`agent-bridge`/`tools/**` | Opt-in (`vars.TRUSTED_SELF_HOSTED_CI`), collaborator-gated self-hosted CI lane for paths too sensitive/expensive for the standard runner pool; includes its own file so a change to the gate itself also re-runs it. |
 
