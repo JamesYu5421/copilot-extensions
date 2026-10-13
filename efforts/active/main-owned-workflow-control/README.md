@@ -435,3 +435,76 @@ credential changes, broad policy weakening or unreviewed releases.
 - A tightly coupled preflight follow-up rejects missing/non-string/empty rule
   discriminators rather than treating malformed policy as a non-status rule.
   Legitimate unrelated rule types remain unchanged.
+
+### 2026-10-13 - Dev-owned baseline correction and release queue recovery
+
+- #6426 merged as `fd73fdcff233` after current-head approval `5498079093`,
+  zero findings, both explicit requirements and the actual read-only preflight
+  passed. Malformed-policy behavior is dev-landed, not claimed deployed.
+- Generated promotion #6408 was conflicted despite green checks: main's only
+  intervening commit was automated baseline update #6071 (`53be0fa787d3`).
+  The operator identified main-targeted baseline maintenance as a bug and chose
+  a versioned baseline updated on dev, not a release-artifact redesign.
+- The operator explicitly authorized closing #6408. Only its recorded head
+  `c2e9bf25a7fe` was retired; branch and validation evidence were preserved.
+  Run `38324591183` ended with the expected closed-candidate failure, releasing
+  the queue. Replacement `38334102000` started; no new candidate is yet claimed
+  merged, and no CI or branch-policy bypass was used.
+- #6430 moves baseline maintenance into the existing trusted CI-completion
+  invocation. Pinned trusted tooling reads committed dev as data with isolated
+  Python and credential-free checkouts; publication is baseline-only to dev,
+  under ordinary CI/review. The release PAT is confined to publication.
+- The obsolete main-writing and manual-verification workflows are removed;
+  main admission no longer permits their baseline branch. Hard caps, existing
+  ceiling refresh and unrelated contribution scoping remain unchanged.
+  Sixty-one targeted tests passed, including poisoned candidate tooling/imports,
+  new-offender rejection, real stale-input/diff fencing and main rejection.
+- Activation/default-main proof remains pending review, CI and release. The
+  independent #6332 writer/attestation owner retains its files and open findings;
+  main validation is not pruned on the strength of this correction.
+
+### 2026-10-13 - Replacement release and baseline review follow-through
+
+- Replacement #6441 merged at `03:25:21Z` as `9539eda8f9b3`; promotion
+  `38334102000` completed successfully, including its exact-candidate waiter
+  and post-merge tag `promote-20261013032543-9539eda8`. The recorded validated dev input
+  `a27d57dc2ddc83fc1a8e92a0a026e5f64b5cb7b2` covers #6402 and #6414 by
+  Git ancestry, but not later #6426 or the still-open #6438. Runtime adoption
+  and the later covering release remain separate obligations.
+- Current-head review of #6438 found a real stale-baseline gap after the
+  pre-publication SHA fence: a subsequent dev shrink could leave an excessive
+  ceiling that the ordinary upper-bound check accepted.
+- The existing required PR guards now run read-only automatic-baseline
+  canonicality on the automation branch's merged dev tree. Recomputing the
+  refresh must produce the same baseline; a stale result fails without
+  rewriting the PR. Ordinary reviewed manual ceilings remain unchanged.
+  This validates the tree CI exercises, not a claim of atomic merge-time CAS.
+- Fifty-three focused tests passed, including an actual Git merge after dev
+  shrinks beyond the publication fence, refusal without file mutation,
+  successful regenerated policy, new-offender rejection and required-job
+  wiring. Focused lint and documentation consistency passed.
+  No new workflow, required check or credential was introduced.
+
+### 2026-10-13 - Operator-selected widen-only maintenance
+
+- The operator explicitly prioritizes avoiding an excessively low ceiling
+  that blocks code over avoiding a stale, unnecessarily high ceiling.
+  Confirmed automated maintenance must widen only; tightening remains a
+  deliberate componentization/manual refresh, not a subsequent automatic pass.
+- Automation now invokes `--refresh-baseline --widen-only`. It raises an
+  existing entry when necessary but never lowers, removes or creates an
+  entry. Manual refresh and `--allow-widen` retain their existing behavior;
+  the hard cap for new offenders remains enforced.
+- Removed the earlier experimental exact-baseline canonicality gate:
+  it rejected the stale-high proposals the operator accepts, and it could
+  not establish atomic base freshness under the non-strict status policy.
+  Ordinary PR ceiling checks and both required contexts remain intact.
+  No global strict-base policy, merge queue or additional CI run was introduced.
+- Sixty-two focused cases passed, including real Git races: a stale high
+  proposal remains admissible after a shrink, while widen-only maintenance
+  cannot publish a tightening that blocks subsequent growth within the
+  existing ceiling. Shrunk/graduated entries are preserved, new offenders
+  still fail, and deliberate manual tightening is unchanged.
+- Updated the reviewer contract and remaining live references to the retired
+  workflows. Historical incident references remain historical; the independent
+  attestation/control implementation is not changed.
