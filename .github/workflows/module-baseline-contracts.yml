@@ -1,0 +1,30 @@
+name: Module baseline contracts
+
+on:
+  schedule:
+    - cron: "19 12 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full:
+    name: full dev baseline contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v9.0.0
+      - name: Install tooling
+        run: uv pip install --system pytest pyyaml
+      - name: Full baseline policy and publication contracts
+        run: >-
+          python -m pytest -q
+          tools/test_prepare_module_baseline.py tools/test_check_module_size.py
+          tools/test_promote_release.py::test_promoted_dev_baseline_protects_materialized_library

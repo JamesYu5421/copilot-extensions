@@ -479,20 +479,63 @@ def test_actual_main_gate_rejects_baseline_only_writers(
     assert "Baseline policy changes require reviewed dev PRs" in result.stdout
 
 
-def test_actual_required_ci_rejects_stale_measured_parent(
-    repo: Path, publisher: tuple[Path, dict[str, str]],
+@pytest.mark.parametrize("boundary", ["producer", "required-ci", "verify"])
+def test_actual_required_ci_and_producer_refresh_narrow_tracking_refs(
+    repo: Path, publisher: tuple[Path, dict[str, str]], boundary: str,
 ) -> None:
     _, env = publisher
     source = snapshot(repo, {"src/legacy.py": 1300}, {"src/legacy.py": 1200})
     proposal = updater.prepare(repo, source)
-    snapshot(repo, {"src/legacy.py": 1400}, {"src/legacy.py": 1200})
-    git(repo, "push", "-q", "origin", "dev")
-    ci = yaml.safe_load((TOOLS.parent / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
-    step = next(s for job in ci["jobs"].values() for s in job.get("steps", [])
-                if s.get("name") == "Baseline automation must still measure current dev")
+    git(repo, "branch", "main", source)
+    newer = snapshot(repo, {"src/legacy.py": 1400}, {"src/legacy.py": 1200})
+    git(repo, "push", "-q", "origin", "main", "dev")
+    git(repo, "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main")
+    git(repo, "update-ref", "refs/remotes/origin/dev", source)
+    git(repo, "checkout", "-q", "--detach", proposal.commit_sha)
+    git(repo, "fetch", "--no-tags", "origin", "dev")
+    assert git(repo, "rev-parse", "origin/dev") == source
+    output = Path(env["RUNNER_TEMP"]) / "source-output"
+    env = dict(env, HEAD_SHA=proposal.commit_sha, EVENT_SHA=source,
+               GITHUB_OUTPUT=str(output), GITHUB_EVENT_NAME="workflow_run")
+    if boundary == "producer":
+        step = next(s for s in workflow()["jobs"]["widen"]["steps"] if s.get("id") == "source")
+    else:
+        filename = "ci.yml" if boundary == "required-ci" else "module-size-baseline-widen-verify.yml"
+        cfg = yaml.safe_load((TOOLS.parent / ".github/workflows" / filename).read_text(encoding="utf-8"))
+        name = ("Baseline automation must still measure current dev" if boundary == "required-ci"
+                else "Reject a stale automation proposal")
+        step = next(s for job in cfg["jobs"].values() for s in job.get("steps", [])
+                    if s.get("name") == name)
     result = subprocess.run(
         ["bash", "-e", "-o", "pipefail", "-c", step["run"]], cwd=repo,
-        env=dict(env, HEAD_SHA=proposal.commit_sha), capture_output=True, text=True, timeout=30,
+        env=env, capture_output=True, text=True, timeout=30,
         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
     )
-    assert result.returncode != 0 and "Stale baseline proposal" in result.stdout
+    assert git(repo, "rev-parse", "origin/dev") == newer
+    if boundary == "producer":
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert f"sha={newer}" in output.read_text()
+    else:
+        assert result.returncode != 0 and "refresh" in result.stdout
+
+
+def test_actual_workflow_has_separate_scheduled_full_lane_and_ci_smoke() -> None:
+    directory = TOOLS.parent / ".github/workflows"
+    full = yaml.safe_load((directory / "module-baseline-contracts.yml").read_text(encoding="utf-8"))
+    triggers = full.get("on", full.get(True))
+    assert triggers["schedule"] and "workflow_dispatch" in triggers
+    assert "pull_request" not in triggers and "push" not in triggers
+    assert full["permissions"] == {"contents": "read"}
+    steps = full["jobs"]["full"]["steps"]
+    assert steps[0]["with"]["persist-credentials"] is False
+    command = next(s["run"] for s in steps if "publication contracts" in s.get("name", ""))
+    assert "-k" not in command
+    assert "tools/test_prepare_module_baseline.py" in command
+    assert "tools/test_check_module_size.py" in command
+    assert "::test_promoted_dev_baseline_protects_materialized_library" in command
+    ci = yaml.safe_load((directory / "ci.yml").read_text(encoding="utf-8"))
+    assert "schedule" not in ci.get("on", ci.get(True))
+    smoke = next(s for job in ci["jobs"].values() for s in job.get("steps", [])
+                 if s.get("name") == "Dev baseline producer contracts")
+    assert smoke["if"] == "steps.module-baseline-contracts.outputs.run == 'true'"
+    assert "-k " in smoke["run"]

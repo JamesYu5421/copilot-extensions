@@ -875,11 +875,13 @@ binstub in `~/.local/bin/`.
   the JSON, never something a plain refresh does silently — bare
   `--refresh-baseline` only lowers or removes entries, it never raises one.
   The one exception is the opt-in `--refresh-baseline --allow-widen` flag,
-  restricted by convention to a scheduled/post-merge run against `main`
-  (`.github/workflows/module-size-baseline-widen.yml`), which additionally
-  ratchets a grown file's ceiling up to its current size and opens its own
-  small, reviewable PR — never something a PR branch's own CI run applies to
-  its own diff. A separate `--changed-since REF` flag scopes the ordinary
+  reserved for post-merge maintenance of committed `dev` policy. The
+  trusted-main producer (`.github/workflows/module-size-baseline-widen.yml`)
+  reads pinned dev Git blobs as data and opens a baseline-only PR against
+  `dev`, never `main`; ordinary review and contribution checks still apply.
+  It ratchets only an existing grandfathered ceiling, never a new offender
+  or a PR branch's own diff. See [the baseline maintenance contract](docs/pipelines.md#automated-workflows-reference)
+  for publication and admission boundaries. A separate `--changed-since REF` flag scopes the ordinary
   (non-widening) check to files this branch's own commits actually touch
   (used by CI on `pull_request` events) — this repo's high concurrent-PR
   volume otherwise let one already-merged PR's growth in a shared,

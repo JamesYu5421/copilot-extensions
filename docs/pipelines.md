@@ -552,6 +552,7 @@ Only normal validated promotion carries the policy to consumers on `main`.
 |----------|---------|---------|
 | `module-size-baseline-widen.yml` | Completed `CI` on committed `dev`, or `push` → `main` | Trusted-main code measures pinned dev Git objects and proposes reviewed baseline-only changes to dev. It never independently advances main. |
 | `module-size-baseline-widen-verify.yml` | Baseline-changing PR → `dev`, `workflow_dispatch` | Read-only baseline verification; automation proposals must still match current dev. |
+| `module-baseline-contracts.yml` | `schedule` (weekly), `workflow_dispatch` | Full isolated baseline policy, publication/admission, and real materialization contracts; required CI keeps its separate path-gated smoke selection. |
 | `module-health-watchdog.yml` | `schedule` (daily), `workflow_dispatch` | Proactively finds the single worst module-size-ceiling offender (organic drift no PR-time gate catches) and files/updates one tracking issue for it. |
 | `stale-branch-sweep.yml` | `schedule` (weekly), `workflow_dispatch` | Deletes merged-PR branches still lingering on `origin` — the automated form of the one-time 3000+-branch cleanup. |
 | `installation-context-full.yml` | `schedule` (daily), `workflow_dispatch` | Full-sweep variant of the installation-context contract smoke check `ci.yml` runs per-PR. |

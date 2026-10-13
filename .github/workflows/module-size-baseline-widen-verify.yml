@@ -40,7 +40,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh auth setup-git
-          git fetch --no-tags origin dev
+          git fetch --no-tags origin refs/heads/dev:refs/remotes/origin/dev
           source=$(git show -s --format=%P HEAD)
           if [ "$source" != "$(git rev-parse origin/dev)" ]; then
             echo "::error::dev advanced since this baseline was measured; refresh the proposal before landing."

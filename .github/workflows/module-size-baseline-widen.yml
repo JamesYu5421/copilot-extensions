@@ -49,7 +49,7 @@ jobs:
           EVENT_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           gh auth setup-git
-          git fetch --no-tags origin dev
+          git fetch --no-tags origin refs/heads/dev:refs/remotes/origin/dev
           if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
             git merge-base --is-ancestor "$EVENT_SHA" origin/dev
           fi

@@ -16,6 +16,10 @@ workflow's actual Bash publisher against a disposable local remote on Linux.
 The publisher cases prove that `main`, `dev`, and an existing promotion candidate
 remain unchanged, including dev-advancement and exact-lease rejection. Windows
 runs the Git-data cases; Bash publisher cases are explicitly Linux-only.
+Required CI runs a path-gated smoke selection. The separate
+`module-baseline-contracts.yml` workflow runs the full policy/publication suite
+and real materialization fixture weekly or on manual dispatch; scheduling it
+does not schedule the entire CI matrix.
 
 The review-request workflow's fast contract uses
 `node --test tools/test_copilot_review_gate.cjs`. To exercise its exact script

@@ -379,7 +379,7 @@ jobs:
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          git fetch --no-tags origin dev
+          git fetch --no-tags origin refs/heads/dev:refs/remotes/origin/dev
           source=$(git show -s --format=%P "$HEAD_SHA")
           if [ "$source" != "$(git rev-parse origin/dev)" ]; then
             echo "::error::Stale baseline proposal: refresh against current dev before landing."
@@ -396,14 +396,16 @@ jobs:
           if [ "$EVENT_NAME" = pull_request ]; then
             base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
             changed=$(git diff --name-only "$base" "$HEAD_SHA")
-            if ! grep -Eq '^(\.github/workflows/(ci|base-branch-reminder|module-size-baseline-widen|module-size-baseline-widen-verify)\.yml|tools/(prepare_module_baseline|test_prepare_module_baseline|check-module-size|test_check_module_size)\.py)$' <<< "$changed"; then
+            if ! grep -Eq '^(\.github/workflows/(ci|base-branch-reminder|module-size-baseline-widen|module-size-baseline-widen-verify|module-baseline-contracts)\.yml|tools/(prepare_module_baseline|test_prepare_module_baseline|check-module-size|test_check_module_size)\.py)$' <<< "$changed"; then
               run=false
             fi
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
       - name: Dev baseline producer contracts
         if: steps.module-baseline-contracts.outputs.run == 'true'
-        run: python -m pytest -q tools/test_prepare_module_baseline.py
+        run: >-
+          python -m pytest -q tools/test_prepare_module_baseline.py
+          -k "actual_workflow or actual_reminder or unchanged_policy or new_over_cap or committed_objects or actual_required_ci"
       - name: compat-root-migration scanner guard tests
         # Backs efforts/active/compatibility-root-decoupling/: this
         # scanner's output controls when a compatibility-root re-export is

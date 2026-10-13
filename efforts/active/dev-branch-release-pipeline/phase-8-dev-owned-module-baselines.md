@@ -162,6 +162,20 @@ review admission. Earlier draft holds are preserved without cross-run
 inference, and armed auto-merge requests are refused. Native Bash regressions
 cover the ordering and stale-source hold; the reviewer verified the named fix.
 
+The freshness checks now fetch dev into an explicit remote-tracking destination.
+A real-Git fixture narrows the checkout's configured fetch mapping to main,
+leaves a stale `origin/dev` locally, and proves the producer and both admission
+steps refresh it before measuring or rejecting an outdated proposal. This avoids
+depending on a checkout's implicit remote-ref mapping.
+
+Required CI runs only a path-gated contract smoke. A separate weekly/manual
+workflow owns the full baseline portfolio, including publication races and the
+actual materialization fixture, without scheduling the entire CI matrix.
+The full selected Linux portfolio passed 64 tests through the bounded runner;
+the revised Windows smoke passed 7 tests with 3 Linux-only skips. The contributor
+guide now links the dev-owned maintenance contract rather than the retired
+main-writer convention.
+
 ## See Also
 
 - [Parent effort](README.md)
