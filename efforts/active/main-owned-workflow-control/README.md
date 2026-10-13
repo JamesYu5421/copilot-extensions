@@ -622,3 +622,79 @@ credential changes, broad policy weakening or unreviewed releases.
   assertions in the full worktrees suite. Existing #6556/#6557 owners are
   already validating a receiving-config reuse fix and coupled fixture repairs.
   Preserve that ownership rather than loosen assertions or fork the repair.
+
+### 2026-10-13 - Trusted main admission staging merged
+
+- #6566 merged at `21:08:28Z` as `1f57609f76f6`. Final head `db2e7e1fd99a`
+  received native Copilot approval `5509925281` with zero open threads.
+  CI `38466307933` and lockdown `38466308104` passed; the real source preflight
+  verified all configured requirements and the unchanged head before merge.
+- The new producer remains staging until a covering promotion. The legacy CI
+  gate and scanner remain, so no pipeline reduction is claimed live yet.
+- The next code slice shares the existing trusted identifier scan/report
+  implementation across its current completion caller and the main-PR host.
+  Preserve explicit failure reporting, stale-head handling and denied/removed
+  path behavior. Uninvited main PRs must not gain a secret-denylist scan oracle.
+  Only after both new producers are released and proven may main-PR CI stop.
+
+### 2026-10-13 - Shared identifier scan staged without coverage removal
+
+- The post-CI scanner and the main-PR host now share one owner-protected
+  composite action and reporter under `.github/actions/identifier-leak-guard/`.
+  The trusted scanner still reads paginated non-removed changed paths from the
+  pinned PR commit as Git data; no PR checkout or PR executable code is involved.
+- Main-host scanning requires both successful unchanged main admission and
+  owner authorship. Rejected and non-owner PRs gain no secret-backed scan oracle.
+  The existing post-CI caller and all CI event/coverage lanes remain in place.
+- Stale events and heads advancing during a scan publish nothing. Both callers
+  retain thin always-failure reporting that works without a loaded local action.
+  An unconfigured but operational feature remains neutral; infrastructure
+  failures and missing/malformed reports cannot masquerade as that feature gate.
+- Local contracts exercise the real reporter, API delivery ordering and
+  authenticated comment markers, bounded full finding detail, every prerequisite
+  failure, stale heads, caller fallback without local files, and the actual
+  Bash/Python scanner against generated Git blobs distinct from the working tree.
+  The legacy scanner/policy regression selection remains green.
+- This realizes the consolidation vision without changing ownership or branch
+  policy. Smallest-surface and fail-loud patterns apply; no plugin payload,
+  runtime, dependency, credential or installer changes require a changefile or
+  fresh-machine install lane. Fresh temporary fixtures exercise first action use.
+- Review/current-head hosted checks and a covering promotion remain outstanding.
+  Default-main producer proof precedes removal of main-PR CI; source staging
+  is not live cutover. The full worktrees release failure retains its existing
+  repair owner rather than being bypassed or repaired by a competing PR.
+
+### 2026-10-13 - Scanner staging native CI blocker repaired
+
+- #6577 received current-head approval with no findings, but required CI
+  exposed #6532's real-helper read-only fixture on Windows: the first hosted
+  helper call exceeded its unchanged fifteen-second boundary.
+- The contained native reproduction independently found host-generated
+  `PowerShell/telemetry.uuid` in both full-home snapshots. #6581 owns this
+  bounded fixture repair: opt out of PowerShell telemetry only in the test
+  environment, retaining the real helper calls, production deadline and
+  byte/mtime assertions. Both native cases now pass locally.
+- No production resolver behavior changed. Hosted current-head validation
+  remains mandatory; local telemetry proof alone is not claimed to explain
+  or clear every hosted timeout. Review and required CI must run again after
+  this correction. No gate is bypassed and no competing installation work
+  is taken over.
+
+### 2026-10-13 - Review closes filename-transport bypass
+
+- Current-head review of #6577 identified a real inherited line-delimited
+  filename bypass: a valid newline-containing Git path became two nonexistent
+  paths and its contents were skipped. Merge stayed blocked despite green CI.
+- The shared action now emits one JSON-string filename per record; scanner and
+  reporter consume that lossless representation. The old `--paths-file` API
+  remains compatible, while `--paths-jsonl` rejects malformed/non-string/NUL
+  records and cannot be combined with the other explicit scope selectors.
+- Actual passive Git trees cover newline, carriage return, Unicode line
+  separators, whitespace and backslash filenames even on Windows, where some
+  cannot be checked out. Binary tree creation and a NUL-delimited byte assertion
+  prove exact fixture filenames before the real scanner command runs.
+- The telemetry-corrected head's required hosted Windows runner and launch
+  selections passed. Its subsequent low-severity documentation advisory exposed
+  a CLI stdin-body transport failure; the full PR description was restored from
+  an explicit file and read back, including Documentation impact and attribution.
+  Review must evaluate that complete description and the filename fix together.
