@@ -268,15 +268,18 @@ def _spawn_worker_for(args: argparse.Namespace, task: dict) -> None:
     route = _core()._spawn_route(args)
     try:
         with _core()._client(args) as c:
-            resp = c.reserve_spawn(task_id, reserved_by=reserved_by)
+            resp = c.reserve_spawn(task_id, reserved_by=reserved_by, **(
+                {"driver": "ordinary-bridge"} if getattr(args, "spawn_backend", "bridge") == "bridge" else {}))
     except DispatchError as exc:
         # Fail safe: if we cannot reserve, we do NOT spawn (better to leave the
         # task queued than risk a second autonomous worker).
         print(
             f"agent-dispatch: --spawn skipped (could not reserve spawn: {exc}); "
-            f"task {task_id} left queued for any worker to claim",
+            f"task {task_id} remains durable; reservation admission is unproven",
             file=sys.stderr,
         )
+        if getattr(args, "spawn_backend", "bridge") == "bridge":
+            raise SystemExit(1) from exc
         return
     if not resp.get("reserved"):
         res = resp.get("reservation", {})
@@ -297,6 +300,10 @@ def _spawn_worker_for(args: argparse.Namespace, task: dict) -> None:
 
     try:
         interface = "cli" if getattr(args, "spawn_backend", "bridge") == "embody" else "acp"
+        if interface == "acp":
+            with _core()._client(args) as c:
+                _spawn_ordinary_worker(args, task, reservation, c, route=route)
+            return
         prepared = embody.prepare_reusable_worktree(
             task,
             reservation,
@@ -495,6 +502,46 @@ def _spawn_route(args: argparse.Namespace) -> str:
         )
     return " --shared" if getattr(args, "shared", False) else ""
 
+def _spawn_ordinary_worker(args, task, reservation, client, *, route: str) -> None:
+    from . import bridge, ordinary_bridge
+    key = reservation["key"]
+    published = False
+    try:
+        spawned = _core()._do_spawn(
+            args, {**task, "spawn_reservation_key": key, "_spawn_client": client}, route=route,
+        )
+        if spawned is None:
+            client.fail_spawn(key, detail="ordinary bridge unavailable before creation")
+            print(f"agent-dispatch: ordinary spawn unavailable; reservation {key} failed", file=sys.stderr)
+            raise SystemExit(1)
+        result, _, handle = spawned
+        if handle.get("retained"):
+            print(f"agent-dispatch: reservation {key} retained for explicit repair: {result.stderr}", file=sys.stderr)
+        elif handle.get("deferred"):
+            client.defer_spawn(key, detail=result.stderr)
+            print(f"agent-dispatch: ordinary send deferred; reservation {key}: {result.stderr}", file=sys.stderr)
+        elif result.returncode:
+            client.fail_spawn(key, detail=result.stderr)
+            print(f"agent-dispatch: ordinary spawn failed; reservation {key}: {result.stderr}", file=sys.stderr)
+        else:
+            client.record_spawn(key, session_handle=handle["session"], worktree=handle["worktree"],
+                                session_info=handle["session_info"])
+            published = True
+            if not args.run_async:
+                observation = ordinary_bridge.observe(handle)
+                if observation.returncode:
+                    print(f"agent-dispatch: prompt accepted; observation failed: {observation.stderr}", file=sys.stderr)
+                    raise SystemExit(observation.returncode or 1)
+                elif observation.stdout:
+                    print(observation.stdout, end="")
+        if result.returncode:
+            raise SystemExit(result.returncode)
+    except (DispatchError, ordinary_bridge.CreatedAgentUnrecorded, bridge.BridgeUnavailable) as exc:
+        stage = "prompt accepted; observation failed" if published else "ordinary spawn bookkeeping failed"
+        print(f"agent-dispatch: {stage}; reservation {key} retained: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
 def _do_spawn(args: argparse.Namespace, task: dict, *, route: str = ""):
     """Launch a worker for a task (best effort); return ``(result, via, handle)``.
 
@@ -503,21 +550,30 @@ def _do_spawn(args: argparse.Namespace, task: dict, *, route: str = ""):
     """
     backend = getattr(args, "spawn_backend", "bridge")
     import subprocess
-    from . import bridge, embody, session_acquisition
-    worker_id = f"acquired-{task.get('spawn_reservation_key')}"
-    prompt = (
-        embody.autopilot_worker_prompt(task["id"], worker_id=worker_id, route=route)
-        if backend == "embody" else bridge.worker_prompt(task["id"], worker_id=worker_id, route=route)
+    from . import bridge, embody, ordinary_bridge, session_acquisition
+    worker_id = f"embody-{task.get('spawn_reservation_key')}" if backend == "embody" else f"dispatch-{task.get('spawn_reservation_key')}"
+    prompt = embody.autopilot_worker_prompt(
+        task["id"], worker_id=worker_id, route=route, explicit_worker_identity=False,
     )
     try:
+        if backend == "bridge":
+            handle = ordinary_bridge.start(
+                task, client=task.get("_spawn_client"), agent=args.spawn_agent,
+                prompt=prompt, project=embody.project_for_task(task),
+                charter=getattr(args, "spawn_charter", None),
+            )
+            return subprocess.CompletedProcess([], 0, "", ""), "agent-bridge", handle
         result = session_acquisition.acquire(
             task, mode="cli" if backend == "embody" else "acp",
             agent=args.spawn_agent,
             prompt=prompt,
+            charter=getattr(args, "spawn_charter", None),
             project=embody.project_for_task(task),
             verify_timeout=getattr(args, "verify_timeout", 0) or 0,
             wait=not args.run_async,
         )
+    except ordinary_bridge.CreatedAgentUnrecorded as exc:
+        return subprocess.CompletedProcess([], 1, "", str(exc)), "agent-bridge", {"retained": True}
     except bridge.BridgeCarriedSessionBusy as exc:
         return (
             subprocess.CompletedProcess([], 1, "", str(exc)),
@@ -680,6 +736,10 @@ def _create_args_parent() -> argparse.ArgumentParser:
         "autopilot session in a fresh parallel worktree (agent-worktrees "
         "embody -- the 'dispatch an agent to do X' path); 'bridge' "
         "(default) = a headless agent-bridge ACP worker",
+    )
+    cp.add_argument(
+        "--spawn-charter",
+        help="Target harness charter passed to ordinary headless Bridge create before the assigned task.",
     )
     cp.add_argument(
         "--spawn-agent",
