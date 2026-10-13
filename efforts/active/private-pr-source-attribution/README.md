@@ -31,16 +31,17 @@ only protection of each machine's local copy is machine-bound.
 
 ## Context
 
-The root codename layer landed in #5458 and the encrypted identity layer in
-#5578. Encryption currently records the immediate product worktree, not the
-originating control worktree. Portable file-key custody exists but requires
-manual provisioning. Native Windows ARM64 omits encryption when its optional
-platform dependency is unavailable.
+The root codename layer landed in #5458 and encrypted identity in #5578.
+Originating control identity subsequently landed in #6080, native Windows
+local cache protection in #6108, native portable token encryption in #6115,
+and common vault-key sourcing in #6127. Provider-neutral preparation landed
+in #6281 and repository enforcement in #6356.
 
-The vault has a synced-database entry surface and a separate opt-in persistent
-cache. Its Windows KEKs are machine-bound: they must not become the portable
-PR identity key. Existing cache encryption also depends on a package that is
-not normally available on native Windows ARM64.
+The vault's opt-in persistent cache protects a local copy of the common owner
+key. Windows protection is machine-bound; the identity key and AWI1 tokens
+remain portable. Explicit initial population is distinct from routine
+locked-vault reads. A dev merge alone does not prove main deployment,
+required-rule activation, or synchronized fleet adoption.
 
 ## Request
 
@@ -97,7 +98,7 @@ remote PR mutation. Adopter labels are optional public invocation configuration.
   machine key generation.
 - [x] Do not use machine-bound KEKs as the shared identity key. Machine-bound
   protection wraps only the local cached copy of the common vault key.
-- [ ] Serve routine PR publication and lookup from a protected local cached key
+- [x] Serve routine PR publication and lookup from a protected local cached key
   without unlocking the vault after successful initial population.
 - [x] Missing or invalid cache must require explicit provisioning/unlock;
   never create a divergent replacement key or fall back to plaintext storage.
@@ -221,3 +222,32 @@ No production secret is read or written by the planning slice.
 - Merge to `dev`, promotion to `main`, and authorized local rollout remain
   distinct states; no immediate force-update or manual projection sync is
   part of this continuation.
+
+### 2026-10-13 — Implementation and local owner-key proof
+
+- #6281 merged after review. Preparation preserves authored prose and emits
+  provider-neutral source metadata without creating a PR or requiring a
+  particular hosting provider.
+- One authoritative owner key was populated explicitly in the synced vault
+  after verified absence. Routine publication and lookup then used its
+  protected cache with the vault daemon locked, including a fresh process.
+  No divergent machine key was generated and no existing key was replaced.
+- Real native Windows ARM64 exercises proved protected-cache reads and AWI1
+  round trips for two distinct fixture source-machine identities using one
+  shared key. The persisted description of #6356 was independently fetched
+  and decoded in memory; its private immediate and originating identities
+  matched the expected ownership chain. Neither key nor raw identifiers
+  were emitted into public evidence.
+- Focused identity/source, legacy-token/cache, native protection, subprocess
+  timeout/output-bound, and provider-fallback selections passed. The latter
+  covered 17 provider-neutral fallback contracts. Actual synchronized
+  other-machine adoption remains unproved: disposable multi-identity fixtures
+  and a successful local cache are not a fleet rollout.
+- #6356 merged on 2026-10-13 after its current-head approving review and CI
+  run [38388369063](https://github.com/ThomasMichon/copilot-extensions/actions/runs/38388369063).
+  Dev-push CI [38391631615](https://github.com/ThomasMichon/copilot-extensions/actions/runs/38391631615)
+  subsequently passed. Main promotion, live negative/body-only repair and
+  shared-head departure evidence, no-bypass rule activation, and final
+  validation reconciliation are still completion gates.
+- Host installation is owned by the adopter's authorized maintenance lane.
+  This effort did not force-update plugins or manually synchronize projections.
