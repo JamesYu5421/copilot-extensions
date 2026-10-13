@@ -10,12 +10,18 @@ import re
 import shutil
 import socket
 import subprocess
-from collections.abc import Mapping
+import time
+from collections.abc import Collection, Mapping
 from pathlib import Path
 
 from . import config as cfg
-from . import git_ops, output
+from . import git_ops, output, update_events
 from .installer_capabilities import posix_zero_downtime_flag_supported
+from .update_gate import (  # noqa: F401 - re-exported for callers and tests
+    MACHINE_GATED_SKIP,
+    MachineDetectionError,
+    _machine_gate_blocks,
+)
 
 
 def _installer_timeout(
@@ -45,6 +51,17 @@ def _installer_timeout(
                 raise ValueError(f"{name}: installerDeadlineSeconds must be a positive integer")
     # Disabling the inner watchdog must not disable the updater's safety bound.
     return (deadline if deadline > 0 else 480) + 30
+
+
+def installer_deadline_status(error: Exception) -> str:
+    """Status for a failed :func:`_installer_timeout`, keeping its cause.
+
+    An unreadable manifest is an OS failure (its ``[Errno N]`` marker classifies
+    it), never an invalid deadline value.
+    """
+    if isinstance(error, OSError):
+        return f"installer manifest unreadable: {error}"
+    return f"invalid installer deadline: {error}"
 
 
 def _core():
@@ -285,6 +302,9 @@ def _update_registered_plugins(
             output.warn(f"{name}: {status} (inactive installed inventory advisory)")
         else:
             output.warn(f"{name}: {status}")
+    for name, status, target in (*purge_results, *results):
+        update_events.record("payload_refresh", f"{name}@{reconcile.MARKETPLACE}", status,
+                             required=target.required)
     payloads_ok = all(
         status.startswith("OK") or not target.required for _, status, target in results
     )
@@ -332,7 +352,7 @@ def _registered_plugin_targets() -> dict[str, _RegisteredPluginTarget]:
     def record_activation_error(message: str, error: Exception) -> None:
         nonlocal activation_unknown
         activation_unknown = True
-        detail = str(error).replace("\r", " ").replace("\n", " ")[:240]
+        detail = update_events.bounded(str(error).replace("\r", " ").replace("\n", " "), 240)
         activation_warnings.append(f"{message}: {detail}")
 
     try:
@@ -431,53 +451,6 @@ def _module_names(plugin_dir: Path) -> set[str]:
     return out
 
 
-MACHINE_GATED_SKIP = "SKIPPED (not allowed on this machine)"
-
-
-class MachineDetectionError(Exception):
-    """The machine gate can't be decided: the enabling repository or the
-    machine identity could not be resolved."""
-
-
-def _machine_gate_blocks(name: str, scope: str, context: Path | None) -> bool:
-    """Whether the machine gate forbids reconciling *name*'s runtime here.
-
-    Mirrors the session-start reconcile (``reconcile.build_plan``): only a
-    ``machine-gated`` runtime is subject to the gate, the gate manifest and the
-    machine identity are resolved from the repository that enables the plugin
-    (falling back to the active project's anchor), and the decision itself is
-    ``reconcile.runtime_allowed`` -- so ``update`` never provisions a runtime the
-    launch-time reconcile would refuse on this machine.
-    """
-    if scope != "machine-gated":
-        return False
-    from . import reconcile
-
-    repo_dir = context
-    if repo_dir is None:
-        # Resolve the active project's anchor directly: falling back to the
-        # current directory would let an unrelated checkout with no gate
-        # manifest authorize a machine-gated runtime.
-        try:
-            repo_dir = Path(cfg.load_config().default_repo.anchor)
-        except Exception as error:
-            raise MachineDetectionError(
-                f"could not resolve the repository that enables {name}: {error}"
-            ) from error
-    try:
-        machine = cfg.detect_machine(repo_dir)
-    except Exception as error:
-        # Never fall back to a bare hostname: detection raises on purpose when
-        # an explicit execution space is required or the machine registry is
-        # invalid, and launch-time reconcile refuses in that case too.
-        raise MachineDetectionError(str(error)) from error
-    gate = reconcile.load_runtime_gate(repo_dir)
-    gate_present = reconcile.gate_manifest_present(repo_dir)
-    return not reconcile.runtime_allowed(
-        scope, name, machine, gate, gate_present=gate_present
-    )
-
-
 def _reconcile_registered_runtimes(
     plugin_dir: Path,
     platform_name: str,
@@ -485,6 +458,7 @@ def _reconcile_registered_runtimes(
     *,
     force: bool = False,
     targets: dict[str, _RegisteredPluginTarget] | None = None,
+    force_runtimes: Collection[str] = (),
 ) -> bool:
     """Rebuild the runtime venv of every enabled plugin the other steps skip."""
     if skip_modules is not None and len(skip_modules) == 0:
@@ -507,13 +481,14 @@ def _reconcile_registered_runtimes(
     reconcile_one_runtime = _core_helper("_reconcile_one_runtime", _reconcile_one_runtime)
     results: list[tuple[str, str]] = []
     for name in sorted(names):
+        forced = force or name in force_runtimes
         results.append(
             (
                 name,
                 reconcile_one_runtime(
                     name,
                     platform_name,
-                    force=force,
+                    force=forced,
                     gate_context=targets[name].context,
                 ),
             )
@@ -549,6 +524,22 @@ def _reconcile_one_runtime(
     ``machine-gated`` runtime the gate does not allow on this machine is reported
     as :data:`MACHINE_GATED_SKIP` (even under ``--force``) and never installed.
     """
+    started = time.monotonic()
+    status = _reconcile_one_runtime_status(
+        name, platform_name, force=force, gate_context=gate_context
+    )
+    update_events.record("runtime_reconcile", f"{name}@copilot-extensions", status,
+                         changed=status.startswith("OK"), started=started)
+    return status
+
+
+def _reconcile_one_runtime_status(
+    name: str,
+    platform_name: str,
+    *,
+    force: bool,
+    gate_context: Path | None = None,
+) -> str:
     from . import reconcile
 
     pdir = reconcile.core_installed_payload_dir(name)
@@ -622,19 +613,42 @@ def _reconcile_one_runtime(
     if context is None and installer is not None and not installer.exists():
         return "installer not found"
 
+    try:
+        installer_timeout = _installer_timeout(name, child_environment, pdir)
+    except (OSError, ValueError) as error:
+        return installer_deadline_status(error)
     output.header(f"Reconciling Runtime: {name}" + (" (forced)" if force else ""))
     try:
         r = subprocess.run(
             argv,
             cwd=pdir,
-            timeout=_installer_timeout(name, child_environment, pdir),
+            timeout=installer_timeout,
             env=child_environment,
         )
     except subprocess.TimeoutExpired:
         return "timed out"
     except Exception as exc:
-        return str(exc)[:120]
+        return update_events.bounded(str(exc), 120)
     return "OK" if r.returncode == 0 else f"installer exited {r.returncode}"
+
+
+def _run_engine_installer(
+    argv: list[str], plugin_dir: Path, timeout: int, env: Mapping[str, str],
+) -> int:
+    """Run agent-worktrees' own runtime installer and record its result.
+
+    A timeout is reported as such (never as success: a completed version slot
+    does not prove this attempt activated it) and returns a failure code.
+    """
+    try:
+        rc = subprocess.run(argv, cwd=plugin_dir, timeout=timeout, env=env).returncode
+        status = "OK" if rc == 0 else f"installer exited {rc}"
+    except subprocess.TimeoutExpired:
+        rc, status = 1, "timed out"
+        output.err("agent-worktrees installer timed out")
+    update_events.record("engine_runtime", "agent-worktrees@copilot-extensions", status,
+                         changed=status.startswith("OK"))
+    return rc
 
 
 def _fast_forward_project_anchors() -> None:
@@ -722,6 +736,7 @@ def _update_modules(
     force: bool = False,
     *,
     targets: dict[str, _RegisteredPluginTarget] | None = None,
+    force_runtimes: Collection[str] = (),
 ) -> bool:
     """Update sibling modules registered in modules.json."""
     manifest = plugin_dir / "modules.json"
@@ -732,6 +747,7 @@ def _update_modules(
         data = json.loads(manifest.read_text())
     except Exception as exc:
         output.warn(f"Failed to parse modules.json: {exc}")
+        update_events.record("module_update", "modules.json", f"unreadable: {exc}")
         return False
 
     modules = data.get("modules", [])
@@ -813,7 +829,7 @@ def _update_modules(
             )
         except MachineDetectionError as error:
             output.warn(f"{name}: machine detection failed: {error}")
-            results.append((name, "machine detection failed"))
+            results.append((name, f"machine detection failed: {error}"))
             continue
         if gate_blocks:
             output.info(f"Skipping module runtime not allowed on this machine: {name}")
@@ -824,12 +840,12 @@ def _update_modules(
             runtime_env, runtime_root = _reconcile.runtime_installer_environment(name, module_dir)
         except ValueError as error:
             output.warn(f"{name}: installation context invalid: {error}")
-            results.append((name, "installation context invalid"))
+            results.append((name, f"installation context invalid: {error}"))
             continue
         mod_payload_ver = _reconcile.payload_version(module_dir)
         mod_deployed_ver = _reconcile.runtime_deployed_version(name, root=runtime_root)
         if (
-            not force
+            not (force or name in force_runtimes)
             and mod_payload_ver
             and mod_deployed_ver
             and mod_payload_ver == mod_deployed_ver
@@ -841,7 +857,7 @@ def _update_modules(
             installer_timeout = _installer_timeout(name, runtime_env, module_dir)
         except (OSError, ValueError) as error:
             output.warn(str(error))
-            results.append((name, "invalid installer deadline"))
+            results.append((name, installer_deadline_status(error)))
             continue
 
         if platform_name == "windows":
@@ -919,6 +935,11 @@ def _update_modules(
             output.warn(f"Module '{name}' install failed: {exc}")
             results.append((name, str(exc)))
 
+    for name, status in results:
+        target = targets.get(name) if targets is not None else None
+        update_events.record("module_update", f"{name}@copilot-extensions", status,
+                             changed=status.startswith("OK"),
+                             required=targets is None or (target is not None and target.required))
     if results:
         output.header("Module Update Summary")
         for name, status in results:

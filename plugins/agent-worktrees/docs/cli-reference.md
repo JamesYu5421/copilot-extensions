@@ -626,11 +626,42 @@ on a cadence at two natural lifecycle boundaries -- **picker launch** and
 | `register` | Register a new project (create config + binstub without full reinstall) |
 | `unregister` | Deregister a project's own adoption lifecycle (projects.yaml + repos.yaml entry + its binstub) -- never the shared runtime or another project's registration; see below |
 | `uninstall` | Remove worktree manager (`--remove-config` ALSO deletes the SHARED `~/.agent-worktrees` registry root -- shared by every adopted project, not just `--project`'s; requires `--yes`) |
-| `update` | Re-deploy runtime from repo source + refresh every active registered plugin payload/runtime, purge inactive installed identities absent from an authoritatively refreshed marketplace catalog, and opportunistically refresh the remaining installed-but-inactive payload inventory; then update sibling modules, fast-forward the managed repo anchor(s), and auto-prune legitimately stale Picker pivot manifests. Active or activation-unknown identities are never purged. An inactive inventory refresh/uninstall failure is advisory; an active plugin refresh failure fails the update. Version-gated: skips a runtime whose deployed version already matches its payload (`--force` re-deploys all active runtimes; `--no-anchor-sync` skips the anchor sync; `--no-prune-pivots` skips the pivot prune -- see `doctor`'s `--prune-pivots` for the same safe subset run on demand) |
+| `update` | Re-deploy runtime from repo source + refresh every active registered plugin payload/runtime, purge inactive installed identities absent from an authoritatively refreshed marketplace catalog, and opportunistically refresh the remaining installed-but-inactive payload inventory; then update sibling modules, fast-forward the managed repo anchor(s), and auto-prune legitimately stale Picker pivot manifests. Active or activation-unknown identities are never purged. An inactive inventory refresh/uninstall failure is advisory; an active plugin refresh failure fails the update. Version-gated: skips a runtime whose deployed version already matches its payload (`--force` re-deploys all active runtimes; `--force-runtime NAME`, repeatable, re-deploys only the named runtime(s); `--no-anchor-sync` skips the anchor sync; `--no-prune-pivots` skips the pivot prune -- see `doctor`'s `--prune-pivots` for the same safe subset run on demand). Exit codes and the run's status file: see below |
 | `install-status` | Show installation and deployment status |
 | `deploy-instructions` | Retire migrated managed instruction files (machine identity now via the `session-machine` sessionStart hook) |
 | `machine-context` | sessionStart producer for the exact-session guidance writer (cwd-gated) |
 | `get` | Query config values (e.g., `agent-worktrees get repo-dir`) |
+
+### `update` results: exit codes, events, and status
+
+`update` (and `worktree-manager update`, which drives it) records each run
+through the shared [`update-telemetry`](../../../libs/update-telemetry/README.md)
+library: phase and per-plugin events go to
+`~/.copilot-extensions/update/runs/<run_id>/events.jsonl` and the folded result
+to `~/.copilot-extensions/update/update-status.json` (override the directory
+with `COPILOT_EXTENSIONS_UPDATE_HOME`). Each step is its own timed phase
+(`payload_refresh`, `engine_runtime`, `binstubs`, `module_update`,
+`runtime_reconcile`, `anchor_sync`, `prune`). The exit code is 0 on success and
+non-zero for every failure:
+
+| Exit | Meaning |
+|---|---|
+| 0 | Everything required is current (a restart may still be flagged in the status file) |
+| 1 | A step failed (`command_failed`), including a failed Manager cutover |
+| 2 | Usage error. Standalone `agent-worktrees update` rejects bad arguments before a run starts, so nothing is recorded. `worktree-manager update` creates the run (and self-updates) before the engine parses the forwarded arguments, so an engine usage error is recorded as the run's failure (`command_failed`, error code `usage`) and still exits 2 |
+| 3 | A configuration problem must be fixed first (for example a missing PowerShell, installer or engine, an invalid installer deadline, or an invalid installation context) |
+| 4 | Authentication is required |
+| 5 | Blocked by contention: a lock that timed out, a file another process holds open (Windows sharing/lock violation), or an installer exit of 75 (the cutover did not complete and the previous generation is still serving). Plain permission or I/O errors are exit 1 (`permission_denied` / `io_error`) |
+| 6 | An update step timed out: the agent-worktrees or a registered plugin's payload refresh, or a runtime or module installer. A timeout is always reported as a timeout, never as success |
+| 130 | Interrupted |
+
+`--force-runtime NAME` re-deploys just that runtime (repeatable); it is
+forwarded through `worktree-manager update`, and a name this update would not
+deploy (unknown, inactive, skipped, payload-only or not allowed on this machine)
+is a configuration error (exit 3). Inactive inventory failures are
+advisories and never fail the run. Telemetry
+is best-effort: if events or status cannot be written, `update` warns once,
+stops writing telemetry for the rest of that run, and its result is unchanged.
 
 ### Deregistering a project (`unregister`) vs. tearing down the runtime (`uninstall --remove-config`)
 
