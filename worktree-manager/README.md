@@ -66,6 +66,27 @@ be verified at all (git itself unavailable or the probe timed out) is
 reported separately under `repo_registration.unknown` — visible, but never
 treated as confirmed drift.
 
+## Launch preparation
+
+New and Resume wait for the engine to finish repository synchronization,
+prompt staging and instruction projection rather than imposing a fixed
+aggregate plan timeout. Preparation stages and elapsed-time heartbeats stream
+to the launch terminal; the final plan remains JSON on stdout. Individual
+engine operations keep their own failure bounds, and automation can explicitly
+request a bounded plan call.
+Captured preparation owns a kill-on-close Job on Windows and a dedicated
+process group on POSIX. A POSIX group owner stays unreaped until the engine's
+completion receipt has been read and the entire group has been cleaned up,
+including when an inner render failure degrades and the engine exits normally.
+Foreground projection inherits the latter rather than
+detaching from its launch owner, so an explicit timeout or cancellation also
+terminates renderer and Git descendants. The bounded asynchronous backup
+worker keeps its independent lifetime and containment.
+
+Instruction projection is shipped inside agent-worktrees itself. It does not
+require customizing-copilot to be installed or globally enabled: promotion
+vendors the shared canonical engine into the owning worktree payload.
+
 ## Resume prompt
 
 The initial loading tab is labelled `Local` with its environment until the
