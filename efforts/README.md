@@ -12,7 +12,7 @@ that pattern to this repository.
 |--------|--------|--------------|
 | [Dispatch Fleet Reliability and Recovery](active/dispatch-fleet-reliability-recovery/README.md) | Draft; maintenance categories, bounded supervision and registry-rooted recovery | #6466, #6467, #6470, #6471; existing #6407/#6421 repair owner retained |
 | [Workspace Acquisition Continuity](active/workspace-acquisition-continuity/README.md) | Draft; one execution workspace and replay-safe creation proposal | #6440 |
-| [Configuration Backstage and Worker Instances](active/configuration-backstage-and-worker-instances/README.md) | Draft; horizontal sections, list-first resources, explicit activation outcomes | #6379 |
+| [Configuration Backstage and Worker Instances](active/configuration-backstage-and-worker-instances/README.md) | Active; proposal reviewed, section and instance contracts | #6379 |
 | [Main-Owned Workflow Control](active/main-owned-workflow-control/README.md) | Active; first wave live, validation consolidation open | #6237; run/check consolidation primary, ownership enabling |
 | [Fleet Control V2](active/fleet-control-v2/README.md) | Active; artifact preflight landed, both-method release trust plan next | #6236, #6240, #6241; existing #5789/#6030/#6424 owners retained |
 | [Lean Runtime Dependencies](active/lean-runtime-dependencies/README.md) | Active; proposal reviewed, dependency reduction | #6234 |
