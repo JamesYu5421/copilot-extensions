@@ -25,6 +25,21 @@ launchers under the existing 90-second item budget. Package construction and
 whole-source fingerprint coverage belong to their own contracts; this fixture
 must not grow with unrelated runtime source files.
 
+### Fleet replay-retention boundaries
+
+The required native fleet lane runs the replay-expiry/idempotency contract with
+a four-event window and real, fully synchronous SQLite transactions. The same
+parameterized test also crosses the production 1,024-event window under
+`observation_retention_full`; unfiltered local and manual workflow runs retain
+that full-size proof. Required PR/push lanes exclude only that parameter and
+the existing `client_distribution_full` artifact matrix, keeping the
+120-second containment budget unchanged. This avoids making one boundary
+test issue over 1,000 disk flushes on every hosted Windows run; neither the
+production retention limit nor its durability policy changes. Explicit manual
+runs select both windows and the full artifact matrix with a 600-second fleet
+suite budget inside a 15-minute native runner job. PR/push budgets remain
+120 seconds for fleet, five minutes for the Linux job and seven for Windows.
+
 ### Derived native installation diagnostics
 
 `libs/payload-invocation/tests/test_derived_diagnostic_cli.py` executes the
@@ -186,6 +201,12 @@ python tools/run-plugin-tests.py agent-dispatch \
 
 Filtered (`-k`) and guard-only selections run as one contained sub-suite rather
 than repeatedly importing file groups that contain no selected tests.
+Use repeatable `--test-file <path-relative-to-tests>` with one plugin to avoid
+collecting unrelated modules before applying `-k`. Unknown, escaping and
+non-file selections fail before environment preparation. The Windows
+reconciliation smoke names `test_reconcile.py` and
+`test_installer_command_binding.py`, retaining all 18 selected checks and the
+120-second budget without collecting the other 10,000-plus tests.
 
 Managed-worktree removal fixtures accept the canonical project loader's
 keyword-only overlay selection while retaining synthetic receiving-side
