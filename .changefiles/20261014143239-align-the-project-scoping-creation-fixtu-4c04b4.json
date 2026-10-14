@@ -1,0 +1,9 @@
+{
+  "comment": "Align the project-scoping creation fixture with the real launch-admission record contract.",
+  "changes": [
+    {
+      "plugin": "agent-worktrees",
+      "type": "patch"
+    }
+  ]
+}

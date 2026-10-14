@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 _MAIN = (
     Path(__file__).resolve().parents[1] / "src" / "agent_worktrees" / "__main__.py"
 )
@@ -105,6 +107,8 @@ def _stub_create_worktree_core_internals(monkeypatch, m, tmp_path, config=None):
             worktree_path=kwargs["worktree_path"],
             branch=kwargs["branch"],
             kind=kwargs["kind"],
+            repo=kwargs["repo"],
+            yaml_path=Path(kwargs["tracking_path"]) / f"{kwargs['worktree_id']}.yaml",
         ),
     )
     monkeypatch.setattr(m.permissions, "clone_permissions", lambda *_a: False)
@@ -140,6 +144,7 @@ def _stub_create_worktree_core_internals(monkeypatch, m, tmp_path, config=None):
         monkeypatch.setattr(m.cfg, "load_config", lambda *a, **k: config)
 
 
+@pytest.mark.guard
 def test_create_worktree_core_plan_project_matches_repo_name_not_ambient_global(
     tmp_path, monkeypatch
 ):
@@ -159,6 +164,12 @@ def test_create_worktree_core_plan_project_matches_repo_name_not_ambient_global(
 
     assert result["launch"]["project"] == "demo-repo"
     assert result["launch"]["project"] == config.repo_name
+    command = result["launch"]["cmd"]
+    assert command[command.index("--record") + 1] == str(
+        tmp_path / "tracking" / f"{result['worktree']['id']}.yaml"
+    )
+    assert "--admission-only" in command
+    assert command[-1] == "copilot"
 
 
 def test_resolve_resume_plan_project_matches_repo_name_not_ambient_global(
