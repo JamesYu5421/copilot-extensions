@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -49,9 +51,11 @@ SPEC.loader.exec_module(MODULE)
         "plugins/agent-worktrees/scripts/emit-command-catalog.ps1",
         "plugins/agent-worktrees/payload-invocation.json",
         "libs/payload-invocation/command_binding.py",
+        "libs/payload-invocation/tests/test_derived_diagnostic_cli.py",
         "libs/payload-invocation/templates/catalog-posix.tmpl",
         "tools/sync-installation-context.py",
         ".github/workflows/ci.yml",
+        ".github/workflows/installation-context-acceptance.yml",
         "tools/installation_context_ci_scope.py",
         "tools/test_installation_context_ci_scope.py",
     ],
@@ -143,3 +147,102 @@ def test_native_windows_diagnostic_step_is_scoped_and_bounded() -> None:
     assert '-k "runtime_resolution_real_helper_read_only or command_binding"' in reconciliation["run"]
     assert "or command_binding" in reconciliation["run"]
     assert "--timeout 120" in reconciliation["run"]
+
+
+@pytest.mark.parametrize("job_name,step_name", [
+    ("checks", "Derived native diagnostics (POSIX)"),
+    ("test-runner-windows", "Derived native diagnostics (Windows PowerShell 5.1)"),
+])
+def test_derived_native_diagnostics_select_focused_smoke_in_bounded_lane(
+    job_name: str, step_name: str,
+) -> None:
+    workflow = yaml.safe_load((HERE.parent / ".github/workflows/ci.yml").read_text())
+    step = next(
+        step for step in workflow["jobs"][job_name]["steps"]
+        if step.get("name") == step_name
+    )
+    assert step["if"] == "steps.installation-context.outputs.run == 'true'"
+    assert step["timeout-minutes"] == 2
+    assert "libs/payload-invocation/tests/test_derived_diagnostic_cli.py" in step["run"]
+    assert '-m "not derived_diagnostic_full"' in step["run"]
+    if job_name == "test-runner-windows":
+        assert step["env"]["INSTALLATION_CONTEXT_POWERSHELL"] == "powershell"
+
+
+def test_full_derived_native_acceptance_has_explicit_bounded_matrix() -> None:
+    workflow = yaml.safe_load(
+        (HERE.parent / ".github/workflows/installation-context-acceptance.yml").read_text()
+    )
+    assert workflow.get("on", workflow.get(True)) == {"workflow_dispatch": None}
+    routes = {
+        "derived-diagnostics-posix": "ubuntu-latest",
+        "derived-diagnostics-windows": "windows-latest",
+    }
+    assert set(workflow["jobs"]) == set(routes)
+    for name, runner in routes.items():
+        job = workflow["jobs"][name]
+        assert job["runs-on"] == runner
+        assert job["timeout-minutes"] == 4
+        matrix = job["strategy"]["matrix"]
+        assert set(matrix) == {"mode", "pointer"}
+        assert set(matrix["mode"]) == {"mode_legacy", "mode_active"}
+        assert set(matrix["pointer"]) == {"pointer_absent", "pointer_retained"}
+        assert job["strategy"]["fail-fast"] is False
+        step = next(step for step in job["steps"] if step.get("name") == "All derived native copies")
+        assert "test_derived_diagnostic_cli.py" in step["run"]
+        assert '-k "${{ matrix.mode }} and ${{ matrix.pointer }}"' in step["run"]
+        assert "-m " not in step["run"].rsplit("pytest", 1)[1]
+        if runner == "windows-latest":
+            assert step["env"]["INSTALLATION_CONTEXT_POWERSHELL"] == "powershell"
+
+
+def test_foundation_lane_leaves_new_native_matrix_to_its_scoped_step() -> None:
+    workflow = yaml.safe_load((HERE.parent / ".github/workflows/ci.yml").read_text())
+    foundation = next(
+        step for step in workflow["jobs"]["checks"]["steps"]
+        if step.get("name") == "Payload invocation foundation tests"
+    )
+    assert "--ignore=libs/payload-invocation/tests/test_derived_diagnostic_cli.py" in foundation["run"]
+    assert "libs/payload-invocation/tests" in foundation["run"]
+    assert "plugins/agent-index/tests/test_command_catalog.py" in foundation["run"]
+
+
+@pytest.mark.parametrize("mode", ["mode_legacy", "mode_active"])
+@pytest.mark.parametrize("pointer", ["pointer_absent", "pointer_retained"])
+def test_full_native_matrix_collects_exact_inventory_partition(
+    mode: str, pointer: str,
+) -> None:
+    root = HERE.parent
+    spec = importlib.util.spec_from_file_location(
+        "native_partition_inventory", HERE / "sync-installation-context.py",
+    )
+    assert spec and spec.loader
+    inventory = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(inventory)
+    script = "installation-context.ps1" if os.name == "nt" else "installation-context.sh"
+    expected = {
+        destination.relative_to(root).as_posix()
+        for source, destination in inventory.vendor_pairs()
+        if source.name == script
+    }
+    environment = {**os.environ, "PYTEST_ADDOPTS": "", "PYTHONDONTWRITEBYTECODE": "1"}
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "pytest", "--collect-only", "-q", "--color=no",
+            "-p", "no:cacheprovider",
+            "libs/payload-invocation/tests/test_derived_diagnostic_cli.py",
+            "-k", f"{mode} and {pointer}",
+        ],
+        cwd=root, env=environment, capture_output=True, text=True, check=False,
+        timeout=20, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    selected = [
+        line for line in result.stdout.splitlines()
+        if "::test_derived_native_diagnostic_cli_read_only[" in line
+    ]
+    assert len(selected) == len(expected), result.stdout
+    assert {
+        line.split(f"[{pointer}-{mode}-", 1)[1].removesuffix("]")
+        for line in selected
+    } == expected, result.stdout

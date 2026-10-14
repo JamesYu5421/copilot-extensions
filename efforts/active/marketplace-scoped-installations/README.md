@@ -495,6 +495,59 @@ See [`design.md`](design.md), [`installation-mode-governance.md`](installation-m
 
 ## Journal
 
+### 2026-10-14 — Correct native diagnostic argument transport and matrix admission
+
+- [#6645](https://github.com/ThomasMichon/copilot-extensions/pull/6645)'s
+  first native Windows smoke failed before diagnostic execution:
+  PowerShell array splatting treated named CLI switches as positional values.
+  Fixture-owned launch scripts now spell the unchanged diagnostic command
+  with real named parameters and forward its exit code. The accepted host
+  initialization and complete profile snapshots are unchanged.
+- A real PowerShell regression preserves quoted paths and JSON arguments
+  through that boundary, including successful and refused exit codes over
+  two cycles. The acceptance workflow now participates in its own change
+  detector; explicit mode/pointer tokens and actual pytest collection prove
+  every manual partition selects exactly the dynamic native-copy inventory.
+- The corrected smoke, transport regressions, collection partitions, and CI
+  contracts passed 56 local cases. Current-head review, native Windows
+  execution, and required checks remain necessary; full native copy acceptance
+  and the broader diagnostic prerequisite remain open.
+- The next exact-head native Windows job
+  [115729114342](https://github.com/ThomasMichon/copilot-extensions/actions/runs/38526848012/job/115729114342)
+  executed all four representative CLI cases and both transport cases, but
+  the aggregate correctly remained blocked: the trusted-CI guard forbids
+  dynamic runner routes. The manual workflow now uses two literal hosted
+  platform jobs with the same eight bounded partitions, without a guard
+  exception. Its workflow reference and derived-copy inventory are consistent.
+  Clone-neutral smoke ownership and Unicode/quoted transport are also covered;
+  the corrected smoke, partition, and trusted-CI selection passed 84 cases.
+  Fresh current-head native/aggregate checks and review remain necessary.
+
+### 2026-10-13 — Lifecycle-owned catalogs merged; derived native diagnostic acceptance
+
+- [#6546](https://github.com/ThomasMichon/copilot-extensions/pull/6546)
+  merged after its exact-head review reported zero open findings and both
+  required checks passed. Native Windows
+  [job 115706692559](https://github.com/ThomasMichon/copilot-extensions/actions/runs/38517226519/job/115706692559)
+  executed 231 source/diagnostic/lifecycle cases, two Manager cases, eight
+  reconciliation/publisher cases, and the full fleet selection (493 passed,
+  six skipped). This is the first catalog adopter, not Phase 8 completion.
+- The next accepted stretch executes each dynamically inventoried native
+  installation-context copy's actual `status` and `probe-legacy` CLIs twice
+  in disposable legacy and active-cell fixtures, with absent and retained
+  foreign pointers. It reuses the accepted initialized PowerShell-host
+  fixture and measures the complete profile after every call and shutdown.
+  The initial complete POSIX matrix passed but took 405 seconds, so it does
+  not belong in a two-minute required step. Each copy now has independent
+  test items; required CI keeps the complete four-case Agent Worktrees smoke,
+  while the explicit manual native acceptance workflow runs all copies.
+  The corrected smoke and CI contracts passed 48 local cases in 40 seconds.
+  The final independent all-copy POSIX items and lane contracts passed 89
+  cases in 397 seconds; the slowest native item took 18.80 seconds.
+  Native Windows acceptance remains pending.
+- Broader consumer migration, wrapper refusal coverage, original validation,
+  release-content proof, and authorized managed rollout remain open.
+
 ### 2026-10-13 — Authenticate staged-origin inheritance
 
 - Current-head review found that both native preambles could attribute a
