@@ -8,6 +8,7 @@ import io
 import inspect
 import json
 import os
+import runpy
 import shutil
 import stat
 import subprocess
@@ -783,7 +784,7 @@ def test_real_export_subprocess_uses_bumped_candidate_without_polluting_it(repo,
 
 @pytest.mark.parametrize("suffix", ["ps1", "cmd"])
 @pytest.mark.parametrize("eol", ["crlf", "lf"])
-@pytest.mark.parametrize("entrypoint", ["cli", "workflow"])
+@pytest.mark.parametrize("entrypoint", ["cli", "workflow", "promote"])
 def test_candidate_artifact_validation_checks_out_composed_attributes(
     repo, tmp_path, monkeypatch, suffix, eol, entrypoint,
 ):
@@ -812,6 +813,12 @@ def test_candidate_artifact_validation_checks_out_composed_attributes(
     if entrypoint == "workflow":
         _run_workflow_validator(repo, directory, dev, main, monkeypatch)
         index = json.loads((directory / artifacts.INDEX_NAME).read_text())
+    elif entrypoint == "promote":
+        report = promotion.promote(
+            repo=repo, dev_ref="dev", main_ref="main", python_artifacts_dir=directory,
+        )
+        assert report["promoted"]
+        index = json.loads((directory / artifacts.INDEX_NAME).read_text())
     else:
         index = artifacts.validate_candidate_artifacts(
             directory, repo=repo, dev_head=dev, main_before=main,
@@ -839,6 +846,35 @@ def test_missing_artifacts_fail_before_candidate_push(repo, tmp_path, monkeypatc
             candidate_branch="release/test", python_artifacts_dir=tmp_path / "missing",
         )
     assert not pushes
+
+
+def test_promoter_script_reports_canonical_checkout_failure(repo, tmp_path, monkeypatch, capsys):
+    _git(["checkout", "-q", "dev"], repo)
+    _fake_builder(repo, monkeypatch)
+    _commit(repo, "candidate")
+    directory = tmp_path / "export"
+    promotion.promote(
+        repo=repo, dev_ref="dev", main_ref="main", build_python_artifacts_dir=directory,
+    )
+    run = subprocess.run
+
+    def fail_checkout(argv, *args, **kwargs):
+        if argv[0] == "git" and "checkout-index" in argv:
+            return subprocess.CompletedProcess(argv, 128, "", "forced canonical checkout failure")
+        return run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fail_checkout)
+    monkeypatch.setattr(sys, "argv", [
+        str(promotion.__file__), "--repo", str(repo), "--dev-ref", "dev",
+        "--main-ref", "main", "--python-artifacts-dir", str(directory),
+    ])
+    with pytest.raises(SystemExit) as exited:
+        runpy.run_path(str(promotion.__file__), run_name="__main__")
+    assert exited.value.code == 1
+    captured = capsys.readouterr()
+    assert "forced canonical checkout failure" in captured.err
+    assert "Traceback" not in captured.out + captured.err
+    assert len(_git(["worktree", "list"], repo).splitlines()) == 1
 
 
 def test_noop_does_not_build_or_require_artifacts(repo, tmp_path):
@@ -1238,7 +1274,7 @@ def test_workflow_validator_rejects_changed_bundle(repo, tmp_path, monkeypatch):
     assert len(_git(["worktree", "list"], repo).splitlines()) == 1
 
 
-@pytest.mark.parametrize("entrypoint", ["cli", "workflow"])
+@pytest.mark.parametrize("entrypoint", ["cli", "workflow", "promote"])
 def test_candidate_artifact_validation_resolves_temporary_root_aliases(
     repo, tmp_path, monkeypatch, entrypoint,
 ):
@@ -1269,6 +1305,11 @@ def test_candidate_artifact_validation_resolves_temporary_root_aliases(
     monkeypatch.setattr(artifacts.tempfile, "TemporaryDirectory", AliasedTemporaryDirectory)
     if entrypoint == "workflow":
         _run_workflow_validator(repo, directory, dev, main, monkeypatch)
+    elif entrypoint == "promote":
+        report = promotion.promote(
+            repo=repo, dev_ref="dev", main_ref="main", python_artifacts_dir=directory,
+        )
+        assert report["promoted"]
     else:
         artifacts.validate_candidate_artifacts(
             directory, repo=repo, dev_head=dev, main_before=main,
