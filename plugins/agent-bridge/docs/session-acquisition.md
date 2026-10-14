@@ -222,8 +222,12 @@ Worktree identity preflight reads the exact current tracking record with
 and cached full-list results. Only tracking identity, path and lifecycle state
 are used from this row; cached display/session enrichment grants no authority.
 The separate `head-session` read still verifies current native-head and
-handoff state. Missing, duplicate, mismatched or terminal records refuse, as
+handoff state. Missing, malformed, mismatched or terminal records refuse, as
 do unknown head authority and pending transitions.
+
+An unavailable owner executable raises the explicit `worktrees_unavailable`
+acquisition refusal. It neither proves that a native start never happened nor
+authorizes a fallback to inventory data or another allocation.
 
 For an admitted new delivery, the bridge records the complete request in its
 `prepared` journal stage before the worktree-owner preflight. A preflight
