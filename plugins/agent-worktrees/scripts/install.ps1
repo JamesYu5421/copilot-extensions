@@ -117,6 +117,69 @@ if ($InstallDir) {
     $InstallDir = Join-Path $env:USERPROFILE '.agent-worktrees'
 }
 $ContextualInstall = [bool]$env:COPILOT_EXTENSIONS_CONTEXT
+# === command-lifecycle: admission before staging ===
+if (-not $ContextualInstall -and $Action -in @('install', 'update', 'provision', 'stamp', 'uninstall')) {
+    $admissionPayload = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    $admissionSource = if ($env:COPILOT_EXTENSIONS_COMMAND_LIFECYCLE -and
+        $env:COPILOT_PLUGIN_STAGED_FROM -and
+        (($PSScriptRoot -replace '\\', '/') -notmatch '/\.copilot/installed-plugins/')) {
+        $env:COPILOT_PLUGIN_STAGED_FROM
+    } else { $admissionPayload }
+    if (-not $env:COPILOT_EXTENSIONS_COMMAND_LIFECYCLE) {
+        $env:COPILOT_PLUGIN_STAGED_FROM = $null
+    }
+    $admissionPython = $null
+    $admissionLauncher = Get-Command py -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($admissionLauncher) {
+        $admissionPreviousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $candidate = & $admissionLauncher.Source -3 -I -B -X utf8 -c 'import sys; print(sys.executable)' 2>$null
+        } finally {
+            $ErrorActionPreference = $admissionPreviousErrorAction
+        }
+        if ($LASTEXITCODE -eq 0 -and $candidate -and [IO.File]::Exists([string]$candidate)) {
+            $admissionPython = [string]$candidate
+        }
+    }
+    if (-not $admissionPython) {
+        foreach ($name in @('python3', 'python')) {
+            $candidate = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue |
+                Where-Object { $_.Source -notmatch '[\\/]WindowsApps[\\/]' } |
+                Select-Object -First 1
+            if ($candidate) { $admissionPython = $candidate.Source; break }
+        }
+    }
+    if (-not $admissionPython) { throw 'Attributable runtime admission requires bootstrap Python.' }
+    $admissionArgs = @(
+        '-I', '-B', '-X', 'utf8', (Join-Path $admissionPayload 'scripts\command_binding.py'),
+        '--payload-root', $admissionPayload, '--plugin-id', 'agent-worktrees',
+        '--legacy-root', $InstallDir, '--source-payload-root', $admissionSource
+    )
+    if ($env:COPILOT_EXTENSIONS_COMMAND_LIFECYCLE) {
+        & $admissionPython @admissionArgs --check-lifecycle
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    } else {
+        $admissionForward = @()
+        foreach ($key in $PSBoundParameters.Keys) {
+            $value = $PSBoundParameters[$key]
+            if ($value -is [System.Management.Automation.SwitchParameter]) {
+                if ($value.IsPresent) { $admissionForward += "-$key" }
+            } else {
+                $admissionForward += "-$key"
+                $admissionForward += [string]$value
+            }
+        }
+        if ($Action -eq 'stamp') { $admissionArgs += '--deferred-runtime' }
+        elseif ($Action -eq 'uninstall') { $admissionArgs += '--teardown' }
+        & $admissionPython @admissionArgs --run-lifecycle -- `
+            (Get-Process -Id $PID).Path -NoLogo -NoProfile -ExecutionPolicy Bypass `
+            -File $PSCommandPath @admissionForward
+        exit $LASTEXITCODE
+    }
+}
+# === end command-lifecycle: admission before staging ===
 if ($ContextualInstall) {
     Set-Location -LiteralPath $env:USERPROFILE
     [IO.Directory]::SetCurrentDirectory($env:USERPROFILE)
@@ -1278,8 +1341,8 @@ function Get-BootstrapPython {
        activated target venv has put its own `Scripts` directory on PATH,
        either fallback could still resolve straight back into $VenvDir and
        defeat the whole exclusion. #>
-    param([switch]$ExcludeVenvDir)
-    $dirs = if ($ExcludeVenvDir) { @($LinkDir) } else { @($VenvDir, $LinkDir) }
+    param([switch]$ExcludeVenvDir, [switch]$ExcludeRuntimeRoot)
+    $dirs = if ($ExcludeRuntimeRoot) { @() } elseif ($ExcludeVenvDir) { @($LinkDir) } else { @($VenvDir, $LinkDir) }
     foreach ($d in $dirs) {
         if (-not $d) { continue }
         if ($ExcludeVenvDir -and $VenvDir -and ($d -eq $VenvDir)) { continue }
@@ -1290,11 +1353,15 @@ function Get-BootstrapPython {
     if ($ExcludeVenvDir -and $VenvDir) {
         $venvFull = [System.IO.Path]::GetFullPath($VenvDir).TrimEnd('\')
     }
+    if ($ExcludeRuntimeRoot) {
+        $venvFull = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
+    }
     $isExcluded = {
         param($candidate)
         if (-not $venvFull -or -not $candidate) { return $false }
         $candidateFull = [System.IO.Path]::GetFullPath($candidate)
-        return $candidateFull.StartsWith("$venvFull\", [StringComparison]::OrdinalIgnoreCase)
+        $prefix = "$venvFull$([System.IO.Path]::DirectorySeparatorChar)"
+        return $candidateFull.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
     }
     if (Get-Command py -ErrorAction SilentlyContinue) {
         $result = Invoke-NativeCapture { & py -3 -c 'import sys; print(sys.executable)' }
@@ -1734,14 +1801,33 @@ function Write-V3Manifest {
         venv           = ($LinkDir -replace '\\', '/')
         runtime        = 'python'
     }
-    $tmp = "$manifestPath.tmp"
-    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText(
-        $tmp,
-        ($manifest | ConvertTo-Json -Depth 4),
-        $utf8NoBom
-    )
-    Move-Item -Force -Path $tmp -Destination $manifestPath
+    if ($ContextualInstall) {
+        $temporaryManifest = "$manifestPath.tmp-$PID"
+        [System.IO.File]::WriteAllText(
+            $temporaryManifest, ($manifest | ConvertTo-Json -Depth 8),
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+        Move-Item -LiteralPath $temporaryManifest -Destination $manifestPath -Force
+        Write-ServiceOk "Deploy manifest written (source: $kind)"
+        return
+    }
+    if (-not (Test-Path -LiteralPath $VenvPython -PathType Leaf)) {
+        throw 'Runtime interpreter required for owned deploy-manifest publication.'
+    }
+    $bindingHelper = Join-Path $PluginDir 'scripts\command_binding.py'
+    $previousOutputEncoding = $OutputEncoding
+    try {
+        $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+        $manifest | ConvertTo-Json -Depth 8 | & $VenvPython -B -E -X utf8 $bindingHelper `
+            --payload-root $PluginDir --plugin-id agent-worktrees --legacy-root $InstallDir `
+            --publish-legacy --write-manifest --source-payload-root $pluginPath | Out-Null
+        $bindingExit = $LASTEXITCODE
+    } finally {
+        $OutputEncoding = $previousOutputEncoding
+    }
+    if ($bindingExit -ne 0) {
+        throw 'Command ownership validation refused deploy-manifest publication.'
+    }
     Write-ServiceOk "Deploy manifest written (source: $kind)"
 }
 
@@ -3787,6 +3873,11 @@ function Invoke-Stamp {
     [System.IO.File]::WriteAllText((Join-Path $InstallDir 'stamped-version'), $SrcVersion, $utf8NoBom)
     Deploy-GlobalBinstub
     Write-ServiceOk 'Stamped: agent-worktrees tool binstub on PATH; runtime provisions on first use.'
+}
+
+if (-not $ContextualInstall -and $Action -in @('install', 'update', 'provision', 'stamp', 'uninstall')) {
+    & $admissionPython @admissionArgs --check-lifecycle
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 switch ($Action) {

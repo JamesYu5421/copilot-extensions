@@ -47,6 +47,58 @@ for ((__aw_i = 1; __aw_i < ${#__aw_args[@]}; __aw_i++)); do
         __aw_install_dir_arg="${__aw_args[$((__aw_i + 1))]}"
     fi
 done
+# === command-lifecycle: admission before staging ===
+if [[ -z "${COPILOT_EXTENSIONS_CONTEXT:-}" ]]; then
+    case "$__aw_action" in
+        install|update|provision|stamp|uninstall)
+            __aw_admission_root="${__aw_install_dir_arg:-$HOME/.agent-worktrees}"
+            [[ "$__aw_admission_root" == /* ]] || {
+                printf '%s\n' "ERROR: --install-dir must be absolute" >&2
+                exit 1
+            }
+            __aw_admission_python=""
+            for __aw_candidate in python3 python; do
+                __aw_candidate_path="$(type -P -- "$__aw_candidate" 2>/dev/null || true)"
+                [[ -f "$__aw_candidate_path" && -x "$__aw_candidate_path" ]] || continue
+                __aw_admission_python="$(cd "$(dirname "$__aw_candidate_path")" && pwd -P)/$(basename "$__aw_candidate_path")"
+                break
+            done
+            [[ -n "$__aw_admission_python" ]] || {
+                printf '%s\n' "ERROR: Attributable runtime admission requires bootstrap Python." >&2
+                exit 1
+            }
+            __aw_admission_source="$PLUGIN_DIR"
+            if [[ "$PLUGIN_DIR" != */.copilot/installed-plugins/* &&
+                  -n "${COPILOT_EXTENSIONS_COMMAND_LIFECYCLE:-}" &&
+                  -n "${COPILOT_PLUGIN_STAGED_FROM:-}" ]]; then
+                __aw_admission_source="$COPILOT_PLUGIN_STAGED_FROM"
+            elif [[ -z "${COPILOT_EXTENSIONS_COMMAND_LIFECYCLE:-}" ]]; then
+                unset COPILOT_PLUGIN_STAGED_FROM
+            fi
+            __aw_admission_args=(
+                -I -B -X utf8 "$PLUGIN_DIR/scripts/command_binding.py"
+                --payload-root "$PLUGIN_DIR" --plugin-id agent-worktrees
+                --legacy-root "$__aw_admission_root"
+                --source-payload-root "$__aw_admission_source"
+            )
+            if [[ -n "${COPILOT_EXTENSIONS_COMMAND_LIFECYCLE:-}" ]]; then
+                "$__aw_admission_python" "${__aw_admission_args[@]}" --check-lifecycle || exit $?
+            else
+                __aw_admission_bash="$(type -P -- bash)" || exit 1
+                __aw_admission_bash="$(cd "$(dirname "$__aw_admission_bash")" && pwd -P)/$(basename "$__aw_admission_bash")"
+                if [[ "$__aw_action" == stamp ]]; then
+                    __aw_admission_args+=(--deferred-runtime)
+                elif [[ "$__aw_action" == uninstall ]]; then
+                    __aw_admission_args+=(--teardown)
+                fi
+                "$__aw_admission_python" "${__aw_admission_args[@]}" --run-lifecycle -- \
+                    "$__aw_admission_bash" "$SCRIPT_DIR/install.sh" "${__aw_args[@]}"
+                exit $?
+            fi
+            ;;
+    esac
+fi
+# === end command-lifecycle: admission before staging ===
 if [[ -n "${COPILOT_EXTENSIONS_CONTEXT:-}" ]]; then
     case "${OSTYPE:-}:$PWD" in
         msys*:*/.copilot/installed-plugins/*|cygwin*:*/.copilot/installed-plugins/*)
@@ -891,7 +943,16 @@ _bootstrap_python() {
     # the target venv's own bin/ on PATH could otherwise still resolve
     # straight back into $VENV_DIR and defeat the whole exclusion.
     local exclude_venv_dir="${1:-}" use_link_python=1 venv_real=""
-    if [[ "$exclude_venv_dir" == "exclude-venv-dir" ]] && [[ -d "$VENV_DIR" ]]; then
+    if [[ "$exclude_venv_dir" == "exclude-runtime-root" ]]; then
+        use_link_python=0
+        if [[ -d "$INSTALL_DIR" ]]; then
+            venv_real="$(cd "$INSTALL_DIR" 2>/dev/null && pwd -P)" || return 1
+        else
+            local runtime_parent
+            runtime_parent="$(cd "$(dirname "$INSTALL_DIR")" 2>/dev/null && pwd -P)" || return 1
+            venv_real="$runtime_parent/$(basename "$INSTALL_DIR")"
+        fi
+    elif [[ "$exclude_venv_dir" == "exclude-venv-dir" ]] && [[ -d "$VENV_DIR" ]]; then
         venv_real="$(cd "$VENV_DIR" 2>/dev/null && pwd -P)"
         if [[ -d "$LINK_DIR" ]]; then
             local link_real
@@ -2284,8 +2345,8 @@ print(fingerprint(Path('$stable_plugin')))
         [[ -n "$fp" ]] && payload_fingerprint="\"$fp\""
     fi
 
-    local tmp="$manifest_path.tmp"
-    cat > "$tmp" <<EOF
+    local manifest_json
+    manifest_json="$(cat <<EOF
 {
   "schema_version": 3,
   "service": "agent-worktrees",
@@ -2306,7 +2367,20 @@ print(fingerprint(Path('$stable_plugin')))
   "runtime": "python"
 }
 EOF
-    mv -f "$tmp" "$manifest_path"
+    )"
+    if $CONTEXTUAL_INSTALL; then
+        printf '%s\n' "$manifest_json" > "$manifest_path.tmp.$$"
+        mv -f "$manifest_path.tmp.$$" "$manifest_path"
+    elif [[ ! -x "$VENV_PYTHON" ]]; then
+        err "Runtime interpreter required for owned deploy-manifest publication."
+        return 1
+    elif ! printf '%s\n' "$manifest_json" |
+        "$VENV_PYTHON" -B -E -X utf8 "$PLUGIN_DIR/scripts/command_binding.py" \
+            --payload-root "$PLUGIN_DIR" --plugin-id agent-worktrees --legacy-root "$INSTALL_DIR" \
+            --publish-legacy --write-manifest --source-payload-root "$stable_plugin" >/dev/null; then
+        err "Command ownership validation refused deploy-manifest publication."
+        return 1
+    fi
     ok "Deploy manifest written (source: $kind)"
 }
 
@@ -2821,6 +2895,14 @@ except Exception as e:
 }
 
 # ── Actions ──────────────────────────────────────────────────────────────
+
+if ! $CONTEXTUAL_INSTALL; then
+    case "$ACTION" in
+        install|update|provision|stamp|uninstall)
+            "$__aw_admission_python" "${__aw_admission_args[@]}" --check-lifecycle || exit $?
+            ;;
+    esac
+fi
 
 case "$ACTION" in
     stamp)

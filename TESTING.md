@@ -733,6 +733,17 @@ uses Windows PowerShell 5.1 via
 and derived implementation changes trigger it; unrelated docs do not.
 An explicitly requested unavailable shell fails collection rather than
 silently skipping the evidence. No exhaustive adapter matrix is added to PR CI.
+The Windows job has a seven-minute aggregate budget for these diagnostic and
+wrapper selections plus its runner, payload-CWD, and fleet contracts. Individual
+diagnostic/wrapper selections retain their two-minute limits; the Linux runner
+job retains its five-minute budget.
+
+Source-qualified catalog no-write cases invoke the unchanged PowerShell script
+twice in one real, initialized host. Host-only initialization stops CLR startup
+profile recording before the full-profile baseline; no product script is warmed.
+Each invocation and host shutdown must preserve every file byte, directory, and
+modification time. This measures diagnostic behavior, not the separate startup
+cache writes made by fresh Windows PowerShell processes.
 
 Run the relevant suite yourself before pushing a runtime change — there is
 intentionally **no** automatic push/PR gate. Fast structural/contract checks are
