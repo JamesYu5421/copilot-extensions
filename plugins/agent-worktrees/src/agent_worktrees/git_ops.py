@@ -288,12 +288,15 @@ class FastForwardResult:
     - ``orphan``      -- no merge base with upstream; skipped.
     - ``gone``        -- the worktree path/.git is missing; skipped.
     - ``ff-failed``   -- the fast-forward merge itself failed; skipped.
+
+    ``fetch_error``: the requested fetch failed (compared to the last-known ref).
     """
 
     updated: bool
     reason: str
     behind: int = 0
     ahead: int = 0
+    fetch_error: str | None = None
 
 
 @dataclass
@@ -683,20 +686,19 @@ DEFAULT_FETCH_TIMEOUT = 30.0
 
 
 def fetch(
-    remote: str, *, cwd: str | Path, timeout: float | None = DEFAULT_FETCH_TIMEOUT
+    remote: str, *, cwd: str | Path, timeout: float | None = DEFAULT_FETCH_TIMEOUT,
+    isolated_repository: bool = False,
 ) -> None:
     """Fetch from a remote (auto-authenticating cross-account remotes; #29).
 
-    Bounded by ``timeout`` (default :data:`DEFAULT_FETCH_TIMEOUT`) so an
-    unreachable remote can't hang the caller indefinitely: a stall past the
-    bound is surfaced as a :class:`GitError` (returncode 124, the timeout
-    convention), which every current caller already handles as a best-effort
-    fetch failure. Pass ``timeout=None`` for the historical unbounded behavior.
+    Bounded by ``timeout`` (default :data:`DEFAULT_FETCH_TIMEOUT`): a stall past it is a
+    :class:`GitError` (returncode 124), a best-effort fetch failure to every caller;
+    ``timeout=None`` is unbounded.
     """
     try:
         git(
             *_auth_config_args(remote, cwd=cwd), "fetch", remote, "--quiet",
-            cwd=cwd, timeout=timeout,
+            cwd=cwd, timeout=timeout, isolated_repository=isolated_repository,
         )
     except subprocess.TimeoutExpired as exc:
         raise GitError(
@@ -746,52 +748,50 @@ def fast_forward_worktree(
     function never rebases, never creates a merge commit, and never discards
     local commits.  When ``do_fetch`` is True the remote is fetched first so
     the ahead/behind comparison and fast-forward target are against the
-    freshest upstream; a fetch failure (e.g. offline) is non-fatal and the
-    comparison falls back to the already-known upstream ref.
+    freshest upstream; a fetch failure (e.g. offline) is non-fatal: it falls back to
+    the already-known upstream ref and the result carries ``fetch_error``.
     """
     path = Path(worktree_path)
     if not path.exists() or not (path / ".git").exists():
         return FastForwardResult(updated=False, reason="gone")
 
     upstream = f"{remote}/{default_branch}"
-
+    fetch_error: str | None = None
     if do_fetch and has_remote(remote, cwd=path):
         try:
             fetch(remote, cwd=path)
-        except Exception:
-            # Offline or auth failure -- compare against the local upstream ref.
-            pass
+        except Exception as exc:
+            # Offline or auth failure: compare against the local upstream ref, but report it.
+            fetch_error = str(getattr(exc, "stderr", "") or exc).strip() or type(exc).__name__
+
+    def _result(updated: bool, reason: str, **counts: int) -> FastForwardResult:
+        return FastForwardResult(updated=updated, reason=reason, fetch_error=fetch_error, **counts)
 
     if not ref_exists(upstream, cwd=path):
-        return FastForwardResult(updated=False, reason="no-upstream")
-
+        return _result(False, "no-upstream")
     if not is_clean(cwd=path):
-        return FastForwardResult(updated=False, reason="dirty")
+        return _result(False, "dirty")
 
     branch = _get_current_branch_safe(path)
     if branch is None:
-        return FastForwardResult(updated=False, reason="detached")
+        return _result(False, "detached")
 
     mb = git("merge-base", upstream, branch, cwd=path, check=False)
     if mb.returncode != 0:
-        return FastForwardResult(updated=False, reason="orphan")
+        return _result(False, "orphan")
     merge_base = mb.stdout.strip()
 
     ahead = _rev_count(f"{merge_base}..{branch}", cwd=path)
     behind = _rev_count(f"{branch}..{upstream}", cwd=path)
 
     if ahead > 0:
-        return FastForwardResult(
-            updated=False,
-            reason="diverged" if behind > 0 else "ahead",
-            ahead=ahead, behind=behind,
-        )
+        return _result(False, "diverged" if behind > 0 else "ahead", ahead=ahead, behind=behind)
     if behind == 0:
-        return FastForwardResult(updated=False, reason="up-to-date")
+        return _result(False, "up-to-date")
 
     if not merge_ff(upstream, cwd=path):
-        return FastForwardResult(updated=False, reason="ff-failed", behind=behind)
-    return FastForwardResult(updated=True, reason="updated", behind=behind)
+        return _result(False, "ff-failed", behind=behind)
+    return _result(True, "updated", behind=behind)
 
 
 def worktree_suffix(worktree_id: str) -> str:

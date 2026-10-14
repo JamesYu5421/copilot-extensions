@@ -1394,7 +1394,8 @@ function Get-BootstrapPython {
        python, then a real base python via the `py` launcher -- avoiding the
        Windows Store 'python' alias stub. Returns $null if none. #>
     foreach ($d in @($VenvDir, $LinkDir)) {
-        if ($d) { $p = Join-Path $d 'Scripts\python.exe'; if (Test-Path $p) { return $p } }
+        # Windows venv layout first; `bin/python` is the POSIX layout pwsh sees off Windows.
+        if ($d) { foreach ($rel in 'Scripts\python.exe', 'bin/python') { $p = Join-Path $d $rel; if (Test-Path $p) { return $p } } }
     }
     if (Get-Command py -ErrorAction SilentlyContinue) {
         $exe = (& py -3 -c 'import sys; print(sys.executable)' 2>$null | Out-String).Trim()
@@ -1719,7 +1720,7 @@ function Invoke-VersionedMarkComplete {
        so "marker present" == "healthy, complete build". A crashed / watchdog-
        killed install never reaches here, leaving its slot markerless and thus
        tossable + retryable (#935). No-op in legacy mode. #>
-    if (-not $VersionedRuntime) { return }
+    if (-not $VersionedRuntime) { return $true }
     $vr = Join-Path $PSScriptRoot 'versioned_runtime.py'
     $py = Get-BootstrapPython
     if (-not $py) {
@@ -1731,6 +1732,7 @@ function Invoke-VersionedMarkComplete {
     if ($LASTEXITCODE -ne 0) {
         throw "Runtime completion marker writer failed with exit code $LASTEXITCODE"
     }
+    return $true
 }
 # === end install-contract:v4 marker/toss helpers ===
 
@@ -2286,7 +2288,7 @@ if ($VersionedRuntime) {
         Write-Fail "Fresh runtime slot failed its health gate (versions/$SrcVersion) -- not activating"
         exit 1
     }
-    Invoke-VersionedMarkComplete
+    if (-not (Invoke-VersionedMarkComplete)) { exit 1 }
     if ($CellMode) {
         & $probeHost -NoProfile -ExecutionPolicy Bypass -File $slotRunner `
             slot-complete `
