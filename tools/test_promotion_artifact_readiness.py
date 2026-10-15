@@ -297,8 +297,16 @@ def test_workflow_readiness_precedes_pr_creation_and_pins_the_merge_head():
     merger = jobs["merge-promotion"]
     wait = next(step for step in merger["steps"] if step.get("id") == "merged")
     assert steps.index(ready) < steps.index(land)
-    assert merger["needs"] == "promote"
-    assert merger["if"] == "needs.promote.outputs.pr_number != ''"
+    assert set(merger["needs"]) == {
+        "promote", "materialized-candidate-plan", "materialized-candidate-consumers",
+        "materialized-candidate-windows",
+    }
+    assert re.sub(r"\s+", " ", merger["if"]).strip() == (
+        "needs.promote.outputs.pr_number != '' && "
+        "needs.materialized-candidate-plan.result == 'success' && "
+        "needs.materialized-candidate-consumers.result == 'success' && "
+        "needs.materialized-candidate-windows.result == 'success'"
+    )
     assert jobs["promote"]["outputs"]["pr_number"] == "${{ steps.land.outputs.pr_number }}"
     assert "publish_python_artifacts.py prepare" in ready["run"]
     assert "continue-on-error" not in ready
