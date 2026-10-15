@@ -2,9 +2,12 @@
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[tool.uv]
+exclude-newer = "7 days"
+
 [project]
 name = "copilot-extensions-worktree-manager"
-version = "0.6.31-dev1"
+version = "0.6.32-dev1"
 description = "Standalone, out-of-plugin control plane (installer, configurator & worktree launcher) for the copilot-extensions harness."
 readme = "README.md"
 license = "MIT"

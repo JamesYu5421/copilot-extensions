@@ -5,6 +5,9 @@ from __future__ import annotations
 import os
 
 import pytest
+import json
+import shutil
+from pathlib import Path
 
 from agent_index.engine import daemon
 
@@ -33,6 +36,106 @@ def test_engine_venv_python_layout(tmp_path):
     py = daemon.engine_venv_python(tmp_path)
     assert py.parent.parent == tmp_path / ".venv"
     assert py.name in ("python", "python.exe")
+
+
+def _completed_engine_slot(home, version):
+    slot = home / "versions" / version
+    py = slot / ("Scripts/python.exe" if daemon.os.name == "nt" else "bin/python")
+    py.parent.mkdir(parents=True)
+    py.write_bytes(b"")
+    (slot / ".install-complete.json").write_text(json.dumps({
+        "version": version, "completed_at": "2026-10-01T00:00:00Z",
+        "pid": 1, "payload_hash": "a" * 64,
+    }))
+    return py
+
+
+def _stage_engine_resolver(home):
+    source = Path(__file__).resolve().parents[3] / "libs/versioned-runtime/versioned_runtime.py"
+    for name in ("versioned_runtime_leases.py", "versioned_runtime_construction.py", "versioned_runtime.py"):
+        shutil.copyfile(source.with_name(name), home / name)
+
+
+def test_engine_selection_requires_completion_and_preserves_last_good(tmp_path):
+    _stage_engine_resolver(tmp_path)
+    good = _completed_engine_slot(tmp_path, "1.0.0")
+    broken = tmp_path / "versions/2.0.0" / good.relative_to(tmp_path / "versions/1.0.0")
+    broken.parent.mkdir(parents=True)
+    broken.write_bytes(b"")
+    (tmp_path / "current-version").write_text("2.0.0\n")
+    (tmp_path / "last-known-good").write_text("1.0.0\n")
+    assert daemon.engine_venv_python(tmp_path) == good
+
+
+def test_engine_selection_does_not_fall_back_to_legacy_after_migration(tmp_path):
+    legacy = daemon.engine_venv_python(tmp_path)
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b"")
+    _stage_engine_resolver(tmp_path)
+    (tmp_path / "current-version").write_text("2.0.0\n")
+    with pytest.raises(FileNotFoundError, match="No completed"):
+        daemon.engine_venv_python(tmp_path)
+
+
+def test_failed_first_engine_construction_does_not_retire_legacy(tmp_path):
+    legacy = daemon.engine_venv_python(tmp_path)
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b"")
+    (tmp_path / "versions/2.0.0").mkdir(parents=True)
+    assert daemon.engine_venv_python(tmp_path) == legacy
+
+
+@pytest.mark.parametrize("candidate_complete", [False, True])
+def test_first_engine_migration_keeps_legacy_until_activation(tmp_path, candidate_complete):
+    legacy = daemon.engine_venv_python(tmp_path)
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b"legacy")
+    _stage_engine_resolver(tmp_path)
+    if candidate_complete:
+        _completed_engine_slot(tmp_path, "2.0.0")
+    assert daemon.engine_venv_python(tmp_path) == legacy
+    assert legacy.read_bytes() == b"legacy"
+
+
+def test_failed_first_engine_activation_preserves_legacy_selection(monkeypatch, tmp_path):
+    legacy = daemon.engine_venv_python(tmp_path)
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b"legacy")
+    _stage_engine_resolver(tmp_path)
+    candidate = _completed_engine_slot(tmp_path, "2.0.0")
+    spec = daemon.importlib.util.spec_from_file_location(
+        "failed_engine_activation", tmp_path / "versioned_runtime.py",
+    )
+    runtime = daemon.importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runtime)
+
+    replace = runtime.os.replace
+
+    def deny_selector(source, destination):
+        if Path(destination) == tmp_path / "current-version":
+            raise PermissionError("selector publication denied")
+        return replace(source, destination)
+
+    monkeypatch.setattr(runtime.os, "replace", deny_selector)
+    with pytest.raises(PermissionError, match="selector publication denied"):
+        runtime.activate(tmp_path, "2.0.0", link_free=True)
+    assert not (tmp_path / "current-version").exists()
+    assert not (tmp_path / "last-known-good").exists()
+    assert daemon.engine_venv_python(tmp_path) == legacy
+    assert candidate.exists()
+    assert legacy.read_bytes() == b"legacy"
+
+
+@pytest.mark.parametrize("selector", ["current-version", "last-known-good"])
+def test_first_engine_migration_uses_published_selector(tmp_path, selector):
+    legacy = daemon.engine_venv_python(tmp_path)
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b"legacy")
+    _stage_engine_resolver(tmp_path)
+    candidate = _completed_engine_slot(tmp_path, "2.0.0")
+    (tmp_path / selector).write_text("2.0.0\n")
+    assert daemon.engine_venv_python(tmp_path) == candidate
+    assert legacy.read_bytes() == b"legacy"
 
 
 def test_engine_endpoint_env(monkeypatch):
@@ -322,6 +425,14 @@ def test_stop_terminates(monkeypatch, tmp_path):
 
 
 def test_status_shape(monkeypatch, tmp_path):
+    resolve = daemon.engine_venv_python
+    resolutions = []
+
+    def resolve_once(home):
+        resolutions.append(home)
+        return resolve(home)
+
+    monkeypatch.setattr(daemon, "engine_venv_python", resolve_once)
     monkeypatch.setattr(
         daemon,
         "health",
@@ -347,6 +458,32 @@ def test_status_shape(monkeypatch, tmp_path):
     assert st["provisioned"] is False
     assert st["healthy"] is True
     assert st["observed_generation"] == "engine-v1"
+    assert resolutions == [tmp_path]
+
+
+@pytest.mark.parametrize("selector", ["current-version", "last-known-good"])
+@pytest.mark.parametrize("resolver_present", [False, True])
+def test_status_retains_diagnostics_when_migrated_interpreter_is_unavailable(
+    tmp_path, monkeypatch, selector, resolver_present,
+):
+    legacy = daemon.engine_venv_python(tmp_path)
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(b"legacy")
+    if resolver_present:
+        _stage_engine_resolver(tmp_path)
+    (tmp_path / selector).write_text("missing-slot\n")
+    daemon._pid_file(tmp_path).write_text("4242\n")
+    monkeypatch.setattr(daemon, "_pid_alive", lambda pid: pid == 4242)
+    monkeypatch.setattr(daemon, "health", lambda *_a, **_k: {
+        "status": "ok", "generation": "observed", "detail": "fixture-health",
+    })
+    report = daemon.status(tmp_path)
+    assert report["venv_python"] is None and report["provisioned"] is False
+    assert report["pid"] == 4242 and report["pid_alive"] is True
+    assert report["healthy"] is True and report["observed_generation"] == "observed"
+    assert report["detail"] == "fixture-health" and legacy.read_bytes() == b"legacy"
+    with pytest.raises(FileNotFoundError):
+        daemon.engine_command(tmp_path)
 
 
 # -- CLI ---------------------------------------------------------------------

@@ -2,9 +2,12 @@
 requires = ["setuptools>=83.0.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.uv]
+exclude-newer = "7 days"
+
 [project]
 name = "agent-vault"
-version = "0.1.38-dev1"
+version = "0.1.39-dev1"
 description = "Local KeePassXC-backed secret store for Copilot CLI agents."
 readme = "README.md"
 license = "MIT"

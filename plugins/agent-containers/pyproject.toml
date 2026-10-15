@@ -2,9 +2,12 @@
 requires = ["setuptools>=83.0.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.uv]
+exclude-newer = "7 days"
+
 [project]
 name = "agent-containers"
-version = "0.2.47-dev1"
+version = "0.2.48-dev1"
 description = "Local Docker dev-container fleet management, lease broker, and agent-bridge container: namespace resolver"
 readme = "README.md"
 license = "MIT"

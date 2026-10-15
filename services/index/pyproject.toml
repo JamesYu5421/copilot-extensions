@@ -2,9 +2,12 @@
 requires = ["setuptools>=83.0.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.uv]
+exclude-newer = "7 days"
+
 [project]
 name = "agent-index-service"
-version = "0.1.0-dev1"
+version = "0.1.1-dev1"
 description = "Standalone local API and master controller for agent-index."
 readme = "README.md"
 license = "MIT"

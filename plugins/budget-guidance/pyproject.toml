@@ -2,9 +2,12 @@
 requires = ["setuptools>=83.0.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.uv]
+exclude-newer = "7 days"
+
 [project]
 name = "budget-guidance"
-version = "0.1.16-dev1"
+version = "0.1.17-dev1"
 description = "Provider-neutral current AI usage budget posture."
 readme = "README.md"
 license = "MIT"

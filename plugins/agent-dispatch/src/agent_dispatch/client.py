@@ -219,6 +219,19 @@ class DispatchClient(CategoryClientMixin, ScheduleClientMixin, RegistrationClien
             self._http.post(f"/tasks/{task_id}/start", json=body)
         )
 
+    def task_grant(
+        self, task_id: str, worker_id: str, owner_session_id: str,
+        *, expected_generation: int, expected_epoch: int,
+    ) -> dict:
+        """Issue or renew a grant without changing the task's ownership or lease."""
+        return self._unwrap(self._http.post(
+            f"/tasks/{task_id}/task-grant", headers=self._control_headers(),
+            json={
+                "worker_id": worker_id, "owner_session_id": owner_session_id,
+                "expected_generation": expected_generation, "expected_epoch": expected_epoch,
+            },
+        ))
+
     def yield_task(
         self, task_id: str, worker_id: str, *, note: str | None = None,
         exclude: str | None = None, release_spawn: bool = True,
@@ -569,6 +582,21 @@ class DispatchClient(CategoryClientMixin, ScheduleClientMixin, RegistrationClien
         """The live coordinator entry with the highest epoch, or ``None`` -- the
         claim-plane discovery read."""
         return self._unwrap(self._http.get("/directory/coordinator"))
+
+    def directory_fencing_epoch(self) -> int:
+        """Read the authority's retained floor, never infer it from live presence."""
+        try:
+            result = self._unwrap(self._http.get("/directory/fencing-epoch"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise DispatchError(
+                502, "coordinator returned an invalid retained fencing epoch",
+            ) from exc
+        if (
+            not isinstance(result, dict) or type(result.get("epoch")) is not int
+            or not 0 <= result["epoch"] < 2**63
+        ):
+            raise DispatchError(502, "coordinator returned an invalid retained fencing epoch")
+        return result["epoch"]
 
     # -- spawn reservations --------------------------------------------------
 

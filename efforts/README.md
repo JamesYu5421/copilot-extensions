@@ -10,6 +10,7 @@ that pattern to this repository.
 
 | Effort | Status | Coordination |
 |--------|--------|--------------|
+| [Machine Alias Compatibility and Locality](active/machine-alias-compatibility-and-locality/README.md) | Active; retroactive capture, alias matrix and installed Windows/WSL acceptance open | #5674; original identity repair retained, wider transport convergence remains separately owned |
 | [Bridge Workspace Owner Boundary](active/bridge-workspace-owner-boundary/README.md) | Active; local repair, coordinator review/publication and released-source proof pending | #6757 |
 | [Manual Task Session Resume](active/manual-task-session-resume/README.md) | Draft; manual exit pause and explicit local CLI/mux resume, planning only | #6677; existing lifecycle/recovery owners retained |
 | [Artifact Publication Boundary Hardening](active/artifact-publication-boundary-hardening/README.md) | Draft; follow-up gated on primary repairs and hosted publication | #6639; #6535/#6632 owners retained |
@@ -21,6 +22,7 @@ that pattern to this repository.
 | [Main-Owned Workflow Control](active/main-owned-workflow-control/README.md) | Active; first wave live, validation consolidation open | #6237; run/check consolidation primary, ownership enabling |
 | [Fleet Control V2](active/fleet-control-v2/README.md) | Active; isolated runtime identity verifier in review; policy/integration/lifecycle open | #6236, #6240, #6241, #6443, #5862; existing #3761/#352/#5789/#6030/#6424 owners retained |
 | [Lean Runtime Dependencies](active/lean-runtime-dependencies/README.md) | Active; proposal reviewed, dependency reduction | #6234 |
+| [Resilient Update Sequencing](active/resilient-update-sequencing/README.md) | Draft; historical command migration and cheap finishing first | #6820; complementary to #6812 |
 | [Process Slot Ownership](active/process-slot-ownership/README.md) | Active; reader-lifetime continuation | #3963; registry presentation separately #5559 |
 | [Process Spawn Reduction](active/process-spawn-reduction/README.md) | Active | #6086 |
 | [Private PR Source Attribution](active/private-pr-source-attribution/README.md) | Active; originating identity slice | #6068 |
@@ -103,6 +105,7 @@ that pattern to this repository.
 | [Launch-Time Model/Effort/Context Preference Flags](active/launch-time-model-preference-flags/README.md) | Done; pending archive | #4776 |
 | [Picker New-Session Prompt + Registered-Pivot Composer](active/picker-new-session-prompt-and-composer/README.md) | Done; pending archive | See effort |
 | [Per-Worktree Activity State](active/per-worktree-activity-state/README.md) | Active | #5664 |
+| [Update Flow Observability](active/update-flow-observability/README.md) | Draft; operation audit and consistent timing/status proposal before implementation | #6812; existing update and installer repair owners retained |
 
 
 ## Completed effort index

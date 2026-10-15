@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,51 @@ LIBRARIES = {
     "agent-single-instance-lease": "single-instance-lease",
     "agent-plugin-activation": "plugin-activation",
 }
+
+
+def _stage_owned_source(
+    plugin: Path, libraries: dict[str, Path], *, repository: Path | None = None,
+) -> Path:
+    """Stage publisher-owned fixture sources at the real helper-owner boundary."""
+    plugin.mkdir(parents=True, exist_ok=True)
+    manifest = json.loads((PLUGIN / "plugin.json").read_text(encoding="utf-8"))
+    (plugin / "plugin.json").write_text(json.dumps(manifest), encoding="utf-8")
+    project = (
+        f'[project]\nname = "{manifest["name"]}"\nversion = "{manifest["version"]}"\n'
+        f"dependencies = {json.dumps(list(libraries))}\n"
+        '[project.optional-dependencies]\nmcp = []\n[tool.uv.sources]\n'
+    )
+    for package, source in libraries.items():
+        source.mkdir(parents=True, exist_ok=True)
+        relative = Path(os.path.relpath(source, plugin)).as_posix()
+        project += f'{package} = {{ path = "{relative}" }}\n'
+        library_project = f'[project]\nname = "{package}"\nversion = "1.0.0"\n'
+        if package == "agent-plugin-activation" and "agent-dropin-registry" in libraries:
+            dependency = libraries["agent-dropin-registry"]
+            relative_dependency = Path(os.path.relpath(dependency, source)).as_posix()
+            library_project += (
+                'dependencies = ["agent-dropin-registry"]\n[tool.uv.sources]\n'
+                f'agent-dropin-registry = {{ path = "{relative_dependency}" }}\n'
+            )
+        (source / "pyproject.toml").write_text(library_project, encoding="utf-8")
+    (plugin / "pyproject.toml").write_text(project, encoding="utf-8")
+    if repository is not None:
+        assert plugin == repository / "plugins" / "agent-dispatch"
+        roster = repository / ".github" / "plugin" / "marketplace.json"
+        roster.parent.mkdir(parents=True, exist_ok=True)
+        roster.write_text(
+            json.dumps({
+                "name": "copilot-extensions",
+                "plugins": [{
+                    "name": manifest["name"], "version": manifest["version"],
+                    "source": "plugins/agent-dispatch",
+                }],
+            }),
+            encoding="utf-8",
+        )
+    scripts = plugin / "scripts"
+    shutil.copytree(ENGINE, scripts, dirs_exist_ok=True)
+    return scripts
 
 
 def _function(ext: str, name: str) -> str:
@@ -123,12 +169,57 @@ def _prelude(ext: str, engine: Path = ENGINE) -> str:
     )
 
 
+def _retained_uv_fixture_prelude() -> str:
+    return """
+import re, tempfile, tomllib
+if args[:2] == ["pip", "install"]:
+    config = Path(args[args.index("--config-file") + 1]).resolve()
+    private = config.parent
+    assert config.is_file() and not config.is_symlink() and private.name == "inputs"
+    assert private.parent.parent.samefile(Path(tempfile.gettempdir()))
+    if os.name != "nt":
+        assert private.stat().st_uid == os.getuid() and private.stat().st_mode & 0o077 == 0
+    expected = json.loads(os.environ.get("TEST_UV_EXPECTED_SOURCES", "{}"))
+    for index, argument in enumerate(args):
+        match = re.fullmatch(r"(.*?)(\\[[^\\]]+\\])?", argument)
+        source = Path(match[1])
+        if not source.is_dir() or not (source / "pyproject.toml").is_file():
+            continue
+        project = tomllib.loads((source / "pyproject.toml").read_text())["project"]
+        original = Path(expected[project["name"]])
+        assert source.resolve() != original.resolve() and source.resolve().is_relative_to(private)
+        assert project == tomllib.loads((original / "pyproject.toml").read_text())["project"]
+        for member in original.rglob("*.py"):
+            assert (source / member.relative_to(original)).read_bytes() == member.read_bytes()
+        args[index] = str(original) + (match[2] or "")
+    position = args.index("--config-file")
+    del args[position:position + 2]
+    if "--config-setting" in args:
+        position = args.index("--config-setting")
+        assert args[position + 1] == "editable_mode=compat"
+        del args[position:position + 2]
+"""
+
+
 def _fake_uv(tmp_path: Path) -> Path:
     driver = tmp_path / "uv-driver.py"
     driver.write_text(
         """import json, os, sys
 from pathlib import Path
 args = sys.argv[1:]
+if args[:3] == ["pip", "install", "--show-settings"]:
+    print("PipInstallSettings { settings: PipSettings {\\n    index_locations: IndexLocations {\\n        flat_index: [],\\n    },\\n    exclude_newer: ExcludeNewer {\\n        global: None,\\n        package: ExcludeNewerPackage({}),\\n    },\\n}, }")
+    raise SystemExit(0)
+""" + _retained_uv_fixture_prelude() + """
+def normalized(arguments):
+    result = []
+    iterator = iter(arguments)
+    for argument in iterator:
+        if argument == "--exclude-newer":
+            next(iterator)
+        elif argument != "--reinstall":
+            result.append(argument)
+    return result
 log = Path(os.environ["TEST_UV_LOG"])
 history = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 with log.open("a") as stream:
@@ -136,7 +227,7 @@ with log.open("a") as stream:
 if args == ["--version"]:
     print("uv fixture")
     raise SystemExit(0)
-count = sum(item == args for item in history)
+count = sum(normalized(item) == normalized(args) for item in history)
 mode = os.environ.get("TEST_UV_MODE", "ok")
 if mode == "fatal":
     print("permanent failure")
@@ -221,21 +312,45 @@ def test_package_retry_keeps_optional_extra_and_exact_exit_code(tmp_path, ext, m
     env = _env(tmp_path)
     uv = _fake_uv(tmp_path)
     env["TEST_UV_MODE"] = mode
-    spec = str(tmp_path / "plugin") + "[mcp]"
-    args = ["--python", "fixture-python", "--reinstall-package", "agent-dispatch", spec]
+    plugin = tmp_path / "plugin"
+    engine = _stage_owned_source(plugin, {})
+    env["TEST_UV_EXPECTED_SOURCES"] = json.dumps({"agent-dispatch": str(plugin)})
+    spec = str(plugin) + "[mcp]"
+    args = ["--python", sys.executable, "--reinstall-package", "agent-dispatch", spec]
     if ext == "sh":
         call = f"""
-if invoke_uv_pip_install_resilient '{uv}' --python fixture-python --reinstall-package agent-dispatch '{spec}'; then exit 0; else exit $?; fi
+if invoke_uv_pip_install_resilient '{uv}' --python '{sys.executable}' --reinstall-package agent-dispatch '{spec}'; then exit 0; else exit $?; fi
 """
     else:
         call = f"""
-$result = Invoke-UvPipInstallResilient -UvCommand '{uv}' -Arguments @('--python', 'fixture-python', '--reinstall-package', 'agent-dispatch', '{spec}')
+$result = Invoke-UvPipInstallResilient -UvCommand '{uv}' -Arguments @('--python', '{sys.executable}', '--reinstall-package', 'agent-dispatch', '{spec}')
+Write-Host $result.Output
 exit $result.ExitCode
 """
-    result = _run(ext, _prelude(ext) + call, tmp_path, env)
+    started = datetime.now(timezone.utc)
+    result = _run(ext, _prelude(ext, engine) + call, tmp_path, env)
     assert result.returncode == (23 if mode == "fatal" else 0), result.stdout + result.stderr
     calls = [json.loads(line) for line in Path(env["TEST_UV_LOG"]).read_text().splitlines()]
-    assert calls == [["pip", "install", *args]] * (1 if mode == "fatal" else 3)
+    assert len(calls) == (1 if mode == "fatal" else 3)
+    for actual in calls:
+        assert actual[:-3] == ["pip", "install", *args]
+        assert actual[-3] == "--exclude-newer"
+        assert actual[-1] == "--reinstall"
+        cutoff = datetime.fromisoformat(actual[-2].replace("Z", "+00:00"))
+        assert started - timedelta(seconds=604800) <= cutoff
+        assert cutoff <= datetime.now(timezone.utc) - timedelta(seconds=604800)
+    output = result.stdout + result.stderr
+    assert ("permanent failure" if mode == "fatal" else "SRE module mismatch") in output
+    assert "PipInstallSettings" not in output
+
+
+def _signed_venv_block() -> str:
+    text = (PLUGIN / "scripts/install.ps1").read_text(encoding="utf-8")
+    start = "    if (-not $script:RuntimeConstructionReuse) {\n    # -- venv"
+    block = start + text.split(start, 1)[1].split(
+        "    # The selected MCP extra", 1
+    )[0]
+    return block + "}\n"
 
 
 @pytest.mark.parametrize("ext", ["sh", "ps1"])
@@ -281,6 +396,9 @@ def test_signed_python_result_is_accepted_only_when_healthy(
         (slot / "Scripts/python.exe").write_text("invalid existing Python")
         if existing_invalid == "wrong-prefix":
             (slot / "pyvenv.cfg").write_text("wrong prefix")
+    slot.mkdir(exist_ok=True)
+    receipt = slot / "construction-receipt.json"
+    receipt.write_text('{"state":"reserved"}', encoding="utf-8")
     signed = tmp_path / "signed-python.ps1"
     signed.write_text(
         f"""
@@ -292,9 +410,6 @@ exit {signed_exit}
 """,
         encoding="utf-8",
     )
-    text = (PLUGIN / "scripts/install.ps1").read_text()
-    block = text.split("    # -- venv (SAC-trusted", 1)[1].split("    # -- install package", 1)[0]
-    block = "    # -- venv (SAC-trusted" + block
     script = (
         _prelude("ps1")
         + f"""
@@ -302,26 +417,51 @@ $env:OS = 'Windows_NT'
 $VenvDir='{slot}'
 $VenvPython=Join-Path $VenvDir 'Scripts/python.exe'
 $UvCommand='{uv}'
+$script:RuntimeConstructionReuse=$false
 $pythonCmd='{tmp_path / "forbidden-python.ps1"}'
 function py {{ $global:LASTEXITCODE=0; '{signed}' }}
 function Get-AuthenticodeSignature {{ param($Path) return @{{ Status='Valid' }} }}
-function Invoke-VersionedSlotClean {{}}
+function Invoke-VersionedSlotClean {{ throw 'reserved slot must not be cleaned after signed bootstrap' }}
+function Remove-Item {{ throw 'reserved slot or receipt must not be raw-deleted' }}
 function Test-DispatchVenv {{
     param($Dir, $Python)
     if ((Test-Path -LiteralPath $Python) -and [IO.File]::ReadAllText($Python) -eq 'invalid existing Python') {{ return $false }}
     $cfg = Join-Path $Dir 'pyvenv.cfg'
     return ((Test-Path -LiteralPath $Python) -and (Test-Path -LiteralPath $cfg) -and [IO.File]::ReadAllText($cfg) -ne 'wrong prefix')
 }}
-{block}
+{_signed_venv_block()}
 if ($ErrorActionPreference -ne 'Stop') {{ throw 'error preference leaked' }}
 """
     )
     result = _run("ps1", script, tmp_path, env)
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode == (0 if usable else 1), result.stdout + result.stderr
     log = Path(env["TEST_UV_LOG"])
     calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-    assert calls == ([] if usable else [["venv", str(slot), "--allow-existing"]])
-    assert (slot / "pyvenv.cfg").exists()
+    assert calls == []
+    assert receipt.read_text(encoding="utf-8") == '{"state":"reserved"}'
+    assert (slot / "Scripts/python.exe").read_text() == "fixture"
+    if usable:
+        assert (slot / "pyvenv.cfg").read_text() == "fixture"
+        if signed_exit:
+            assert f"Signed Python exited {signed_exit}" in result.stdout
+    else:
+        assert "Signed Python venv failed validation" in result.stdout + result.stderr
+
+
+def test_completed_construction_reuse_skips_signed_venv_mutation(tmp_path):
+    env = _env(tmp_path)
+    script = (
+        _prelude("ps1")
+        + """
+$script:RuntimeConstructionReuse=$true
+function Test-DispatchVenv { throw 'completed candidate must not be reprobed here' }
+function Invoke-VersionedSlotClean { throw 'completed candidate must not be cleaned' }
+function Remove-Item { throw 'completed candidate must not be deleted' }
+"""
+        + _signed_venv_block()
+    )
+    result = _run("ps1", script, tmp_path, env)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(
@@ -447,6 +587,7 @@ def _fixture_checkout(tmp_path: Path) -> Path:
     plugin = root / "plugins/agent-dispatch"
     shutil.copytree(PLUGIN / "scripts", plugin / "scripts")
     shutil.copyfile(PLUGIN / "pyproject.toml", plugin / "pyproject.toml")
+    shutil.copyfile(PLUGIN / "plugin.json", plugin / "plugin.json")
     shutil.copytree(ENGINE, root / "libs/installer-engine")
     for package, lib in LIBRARIES.items():
         source = root / "libs" / lib
@@ -571,6 +712,17 @@ if (@(Get-ChildItem (Join-Path $InstallDir 'snapshots') -Directory).Count -ne 4)
                 ". (Join-Path $PSScriptRoot '..\\..\\..\\libs\\installer-engine\\installer-engine.ps1')"
                 not in text.splitlines()
             )
+    for name in (
+        "installer_dependency_policy.py",
+        "installer_dependency_config.py",
+        "versioned_runtime.py",
+        "versioned_runtime_leases.py",
+        "versioned_runtime_construction.py",
+    ):
+        source = ENGINE if name in (
+            "installer_dependency_policy.py", "installer_dependency_config.py",
+        ) else PLUGIN / "scripts"
+        assert (snapshot / "scripts" / name).read_bytes() == (source / name).read_bytes()
     project = tomllib.loads((snapshot / "pyproject.toml").read_text())
     assert project["tool"]["uv"]["sources"] == {
         package: {"path": f"libs/{lib}"} for package, lib in LIBRARIES.items()
@@ -581,16 +733,54 @@ if (@(Get-ChildItem (Join-Path $InstallDir 'snapshots') -Directory).Count -ne 4)
     assert nested["tool"]["uv"]["sources"]["agent-dropin-registry"] == {
         "path": "../dropin-registry"
     }
+
+
+def test_materialized_snapshot_admits_install_without_authoring_checkout(tmp_path):
+    env = _env(tmp_path)
+    plugin = _fixture_checkout(tmp_path)
+    runtime = tmp_path / "runtime"
+    stamped = _run(
+        "ps1", _snapshot_prelude() + f"""
+$PluginDir='{plugin}'
+$InstallDir='{runtime}'
+$LocalBin='{tmp_path / "local-bin"}'
+$SrcVersion='1.2.3'
+$Force=$false
+$script:GlobalActivationLockTimeoutSeconds=10
+function Deploy-SelfProvisioningBinstub {{ }}
+Invoke-Stamp
+""", tmp_path, env,
+    )
+    assert stamped.returncode == 0, stamped.stdout + stamped.stderr
+    snapshot = Path((runtime / "payload-dir").read_text().strip())
     shutil.move(str(plugin.parents[1]), str(tmp_path / "authoring-unavailable"))
     uv = _fake_uv(tmp_path)
+    env["TEST_UV_EXPECTED_SOURCES"] = json.dumps({"agent-dispatch": str(snapshot)})
     proof = _run(
         "ps1",
         _prelude("ps1", snapshot / "scripts")
         + f"""
+& '{sys.executable}' -I '{snapshot / "scripts/versioned_runtime.py"}' --help > $null
+if ($LASTEXITCODE -ne 0) {{ throw 'standalone runtime helper cannot load its companions' }}
 $result = Invoke-UvVenvResilient -VenvDir '{tmp_path / "slot"}' -Arguments @('--allow-existing') -UvCommand '{uv}'
+if ($result.ExitCode -ne 0) {{ throw $result.Output }}
+$result = Invoke-UvPipInstallResilient -UvCommand '{uv}' -Arguments @('--python', '{sys.executable}', '{snapshot}[mcp]')
+if ($result.ExitCode -ne 0) {{ throw $result.Output }}
 exit $result.ExitCode
 """,
         tmp_path,
         env,
     )
     assert proof.returncode == 0, proof.stdout + proof.stderr
+    calls = [
+        json.loads(line)
+        for line in Path(env["TEST_UV_LOG"]).read_text().splitlines()
+    ]
+    assert calls[0] == ["venv", str(tmp_path / "slot"), "--allow-existing"]
+    assert len(calls) == 2
+    assert calls[1][:-3] == [
+        "pip", "install", "--python", sys.executable, f"{snapshot}[mcp]"
+    ]
+    assert calls[1][-3] == "--exclude-newer"
+    assert calls[1][-1] == "--reinstall"
+    assert "PipInstallSettings" not in proof.stdout + proof.stderr

@@ -3951,6 +3951,10 @@ def _run_session_lifecycle(
     terminal_identity.record_session_terminal(payload, session_environment)
     try:
         project_process = _start_project_session_hook(cwd, session_environment)
+        from . import session_context as _session_context
+
+        machine_project = cfg.active_project()
+        diagnostics += _session_context.publish_machine_context(payload)
         nudge = _registration_nudge_context(cwd)
         _write_session_lifecycle_snapshot(
             "register-nudge",
@@ -4000,6 +4004,8 @@ def _run_session_lifecycle(
             registration_args.result_holder[-1] if registration_args.result_holder else "{}"
         )
         _write_session_lifecycle_snapshot("register-session", payload, registration_output or "{}")
+        if cfg.active_project() != machine_project:
+            diagnostics += _session_context.publish_machine_context(payload)
 
         if deadline is None or time.time() < deadline - 1.0:
             diagnostics += _anchor_hygiene_diagnostic(cwd)
