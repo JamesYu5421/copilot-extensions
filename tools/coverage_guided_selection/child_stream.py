@@ -209,7 +209,7 @@ def manifest_text(*, nonce, context, directory, inventory):
     ])
     rows = [header] + [
         f"{identifier}\t{row['lines']}\t{row['installed'].encode().hex()}"
-        for identifier, row in inventory.items()
+        for identifier, row in sorted(inventory.items(), key=lambda item: int(item[0]))
     ]
     return "\n".join(rows) + "\n"
 

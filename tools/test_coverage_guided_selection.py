@@ -75,6 +75,19 @@ from tools.test_child_stream import (  # noqa: E402,F401
     test_fork_reset_never_reuses_inherited_fd_seen_set_or_locked_mutex,
     test_bootstrap_failure_maps_immutable_context_and_sanitized_lineage,
 )
+from tools.test_measurement_launch import (  # noqa: E402,F401
+    TestMeasurementContainer,
+    test_original_program_boundaries,
+    test_c_program_globals_and_argv_are_not_polluted,
+    test_system_exit_is_not_converted,
+    test_bootstrap_future_flags_do_not_change_program_annotations,
+    test_generated_offline_signature_is_required,
+    test_issued_missing_request_cannot_disappear_as_empty_success,
+    test_extra_unissued_directory_is_refused_without_spawning,
+    test_skip_first_line_is_explicitly_unsupported,
+    test_uv_requires_original_explicit_no_config,
+    test_uv_additional_unobservable_build_operations_are_refused,
+)
 
 
 def test_baseline_error_preserves_collection_output_despite_coverage_warning():

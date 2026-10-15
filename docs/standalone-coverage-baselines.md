@@ -87,6 +87,44 @@ platforms retain their ordinary pytest temporary-path behavior.
 
 ## Publication and the bootstrap gate
 
+### Opt-in measurement-launch prototype
+
+`measurement_launch.py` is an explicit experiment, not a default collector or an
+SDK tracing API. It substitutes only the measurement entry of a native Python
+launch, keeps isolation flags, and restores original program argv/globals before
+executing the original code. It performs no initialization handshake or wait.
+Ordinary launches and SDK bytes are unchanged. Signed, generated offline tickets
+bind the actual CPython spawn audit event, physical and logical argv hashes,
+actual process creation, producer birth, and byte-verified source plans.
+Verification starts from the complete parent-issued request set, not directory
+discovery. Every direct request must retain its actual completed Popen object/PID;
+missing/extra directories, changed lifecycle records and replayed producers fail.
+UV native entries must claim an explicit parent-issued slot (one in the current
+wheel-only prototype), and deleting that slot cannot erase the expected producer.
+`-x` skip-first-line scripts are explicitly unsupported: their original native
+launch still runs unchanged, but measurement admission fails rather than compiling
+the skipped line or inventing equivalent line numbers.
+
+The Linux prototype also supports explicit offline/no-index/no-dependency wheel
+installation through UV. An operation is eligible only when its **original caller arguments already include
+`--no-config`**; the collector never adds it or suppresses configuration silently.
+This prevents implicit cwd/user/system configuration from widening the closed
+operation contract. A stable per-registry measurement entry observes each
+native UV Python entry **before exec**, verifies the UV binary hash, and joins it
+to the signed UV launch. Ancestry alone is never producer authority, and interpreter
+metadata is not forged. Source builds, bytecode-compilation subprocesses and UV
+operations with no registered native entry are conservatively refused; cache-only
+operation support is not claimed. This is not a general opaque-launcher contract.
+
+Prototype tests generate HMAC credentials and Ed25519 keys/signatures, verify real
+SDK authenticity/integrity, and reject tampered signatures and missing producer
+records. Real multiprocess proofs run only in an independently verified, pinned,
+non-root, read-only-rootfs, capability-dropped, no-new-privileges container with no
+network, host bind or forwarded credentials. Dependency wheels are restored through
+the configured governed host feed and installed offline in that container.
+Linux proof is not Windows proof; a Windows container lane is still required
+before claiming native Windows coverage of the prototype.
+
 `validate-and-promote.yml` earns separate Linux and Windows evidence under
 `fleet-manager-linux` and `fleet-manager-windows`. Its two independent
 `fleet-manager-baselines-linux`/`fleet-manager-baselines-windows` jobs use literal
