@@ -59,6 +59,7 @@ from tools.coverage_baseline_chunk_contract import (
     test_workers_share_one_unchanged_containment_budget as test_workers_share_one_unchanged_containment_budget,
     test_workflow_keeps_deadline_enrollment_and_only_two_heavy_opt_ins as test_workflow_keeps_deadline_enrollment_and_only_two_heavy_opt_ins,
 )
+from tools.test_coverage_standalone import TestStandaloneCoverage  # noqa: E402,F401
 
 
 def test_baseline_error_preserves_collection_output_despite_coverage_warning():
