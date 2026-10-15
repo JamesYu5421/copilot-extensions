@@ -3,11 +3,13 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
 import sysconfig
 import venv
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -19,7 +21,73 @@ runner = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runner)
 
 
+@pytest.mark.parametrize("component,package", [
+    ("fleet-manager", "fleet_manager"),
+    ("services/index", "agent_index_service"),
+])
+def test_retained_preparation_builds_actual_standalone_resource_hooks(
+    tmp_path, monkeypatch, component, package,
+):
+    checkout = tmp_path / "checkout"
+    project = checkout / component
+    original = SCRIPT.parent.parent / component
+    project.mkdir(parents=True)
+    for name in ("pyproject.toml", "README.md", "setup.py", "_build_runtime_resource.py", "MANIFEST.in"):
+        if (original / name).is_file():
+            shutil.copy2(original / name, project / name)
+    shutil.copytree(original / "src", project / "src")
+    resources = checkout / "libs" / "versioned-runtime"
+    shutil.copytree(SCRIPT.parent.parent / "libs" / "versioned-runtime", resources)
+    expected = {
+        destination: (resources / source).read_bytes()
+        for source, destination in {
+            "versioned_runtime.py": "_versioned_runtime.py",
+            "versioned_runtime_leases.py": "versioned_runtime_leases.py",
+            "versioned_runtime_construction.py": "versioned_runtime_construction.py",
+        }.items()
+    }
+    output = tmp_path / "artifacts"
+    output.mkdir()
+    actual_run = subprocess.run
+    retained = []
+
+    def uv(command, **kwargs):
+        if "--show-settings" in command:
+            return subprocess.CompletedProcess(command, 0, """PipInstallSettings { settings: PipSettings {
+                index_locations: IndexLocations { indexes: [], flat_index: [], },
+                exclude_newer: ExcludeNewer { global: None, package: ExcludeNewerPackage({}), },
+            }, }""", "")
+        retained.append(Path(kwargs["cwd"]))
+        assert retained[0] != checkout
+        for name in ("standalone_build.py", "versioned_runtime.py",
+                     "versioned_runtime_leases.py", "versioned_runtime_construction.py"):
+            (resources / name).write_text("raise RuntimeError('mutable original reopened')\n")
+        candidate = Path(next(argument for argument in command if argument.endswith(str(Path(component)))))
+        result = actual_run(
+            [sys.executable, "-I", "-c",
+             "from setuptools.build_meta import build_wheel; "
+             f"build_wheel({str(output)!r})"],
+            cwd=candidate, capture_output=True, text=True, timeout=30,
+            **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        return result
+
+    monkeypatch.setattr(runner.subprocess, "run", uv)
+    runner.run_uv_install(
+        "uv", ["--no-config", "--python", sys.executable, str(project)],
+        cwd=checkout, trusted_source_roots=(checkout,), retained_resource_roots=(resources,),
+    )
+    assert len(retained) == 1 and not retained[0].exists()
+    with zipfile.ZipFile(next(output.glob("*.whl"))) as wheel:
+        for name, data in expected.items():
+            assert wheel.read(f"{package}/{name}") == data
+
+
 def test_fleet_manager_preparation_has_no_service_or_plugin_dependencies(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "run_uv_install", lambda uv, args, **kwargs: runner.subprocess.run(
+        [uv, "pip", "install", *args], **{key: value for key, value in kwargs.items() if key not in ("trusted_source_roots", "retained_resource_roots")},
+    ))
     monkeypatch.setattr(runner, "REPO", tmp_path)
     calls = []
     python = runner.default_python("fleet-manager")
@@ -42,6 +110,9 @@ def test_fleet_manager_preparation_has_no_service_or_plugin_dependencies(tmp_pat
 
 @pytest.mark.parametrize("smoke", [False, True])
 def test_prepare_composes_local_core_and_declared_service_extras(tmp_path, monkeypatch, smoke):
+    monkeypatch.setattr(runner, "run_uv_install", lambda uv, args, **kwargs: runner.subprocess.run(
+        [uv, "pip", "install", *args], **{key: value for key, value in kwargs.items() if key not in ("trusted_source_roots", "retained_resource_roots")},
+    ))
     monkeypatch.setattr(runner, "REPO", tmp_path)
     calls = []
     metadata = tmp_path / "plugins" / "agent-index" / "pyproject.toml"
@@ -74,6 +145,9 @@ def test_prepare_composes_local_core_and_declared_service_extras(tmp_path, monke
 
 
 def test_manager_preparation_retains_source_payload_layout(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "run_uv_install", lambda uv, args, **kwargs: runner.subprocess.run(
+        [uv, "pip", "install", *args], **{key: value for key, value in kwargs.items() if key not in ("trusted_source_roots", "retained_resource_roots")},
+    ))
     monkeypatch.setattr(runner, "REPO", tmp_path)
     calls = []
     monkeypatch.setattr(runner.subprocess, "run", lambda argv, **kwargs: calls.append(argv))
@@ -83,6 +157,75 @@ def test_manager_preparation_retains_source_payload_layout(tmp_path, monkeypatch
     python.touch()
     runner.prepare("worktree-manager", python)
     assert calls[-1][-2:] == ["--editable", str(tmp_path / "worktree-manager") + "[dev]"]
+
+
+@pytest.mark.parametrize("component", [
+    "fleet-manager", "worktree-manager", "services/index", "services/dispatch",
+])
+def test_fresh_preparation_attributes_complete_local_graph(tmp_path, monkeypatch, component):
+    projects = {
+        "fleet-manager": "fleet-manager",
+        "worktree-manager": "worktree-manager",
+        "services/index": "agent-index-service",
+        "services/dispatch": "agent-dispatch-service",
+        "plugins/agent-index": "agent-index",
+        "plugins/agent-dispatch": "agent-dispatch",
+        "plugins/agent-index/libs/dropin-registry": "agent-dropin-registry",
+        "libs/zdd": "agent-zdd",
+        "libs/agent-procutil": "agent-procutil",
+        "libs/dropin-registry": "agent-dropin-registry",
+        "libs/plugin-activation": "agent-plugin-activation",
+        "libs/plugin-resolve": "agent-plugin-resolve",
+        "libs/single-instance-lease": "agent-single-instance-lease",
+    }
+    for relative, name in projects.items():
+        project = tmp_path / relative
+        project.mkdir(parents=True, exist_ok=True)
+        (project / "pyproject.toml").write_text(
+            '[build-system]\nrequires=[]\nbuild-backend="setuptools.build_meta"\n'
+            f'[project]\nname="{name}"\nversion="1.0"\n'
+            '[project.optional-dependencies]\ndev=[]\nnative=[]\ntest=[]\nstore=[]\nserver=[]\n',
+            encoding="utf-8",
+        )
+        with (project / "pyproject.toml").open("a", encoding="utf-8") as manifest:
+            manifest.write('[tool.setuptools.packages.find]\nwhere=["src"]\n')
+        (project / "src").mkdir()
+    (tmp_path / "libs" / "versioned-runtime").mkdir()
+    monkeypatch.setattr(runner, "REPO", tmp_path)
+    python = runner.default_python(component)
+    python.parent.parent.mkdir(parents=True)
+    admitted = runner.run_uv_install
+    probes = []
+    installs = []
+
+    def prepare(uv, arguments, **kwargs):
+        assert kwargs["trusted_source_roots"] == (tmp_path,)
+        assert kwargs["retained_resource_roots"] == (tmp_path / "libs" / "versioned-runtime",)
+        return admitted(uv, arguments, **kwargs)
+
+    def command(arguments, **kwargs):
+        if arguments[1] == "venv":
+            python.parent.mkdir(parents=True, exist_ok=True)
+            python.touch()
+        elif "--show-settings" in arguments:
+            probes.append(arguments)
+            return subprocess.CompletedProcess(arguments, 0, """PipInstallSettings { settings: PipSettings {
+                index_locations: IndexLocations { indexes: [], flat_index: [], },
+                exclude_newer: ExcludeNewer { global: None, package: ExcludeNewerPackage({}), },
+            }, }""", "")
+        else:
+            installs.append(arguments)
+        return subprocess.CompletedProcess(arguments, 0, "", "")
+
+    monkeypatch.setattr(runner, "run_uv_install", prepare)
+    monkeypatch.setattr(runner.subprocess, "run", command)
+    runner.prepare(component, python, smoke=component == "services/index")
+    assert len(probes) == 2 and len(installs) == 1
+    assert "--exclude-newer" in installs[0] and "--reinstall" in installs[0]
+    extra = "[test]" if component == "services/index" else "[dev]"
+    assert any(argument.endswith(component.replace("/", os.sep) + extra) for argument in installs[0])
+    if component in ("services/index", "services/dispatch"):
+        assert "--override" in installs[0]
 
 
 @pytest.mark.parametrize("component", [
@@ -597,6 +740,12 @@ def test_ci_path_gates_smoke_and_promotion_keeps_exhaustive():
     assert r"standalone_consumers\.py" in detector
     for path in ("services/index/", "plugins/agent-index/", "libs/", "tools/"):
         assert path in discovery
+    for name in ("test-runner-linux", "test-runner-windows"):
+        command = next(
+            step["run"] for step in ci[name]["steps"]
+            if step.get("name") == "Test runner admission and isolation"
+        )
+        assert 'python tools/seasoned_uv.py --uv uv -- --system pytest pyyaml "setuptools>=83.0.0" wheel' in command
     for name in ("agent-index-service-linux", "agent-index-service-windows"):
         assert ci[name]["needs"] == "discover"
         assert "needs.discover.outputs.standalone_service == 'true'" in ci[name]["if"]

@@ -123,6 +123,50 @@ contract executes both aliases in canonical contained fixture environments
 from an isolated parent whose pytest dependencies reside outside its interpreter
 scheme, exercising the layered dependency layout without installing packages.
 
+Dependency preparation uses the canonical seven-day configured-resolver policy.
+Do not replace a failed admission with plain pip or an alternate index. After
+changing declarations, run `python tools/check-dependency-age.py`; its explicit
+`--ecosystem` lanes are diagnostics, not a replacement for the all-ecosystem CI
+gate. Focused policy tests are:
+
+```bash
+python -m pytest -q tools/test_dependency_age.py tools/test_installer_dependency_policy.py tools/test_seasoned_npm_install.py
+```
+
+The native UV lane uses a controlled index to exercise a transitive dependency
+and an isolated build backend, including newer/missing upload timestamps,
+transitive URL refusal and UV's conservative exclusive boundary. The native npm
+lane runs configured-registry queries and `npm ci` against a controlled registry;
+newer or unknown releases must refuse before artifact download. These helpers
+perform no production service mutations.
+
+The standalone runner's retained-resource regressions build real Fleet and
+Index wheels with their declared setuptools backend; use a prepared test
+environment, not an older host setuptools installation. Installer fixtures
+must run from their own attributable payload or isolated working directory so
+UV does not discover unrelated checkout metadata. Retained-path assertions
+validate source identity, private ownership and content at the physical UV
+boundary before normalizing paths for ordering or retry comparisons.
+Vault's two snapshot-provisioning integration cases explicitly allow 60 seconds
+per item: fixture setup performs one complete four-package installation,
+health gate and publication transaction. The remaining items keep the default
+30-second limit; suite, child-process and CI budgets are unchanged.
+A focused, change-scoped Windows CI job executes both native cases under the
+same two-minute suite limit and participates in the required PR aggregate;
+the existing POSIX plugin suite remains required independently.
+The off-PATH Windows bootstrap fixture creates a real stdlib virtualenv in a
+spaced directory and probes its exact executable and prefix with a restricted
+PATH before invoking the hook. Copying a base `python.exe` and writing
+`pyvenv.cfg` is not a runnable cold interpreter fixture: its DLL dependencies
+may be absent, independently of argument forwarding or installation policy.
+The full native Fleet check allows 300 seconds on Windows under its unchanged
+seven-minute CI job limit; Linux retains 120 seconds. This is a full-suite
+budget, not a reduced test selection or a relaxed dependency-admission gate.
+Multiline PowerShell steps propagate each native admission or prerequisite-test
+failure explicitly before starting later commands.
+`tools/test_installer_finalizers.py` exercises production cleanup and exclusive
+lock reacquisition in the same still-live Windows PowerShell host.
+
 The review-request workflow's fast contract uses
 `node --test tools/test_copilot_review_gate.cjs`. To exercise its exact script
 against the bundled `actions/github-script` runtime as well, download
@@ -161,6 +205,13 @@ python tools/run-plugin-tests.py --all                  # every plugin with a su
 python tools/run-plugin-tests.py agent-bridge --guards  # just the fast @pytest.mark.guard checks
 python tools/run-plugin-tests.py agent-bridge -k picker # pass-through pytest -k filter
 ```
+
+For a focused lane, repeat `--test-file tests/test_name.py` with exactly one
+named plugin to avoid importing unrelated test modules. The selector accepts
+only existing, unlinked Python test files inside that plugin's `tests` tree;
+it retains the usual containment and time budgets and fails if no selected
+tests run. Combine it with `-k` to preserve a diagnostic lane's exact test
+roster without collecting the full plugin suite.
 
 > **A cached venv is not editable.** A vendored path dependency (e.g.
 > `agent-ssh-manager` under `plugins/<p>/libs/<lib>/`) installs into
@@ -210,6 +261,18 @@ mutations, and expose attempted forbidden effects as assertion failures.
 User-root redirection alone does not isolate executable discovery or scheduled
 tasks. The signed-venv health/exit-code matrix uses simulated signatures on both
 platforms; native signature-policy behavior still requires Windows validation.
+Isolated runtime-helper fixtures must copy `versioned_runtime.py` with its
+adjacent `versioned_runtime_leases.py` and `versioned_runtime_construction.py`.
+Standalone wheel/sdist tests bind every member to canonical bytes and wheel
+RECORD; a missing companion must fail rather than yield a partial artifact.
+
+Dependency fixtures must also preserve source attribution. Stage matching
+publisher/project metadata and the declared local library graph at the real
+helper location; use the existing release materializers before stamping a
+payload rather than retaining development paths that escape its root.
+Direct policy API callers attest the fixture creator's fixed repository root,
+not a root derived from the requested package argument. Keep admission active:
+do not mock ownership discovery or widen trust to make a fixture pass.
 
 The Codespaces module-launch matrix is an opt-in T3 contract:
 `python tools/run-plugin-tests.py agent-codespaces --allow-explicit-tiers -k activation_requires_installed_module_launch`.
@@ -822,8 +885,8 @@ demand through the `Installation context full` workflow. This keeps unrelated
 pull requests incremental and keeps the required fast lane independent from the
 size of the long-form regression portfolio.
 
-Native Windows diagnostic evidence is a separate, bounded selection inside
-the existing `test runner (windows-latest)` job. It runs actual `status` and
+Native Windows diagnostic evidence runs in the separate five-minute
+`Installation-context native diagnostics (Windows)` job. It runs actual `status` and
 `probe-legacy` CLI calls, existing/absent pointer checks, and mutation-entry
 guards from `test_installation_mode_governance.py`; it is not inferred from
 the job merely finishing successfully. The step has a two-minute budget,
@@ -833,10 +896,15 @@ uses Windows PowerShell 5.1 via
 and derived implementation changes trigger it; unrelated docs do not.
 An explicitly requested unavailable shell fails collection rather than
 silently skipping the evidence. No exhaustive adapter matrix is added to PR CI.
-The Windows job has a seven-minute aggregate budget for these diagnostic and
-wrapper selections plus its runner, payload-CWD, and fleet contracts. Individual
-diagnostic/wrapper selections retain their two-minute limits; the Linux runner
-job retains its five-minute budget.
+Individual diagnostic/wrapper selections retain their two-minute limits.
+The separate Windows runner, payload-CWD and Fleet job keeps its ordinary
+seven-minute budget; the Linux runner keeps its ordinary five-minute budget.
+
+Native promotion readiness/retry cases have their own five-minute
+`Native promotion candidate contracts (Windows)` job. It consumes the governed
+artifact builder's changed-path output instead of duplicating detection, and
+both jobs gate PR and promotion snapshots. The same native cases and selectors
+run without exhausting the builder's cumulative five-minute budget.
 
 Source-qualified catalog no-write cases invoke the unchanged PowerShell script
 twice in one real, initialized host. Host-only initialization stops CLR startup
