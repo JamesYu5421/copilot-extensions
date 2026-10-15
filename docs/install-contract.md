@@ -2210,7 +2210,12 @@ Editable source retention supports static `setuptools.build_meta` projects
 using the repository's `src` layout. Retained metadata selects compatibility
 editable mode and references the original live `src` through a same-volume
 relative package directory; installed imports survive snapshot cleanup and
-observe subsequent source edits. Dynamic metadata, other editable backends or
+observe subsequent source edits. On Windows the private snapshot is a sibling
+of a shallowest admitted project or build-resource root on the editable source
+volume, outside every copied input. A volume-root input with no outside
+temporary location fails explicitly. This avoids long parent-relative paths from an unrelated
+temporary directory; setuptools requires relative package directories.
+Dynamic metadata, other editable backends or
 layouts, competing editable-mode settings and mixed source volumes on Windows
 fail explicitly rather than installing references to disposable source trees.
 
