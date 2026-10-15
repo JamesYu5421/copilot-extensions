@@ -26,4 +26,6 @@ jobs:
         with:
           python-version: "3.12"
       - name: Probe native custody capabilities without elevated privileges
-        run: python -I -B tools/darwin_custody_probe.py
+        run: |
+          python -I -B tools/darwin_custody_probe.py
+          python -I -B tools/darwin_custody_probe.py --user-domain

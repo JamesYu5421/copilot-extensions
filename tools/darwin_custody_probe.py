@@ -152,13 +152,17 @@ def main() -> None:
                 "--guardian", str(base),
             ],
             "RunAtLoad": True, "KeepAlive": False, "ProcessType": "Background",
+            "LimitLoadToSessionType": ["Background", "Aqua", "StandardIO"],
             "StandardOutPath": str(base / "out"), "StandardErrorPath": str(base / "err"),
         }))
         gui = f"gui/{os.getuid()}"
         domain_probe = subprocess.run(
             ["launchctl", "print", gui], capture_output=True, text=True, timeout=10,
         )
-        target = gui if domain_probe.returncode == 0 else f"user/{os.getuid()}"
+        target = (
+            gui if domain_probe.returncode == 0 and "--user-domain" not in sys.argv
+            else f"user/{os.getuid()}"
+        )
         print(json.dumps({"selected_domain_kind": target.split("/")[0]}), flush=True)
         loaded = False
         owned = []
