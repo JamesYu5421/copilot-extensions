@@ -33,15 +33,52 @@ hashes, collector hashes, complete test-universe digest, test markers and pytest
 contains no installation paths or machine identity. Test node IDs remain relative
 to the component root; covered file keys are repository-relative POSIX paths.
 
-An exclusively leased venv `.pth` hook starts coverage in native child interpreters,
-including `python -I`. Each test passes a distinct context configuration to its
-children so late startup cannot misattribute a child to the next test. Child data
-uses digest contexts (not config-interpolated node IDs) and is combined with parent
-attribution. This covers interpreters using that venv
-and inherited configuration, **not** arbitrary unrelated interpreters, newly
-created environments or children deliberately scrubbing coverage configuration.
-The hook and temporary instrumentation files are removed before releasing the lease,
-including on collection failure.
+The parent uses coverage.py's dynamic contexts. An exclusively leased venv `.pth`
+hook starts `child_stream.py` in opted-in native children, including `python -I`,
+without importing coverage.py there. Each test supplies a private, digest-named
+manifest. Sparse unbuffered source/line records survive `os._exit()` and forced
+termination; timing framing is emitted before line events. Future Python threads
+use the same source-scoped tracer. Replacing the process/thread tracer invalidates
+collection. Child backend/audit versions, helper hashes, producer counts, zero-hit
+counts and initialization durations are recorded in provenance.
+
+`child_audit.py` observes CPython `subprocess.Popen`/`os.posix_spawn` audit events,
+without wrapping Popen or waiting for initialization. Each intent is matched to
+exactly one dead producer by run, known test context, argv digest, audited owner
+and creation/birth order. Children validate their auditor ancestry, including the
+Windows venv redirector. Audit registration is self-tested. Empty-source-hit
+producers remain distinguishable from missing producers.
+
+The parent validates every manifest against its source inventory and context map,
+rechecks installed bytes, rejects live writers, and validates bounded framing,
+version, IDs and line ranges before unioning child hits with parent attribution
+in schema 3. Missing hooks/evidence, bootstrap errors swallowed by `.pth`,
+trace/write errors, duplicate records, unknown contexts or unmatched producers
+invalidate the entire collection. No success-shaped partial baseline is emitted.
+Retained `CGS-ERROR/1` diagnostics bind the immutable manifest/context digest to the
+parent's exact pytest node. Ownership failures include the expected auditor and a
+bounded kernel PID lineage; image labels are allowlisted basenames, never full
+paths or command bodies. Extra launcher ancestry is diagnostic evidence, not a
+relaxation of producer admission.
+
+**Supported boundary:** canonical leased native Python with inherited instrumentation
+and site initialization. Only informational help/version exits before a code/module/
+script boundary are ignored. Site-disabled code execution (`-S`, including bundled
+`-IS`) with inherited instrumentation invalidates collection rather than dropping
+attribution. Explicitly stripped instrumentation environments are not opted in.
+An opted-in unmanaged interpreter,
+unaccounted producer, fork/forkpty or exec is refused. Fork cleanup resets inherited
+descriptor, seen-set and mutex state; it does not make fork evidence admissible.
+Spawn audit occurs before process creation, so an expected native launch refusal
+also conservatively invalidates baseline collection. Opaque external launchers are
+not an authority for unobservable native descendants; a descendant that loads this
+backend without a matching audited owner is refused.
+
+The collector does not serialize process startup, replace native processes, adjust
+application clocks/deadlines or change ordinary/plugin/shadow consumers. Hook and
+instrumentation files are removed before releasing the lease, including on failure.
+Parent dynamic-context capability is checked in prepared environments; the coverage.py
+`_exit` patch is not needed for sparse child persistence.
 
 Windows uses digest-named `tmp_path` directories beneath a short checkout-local
 sandbox to preserve native artifact path headroom. Extended/UNC prefixes are not
@@ -51,7 +88,10 @@ platforms retain their ordinary pytest temporary-path behavior.
 ## Publication and the bootstrap gate
 
 `validate-and-promote.yml` earns separate Linux and Windows evidence under
-`fleet-manager-linux` and `fleet-manager-windows`. Both jobs must succeed and both
+`fleet-manager-linux` and `fleet-manager-windows`. Its two independent
+`fleet-manager-baselines-linux`/`fleet-manager-baselines-windows` jobs use literal
+GitHub-hosted runner labels, not dynamic runner expressions, preserving the
+trusted-routing contract. Both jobs must succeed and both
 artifacts must exist before promotion. Artifact names retain the existing
 `coverage-baseline-` prefix; JSON filenames match the embedded baseline identity.
 The existing publisher writes the small main-history pointers and publishes their
@@ -64,3 +104,7 @@ It must resolve the appropriate platform identity, verify freshness and attribut
 and fail visibly on unavailable/untrusted evidence rather than run a full suite
 or treat a null decision as a successful empty run. Existing shadow consumers
 remain unchanged.
+
+Workflow-structure assertions require PyYAML and skip only those assertions in
+the pytest-only manual tooling environment; collection, source-equivalence,
+selection and provenance tests continue to run without it.

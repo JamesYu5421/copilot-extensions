@@ -60,6 +60,21 @@ from tools.coverage_baseline_chunk_contract import (
     test_workflow_keeps_deadline_enrollment_and_only_two_heavy_opt_ins as test_workflow_keeps_deadline_enrollment_and_only_two_heavy_opt_ins,
 )
 from tools.test_coverage_standalone import TestStandaloneCoverage  # noqa: E402,F401
+from tools.test_child_stream import (  # noqa: E402,F401
+    TestChildStreamNative, evidence,
+    test_interpreter_options_do_not_exempt_site_disabled_code,
+    test_verified_records_merge_without_replacing_parent_evidence,
+    test_malformed_or_unearned_child_evidence_is_refused,
+    test_zero_source_hit_producer_is_not_missing,
+    test_no_opted_in_spawns_requires_no_producer,
+    test_manifest_and_inventory_bounds_are_explicit,
+    test_running_producer_is_never_a_complete_prefix,
+    test_timing_must_precede_line_records,
+    test_audited_spawn_time_must_precede_producer_birth,
+    test_untraceable_native_lifecycle_fails_closed,
+    test_fork_reset_never_reuses_inherited_fd_seen_set_or_locked_mutex,
+    test_bootstrap_failure_maps_immutable_context_and_sanitized_lineage,
+)
 
 
 def test_baseline_error_preserves_collection_output_despite_coverage_warning():

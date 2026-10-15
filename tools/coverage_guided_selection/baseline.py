@@ -117,6 +117,20 @@ _DRIVER_SCRIPT = textwrap.dedent(
         test_paths_json, cov_source, cwd, cov_data_file, json_report_file, out_file, basetemp = sys.argv[1:8]
         test_paths = json.loads(test_paths_json)
         options = json.loads(sys.argv[8]) if len(sys.argv) > 8 else {}
+        child_stream = None
+        if options.get("child_stream_control"):
+            import importlib.util
+            for name in ("_cgs_child_audit", "_cgs_child_stream"):
+                spec = importlib.util.spec_from_file_location(name, options[name])
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[name] = module
+                spec.loader.exec_module(module)
+            child_stream = sys.modules["_cgs_child_stream"]
+            child_stream.configure_parent(
+                options["child_stream_control"], sys.executable,
+                options["child_stream_nonce"], options["child_stream_inventory"],
+                options["child_stream_helpers"],
+            )
 
         # Captured via a hook plugin (not pytest-json-report's own
         # "keywords" field, which only records marker NAMES present on an
@@ -130,7 +144,6 @@ _DRIVER_SCRIPT = textwrap.dedent(
         # guard plugin.
         tier_by_nodeid = {}
         markers_by_nodeid = {}
-        child_nodeids = {}
 
         class _TierCollector:
             def pytest_collection_modifyitems(self, items):
@@ -169,21 +182,8 @@ _DRIVER_SCRIPT = textwrap.dedent(
                 cov = coverage.Coverage.current()
                 if cov is not None:
                     cov.switch_context(item.nodeid)
-                if options.get("child_context_dir"):
-                    # A distinct config per test prevents a slow-starting child
-                    # from reading the next test's context from a shared file.
-                    identity = hashlib.sha256(item.nodeid.encode()).hexdigest()
-                    context = "cgs:" + identity
-                    child_nodeids[context] = item.nodeid
-                    config = Path(options["child_context_dir"]) / (identity + ".ini")
-                    config.write_text(
-                        "[run]\\nparallel = true\\n"
-                        + "data_file = " + cov_data_file + "\\n"
-                        + "source = " + options["installed_source"] + "\\n"
-                        + "context = " + context + "\\n",
-                        encoding="utf-8",
-                    )
-                    os.environ["COVERAGE_PROCESS_START"] = str(config)
+                if child_stream is not None:
+                    child_stream.register_context(item.nodeid)
                 return (yield)
 
         class _CompactPaths:
@@ -270,10 +270,6 @@ _DRIVER_SCRIPT = textwrap.dedent(
 
         cov.stop()
         cov.save()
-        child_files = list(Path(cov_data_file).parent.glob(Path(cov_data_file).name + ".*"))
-        if options.get("child_context_dir"):
-            cov.combine(strict=False)
-            cov.save()
 
         if exit_code != 0:
             sys.exit(exit_code)
@@ -306,7 +302,6 @@ _DRIVER_SCRIPT = textwrap.dedent(
                 for ctx in contexts:
                     if not ctx:
                         continue
-                    ctx = child_nodeids.get(ctx, ctx)
                     for suffix in phase_suffixes:
                         if ctx.endswith(suffix):
                             tests.add(ctx[: -len(suffix)])
@@ -331,12 +326,16 @@ _DRIVER_SCRIPT = textwrap.dedent(
                     total += float(phase_data.get("duration", 0.0))
             durations[nodeid] = total
 
+        children = None
+        if child_stream is not None:
+            children = child_stream.finish_parent()
+            child_stream.merge_coverage(coverage_map, children.pop("coverage"))
         Path(out_file).write_text(
             json.dumps(
                 {"durations": durations, "tiers": tier_by_nodeid, "coverage": coverage_map,
                  "summary": report.get("summary", {}),
-                 "python_version": sys.version.split()[0], "child_data_files": len(child_files),
-                 "markers": markers_by_nodeid}
+                 "python_version": sys.version.split()[0], "children": children,
+                 "markers": markers_by_nodeid, "coverage_version": coverage.__version__}
             )
         )
         sys.exit(0)

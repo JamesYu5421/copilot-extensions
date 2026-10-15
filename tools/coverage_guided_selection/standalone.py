@@ -12,6 +12,8 @@ import importlib.util
 import json
 import math
 import os
+import secrets
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -26,6 +28,7 @@ from tools.coverage_guided_selection.ancestor_resolution import _git  # noqa: E4
 from tools.coverage_guided_selection.baseline import (  # noqa: E402
     BASELINE_SCHEMA_VERSION, BaselineCollectionError, _DRIVER_SCRIPT,
 )
+from tools.coverage_guided_selection import child_stream, child_audit  # noqa: E402
 from plugin_test_containment import Limits, isolated_environment, run_contained  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
@@ -40,6 +43,12 @@ PACKAGE = "fleet_manager"
 SOURCE = f"{COMPONENT}/src/{PACKAGE}"
 PLATFORMS = {"linux": "linux", "win32": "windows"}
 COLLECTION_SCHEMA = "copilot-extensions.standalone-coverage-collection.v1"
+COVERAGE_REQUIREMENT = "coverage>=7"
+COVERAGE_CAPABILITY_PROBE = (
+    "import coverage, pytest_jsonreport; "
+    "assert callable(coverage.Coverage.switch_context); "
+    "assert callable(coverage.CoverageData.contexts_by_lineno)"
+)
 
 
 def baseline_identity(platform: str) -> str:
@@ -103,6 +112,13 @@ def build_baseline(repo: Path, result: dict, measured_commit: str, hashes: dict)
                 raise ValueError("coverage attribution names an uncollected test")
     if not result["coverage"]:
         raise ValueError("installed baseline has no attributed source coverage")
+    children = result.get("children") or {}
+    if (
+        children.get("audit_complete") is not True
+        or children.get("child_streams") != children.get("audited_producers")
+        or len(children.get("prelude_seconds", [])) != children.get("child_streams")
+    ):
+        raise ValueError("standalone baseline requires complete audited child evidence")
     tests = {
         node: {
             "duration_s": duration, "portfolio_tier": result["tiers"].get(node),
@@ -137,8 +153,17 @@ def build_baseline(repo: Path, result: dict, measured_commit: str, hashes: dict)
                 json.dumps(sorted(universe), separators=(",", ":")).encode()
             ).hexdigest(),
             "summary": summary,
-            "child_context_strategy": "leased-venv-pth/inherited-per-test-config",
-            "child_data_files": result["child_data_files"],
+            "child_context_strategy": "leased-venv-pth/inherited-audited-manifest",
+            "child_backend": child_stream.VERSION,
+            "child_audit": child_audit.VERSION,
+            "unsupported_child_lifecycles": ["fork", "forkpty", "exec"],
+            "child_persistence": "unbuffered-sparse-writes",
+            "coverage_version": result["coverage_version"],
+            "children": result["children"],
+            "child_backend_sha256": {
+                name: digest(Path(__file__).with_name(name + ".py"))
+                for name in ("child_stream", "child_audit")
+            },
             "temporary_path_strategy": "compact-node-digest" if os.name == "nt" else "pytest-default",
         },
     }
@@ -150,15 +175,68 @@ def _prepare_instrumentation(python: Path, *, repo: Path, prepare: bool) -> None
         runner.prepare(COMPONENT, python)
     # Instrumentation is explicitly provisioned by the baseline collector,
     # just as baseline.py provisions these tools in its ephemeral environment.
-    check = subprocess.run(
-        [str(python), "-I", "-c", "import coverage, pytest_jsonreport"],
-        capture_output=True, text=True, **flags,
-    )
+    probe = [str(python), "-I", "-c", COVERAGE_CAPABILITY_PROBE]
+    check = subprocess.run(probe, capture_output=True, text=True, timeout=30, **flags)
     if check.returncode:
         subprocess.run(
-            ["uv", "pip", "install", "--python", str(python), "coverage", "pytest-json-report"],
-            cwd=repo, check=True, capture_output=True, text=True, **flags,
+            ["uv", "pip", "install", "--python", str(python),
+             COVERAGE_REQUIREMENT, "pytest-json-report"],
+            cwd=repo, check=True, capture_output=True, text=True, timeout=300, **flags,
         )
+        checked = subprocess.run(probe, capture_output=True, text=True, timeout=30, **flags)
+        if checked.returncode:
+            raise BaselineCollectionError(
+                checked.returncode, checked.stdout,
+                "coverage lacks required parent dynamic-context capability:\n" + checked.stderr,
+            )
+
+
+def coverage_files(sandbox: Path, mapping: dict) -> tuple[str, dict]:
+    """Lease-scoped stdlib children plus coverage.py parent, without spawn wrappers."""
+    control = sandbox / "child-lines"
+    control.mkdir(mode=0o700)
+    for name in ("hits", "audit", "manifests"):
+        (control / name).mkdir(mode=0o700)
+    (control / "status").write_bytes(b"R")
+    nonce = secrets.token_hex(32)
+    (control / "run").write_text(nonce, encoding="ascii")
+    options = {
+        "child_stream_control": str(control), "child_stream_nonce": nonce,
+        "child_stream_inventory": child_stream.source_inventory(mapping),
+        "child_stream_helpers": {},
+    }
+    for name in ("child_stream", "child_audit"):
+        target = sandbox / ("_cgs_" + name + ".py")
+        shutil.copyfile(Path(__file__).with_name(name + ".py"), target)
+        options["_cgs_" + name] = str(target)
+        options["child_stream_helpers"][str(target)] = digest(target)
+    body = (
+        "import sys,time\n"
+        "os.environ['_CGS_PRELUDE_NS']=str(time.perf_counter_ns())\n"
+        "try:\n"
+        f" sys.path.insert(0,{str(sandbox)!r})\n"
+        " try:\n"
+        "  import _cgs_child_audit,_cgs_child_stream\n"
+        f"  _cgs_child_stream.start({str(control)!r})\n"
+        " finally:\n"
+        f"  sys.path.remove({str(sandbox)!r})\n"
+        "except BaseException as exc:\n"
+        f" fd=os.open({str(control / 'status')!r},os.O_WRONLY)\n"
+        " os.write(fd,b'E');os.close(fd)\n"
+        " try:\n"
+        f"  _cgs_child_audit.report_bootstrap_error({str(control)!r},exc)\n"
+        " except BaseException:\n"
+        "  import json\n"
+        "  token=os.path.basename(os.environ.get('_CGS_CHILD_MANIFEST','')).removesuffix('.manifest')\n"
+        "  token=token if len(token)==64 and all(c in '0123456789abcdef' for c in token) else 'unknown'\n"
+        f"  path=os.path.join({str(control / 'audit')!r},str(os.getpid())+'-'+os.urandom(16).hex()+'.error')\n"
+        "  record={'schema':'CGS-ERROR/1','context_digest':token,'producer_pid':os.getpid(),"
+        "'observed_ns':time.monotonic_ns(),'reason':'bootstrap import failed: '+type(exc).__name__}\n"
+        "  fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)\n"
+        "  os.write(fd,json.dumps(record).encode()[:4096]);os.close(fd)\n"
+    )
+    hook = "import os; os.getenv('_CGS_CHILD_MANIFEST') and exec(" + repr(body) + ")\n"
+    return hook, options
 
 
 def collect_standalone(
@@ -185,7 +263,10 @@ def collect_standalone(
         temporary = tempfile.TemporaryDirectory(prefix="c", dir=scratch)
         sandbox = Path(temporary.name)
         env = isolated_environment(os.environ, sandbox)
-        for name in ("PYTEST_ADDOPTS", "PYTHONPATH", "COVERAGE_PROCESS_START", "COVERAGE_FILE"):
+        for name in (
+            "PYTEST_ADDOPTS", "PYTHONPATH", "COVERAGE_PROCESS_START", "COVERAGE_FILE",
+            "COVERAGE_PROCESS_CONFIG", "_CGS_CHILD_MANIFEST", "_CGS_CHILD_AUDITOR",
+        ):
             env.pop(name, None)
         probe = sandbox / "installed.json"
         code = (
@@ -203,12 +284,11 @@ def collect_standalone(
         if not site.resolve().is_relative_to(environment.resolve()):
             raise ValueError("instrumentation site must belong to the leased environment")
         mapping, hashes = verified_source_mapping(REPO, installed, environment)
+        hook_text, coverage_options = coverage_files(sandbox, mapping)
         candidate_hook = site / "_cgs_standalone.pth"
         with candidate_hook.open("x", encoding="utf-8") as stream:
             hook = candidate_hook
-            stream.write("import coverage; coverage.process_startup()\n")
-        contexts = sandbox / "contexts"
-        contexts.mkdir()
+            stream.write(hook_text)
         driver = sandbox / "driver.py"
         driver.write_text(_DRIVER_SCRIPT, encoding="utf-8")
         result_path = sandbox / "result.json"
@@ -220,7 +300,7 @@ def collect_standalone(
                 str(result_path), basetemp,
                 json.dumps({
                     "installed_source": str(installed.resolve()),
-                    "source_mapping": mapping, "child_context_dir": str(contexts),
+                    "source_mapping": mapping, **coverage_options,
                     "compact_tmp_paths": os.name == "nt",
                 }),
             ],
