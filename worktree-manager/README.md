@@ -311,9 +311,8 @@ their identity must be classified before automated retirement.
 
 ## Manage the harness (state views)
 
-Once set up, the Worktree Manager is also the ongoing **Manager** — a read-only
-window (today) onto the real config state, read from the files the harness
-already writes:
+Once set up, the Worktree Manager provides state views read from the harness's
+own files, plus explicit local integration commands:
 
 ```bash
 uv run python -m worktree_manager projects        # harness repos (binstubs + profiles)
@@ -324,7 +323,49 @@ uv run python -m worktree_manager worktrees       # live worktree counts per pro
 uv run python -m worktree_manager worktrees <name> # one project's worktrees: state, sync tags, titles
 uv run python -m worktree_manager plugins --status  # known plugins vs. what is enabled user-global
 uv run python -m worktree_manager contracts --project <name> # contributed pivots/actions/cards/config
+uv run python -m worktree_manager refresh-profiles <name> # Windows: reconcile local profiles + shortcuts
 ```
+
+`refresh-profiles` is the narrow, JSON-producing local integration command.
+It collects saved project selections once, applies the existing fragment and
+Terminal state/settings reconciliation, and refreshes native/WSL shortcuts.
+Unchanged fragment content and shortcut properties are not rewritten. It does
+not stage a plugin payload, build a venv, or probe a remote host. A missing
+destination, invalid selection or failed shortcut operation returns a blocked
+result and nonzero exit rather than claiming synchronized profiles.
+Publishing also refuses malformed or unreadable registries and resolved machine
+rosters, invalid registry entries and dangling configuration links before
+touching fragment/state/settings outputs. Actual publishing collection uses
+strict registry reads too; preliminary validation never authorizes a later
+tolerant reload. Genuinely absent optional files remain supported. Read-only
+state views and previews retain their tolerant behavior.
+Present registries require their explicit `projects`/`repos` mapping; an empty,
+null or missing-key document is not permission to retire profiles. Shortcut
+display names are validated before fragment publication, not after it. Engine
+callers pass their resolved `--machine` key so global configuration and machine
+detection do not depend on a project-local machine setting.
+For a selected installation cell, the engine additionally sends
+`--input-roots-stdin`: a version-1
+`copilot-extensions.terminal-profile-input-roots` JSON object with `context`,
+`payloadRoot`, `registryRoot`, and a `projectRoots` name-to-directory mapping.
+The engine resolves project identities; Manager validates the owning
+agent-worktrees installation receipt and cell containment, then uses those
+same explicit roots for preflight and publishing collection. Missing project
+mappings or invalid cell inputs block instead of reading legacy selections.
+This does not redirect Manager discovery, Terminal output or shortcut paths:
+those remain machine-global. Direct legacy invocations need no extra argument.
+Publication also validates existing Terminal fragments, state and settings
+before writing, retaining the input bytes through reconciliation and refusing
+observed drift. Missing optional documents remain valid; malformed or denied
+reads never become empty profile inventories. Terminal settings support JSONC
+comments and trailing commas. When settings need cleanup, their original bytes
+are backed up; unchanged settings are not rewritten.
+Strict YAML publishing rejects duplicate mapping keys before migration or
+defaulting. Fragment-directory enumeration errors are failures, never evidence
+of an empty inventory.
+Publishing rejects blank/non-string selection identifiers and unknown kinds,
+including when inputs change during collection; it never silently converts a
+shell typo into an agent launch.
 
 The **worktrees** views are the first slice of the extracted Picker: they read
 **live** worktrees by shelling out to the `agent-worktrees` engine
