@@ -38,6 +38,8 @@ def libproc():
     library.proc_pidinfo.restype = ctypes.c_int
     library.proc_signal_with_audittoken.argtypes = [ctypes.c_void_p, ctypes.c_int]
     library.proc_signal_with_audittoken.restype = ctypes.c_int
+    library.proc_listallpids.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    library.proc_listallpids.restype = ctypes.c_int
     return library
 
 
@@ -54,6 +56,33 @@ def info(pid: int) -> dict:
         "pid": pid, "unique_id": identity.unique_id, "idversion": identity.idversion,
         "parent_unique_id": identity.parent_unique_id, "coalitions": list(coalition.ids),
     }
+
+
+def members(coalition: int) -> list[dict]:
+    library = libproc()
+    capacity = library.proc_listallpids(None, 0) + 64
+    for _ in range(5):
+        pids = (ctypes.c_int * capacity)()
+        count = library.proc_listallpids(pids, ctypes.sizeof(pids))
+        if count <= 0:
+            raise OSError(ctypes.get_errno(), "Native process list is unavailable")
+        if count >= capacity:
+            capacity *= 2
+            continue
+        result = []
+        for pid in pids[:count]:
+            if pid <= 0:
+                continue
+            try:
+                candidate = info(pid)
+            except OSError as error:
+                if error.errno == errno.ESRCH:
+                    continue
+                raise
+            if candidate["coalitions"][0] == coalition:
+                result.append(candidate)
+        return result
+    raise RuntimeError("Native process list remained saturated")
 
 
 def send(identity: dict, number: int, *, stale: bool = False) -> int:
@@ -187,6 +216,11 @@ def main() -> None:
                 "double-fork/setsid escaped launchd coalition"
             )
             assert info(descendant["pid"])["coalitions"] == root["coalitions"]
+            actual_members = members(root["coalitions"][0])
+            assert {root["pid"], descendant["pid"]} <= {
+                member["pid"] for member in actual_members
+            }, "Native enumeration lost the reparented coalition participant"
+            assert caller["pid"] not in {member["pid"] for member in actual_members}
             assert send(descendant, signal.SIGCONT, stale=True) == errno.ESRCH, (
                 "stale audit identity did not refuse"
             )
@@ -205,6 +239,7 @@ def main() -> None:
             print(json.dumps({
                 "ordinary_user": True, "isolated_resource_coalition": True,
                 "double_fork_setsid_inherits": True,
+                "complete_native_membership_query": True,
                 "stale_audit_identity_refused": True, "exact_retirement": True,
             }))
         finally:
