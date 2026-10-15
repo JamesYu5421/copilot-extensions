@@ -134,7 +134,12 @@ def main() -> None:
             "RunAtLoad": True, "KeepAlive": False, "ProcessType": "Background",
             "StandardOutPath": str(base / "out"), "StandardErrorPath": str(base / "err"),
         }))
-        target = f"user/{os.getuid()}"
+        gui = f"gui/{os.getuid()}"
+        domain_probe = subprocess.run(
+            ["launchctl", "print", gui], capture_output=True, text=True, timeout=10,
+        )
+        target = gui if domain_probe.returncode == 0 else f"user/{os.getuid()}"
+        print(json.dumps({"selected_domain_kind": target.split("/")[0]}), flush=True)
         loaded = False
         owned = []
         try:
