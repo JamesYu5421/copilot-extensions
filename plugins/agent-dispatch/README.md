@@ -61,6 +61,12 @@ four explicit projection fields: `AGENT_DISPATCH_TASK_TOKEN`,
 `AGENT_DISPATCH_TASK_ID`, `AGENT_DISPATCH_TASK_URL`, and
 `AGENT_DISPATCH_TASK_WORKER_ID` (or the corresponding global flags
 `--task-token`, `--task-scope`, `--task-url`, and `--task-worker`).
+For renewable projections, substitute `AGENT_DISPATCH_TASK_TOKEN_FILE`
+(`--task-token-file`) for the token value. It must name an absolute path to
+a private regular UTF-8 file containing only the printable ASCII token
+(at most 8192 bytes). Directories and named pipes are refused. Each CLI
+invocation reloads it; the trusted supervisor should replace it atomically.
+Direct and file credentials cannot be combined, even if one is empty.
 Any supplied field selects task-only mode; an incomplete projection fails
 closed rather than falling back to ordinary coordinator discovery. Global
 options require their full spelling, so task-worker flags do not intercept
@@ -75,6 +81,18 @@ reports the worker's own failure directly, not a fleet/session cleanup request.
 Fleet/history/cleanup options are refused. The coordinator independently
 checks the signed task, owner, session, generation, expiry and fencing epoch
 on every request; terminal transitions invalidate the grant.
+The coordinator's fencing floor is retained in the task queue database.
+Coordinator presence expiry, deregistration, demotion and process restart do
+not restore superseded grants or permit epoch-zero renewal after federation.
+An untouched standalone queue still uses epoch zero.
+HTTP-backed leases read that floor through `/directory/fencing-epoch` before
+takeover, even when `/directory/coordinator` has no live entry. An older
+authority lacking the retained-floor endpoint must be upgraded before a new
+coordinator/standby lease can safely activate; unavailable or malformed floors
+never downgrade to epoch zero. Existing live-presence discovery remains unchanged.
+An observed higher floor revokes an active lease before any discovery-outage
+renewal fallback. A discovery-only outage at the same floor still permits
+heartbeating the already-held lease.
 
 This client pins the supplied HTTP(S) endpoint and sends only the task header.
 It does not discover endpoints, autostart a service, resolve machine identity,
@@ -84,6 +102,20 @@ Python callers can likewise use `DispatchClient(url, task_token=grant)`;
 the server denies every route outside task authority. Credentials must not
 appear in task payloads, prompts, public metadata, or logs. Automatic supervisor
 delivery and renewal are not yet wired by this client boundary.
+
+Trusted supervisors can call `DispatchClient.task_grant()` or control-authenticated
+`POST /tasks/{id}/task-grant`, supplying `worker_id`, `owner_session_id`,
+`expected_generation`, and `expected_epoch`. The coordinator returns a
+short-lived `task_token` and its `expires_at` only for that current held
+incarnation. Renewal changes neither ownership, generation, status, nor the
+task lease; it does not call `start` or bind a session. The response is
+non-cacheable and no grant is stored in the task, event stream, or audit trail.
+The ordinary fleet bearer and task-only tokens cannot authorize this route.
+Supervisors retain the control credential and signer stays on the coordinator.
+Token-file delivery must remain private to the exact worker incarnation:
+use a supervisor-owned, worker-read-only file, not a peer-visible or
+worker-writable shared mount. This client loader does not establish container
+isolation or schedule automatic renewal on its own.
 
 ## Install
 
