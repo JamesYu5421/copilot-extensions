@@ -746,6 +746,42 @@ removes the settings).
 > Manager owns `~/.tmux.conf` or `~/.psmux.conf`.
 
 
+## Claim handoff locality
+
+Every handoff actor must match its receiving project's exact tracking record,
+actual execution platform and absolute checkout namespace, including same-name
+native records with an unscoped machine registry. Mixed historical/current
+producer references use full-record locality at admission and acceptance;
+stored references and producer metadata are not relabeled.
+
+An accepted bundle can finish or retry from its consumer and child records
+without requiring a retired source ledger or acquiring a new cross-machine
+fence. Receiving-side identity, platform, namespace and artifact checks still
+apply; acceptance does not authorize a foreign execution space.
+Before releasing source claims, the transaction persists child-specific
+`source_owner_refs` for validated source aliases. This optional version-1
+metadata survives local/remote serialization and is used only for accepted
+completion of those exact children. Older bundles still support exact source
+references; an alias-only retry without either the source ledger or durable
+proof fails explicitly rather than guessing equivalence.
+
+## Remote launch options
+
+Machine-targeted JSON and interactive resolve use the same option policy.
+Ordinary remote plans preserve resume opt-outs (`--no-resume`,
+`--no-fast-forward`), bare/restore mode, dry-run, recovery, projection/seed
+deferral, bridge kind, profile and parent/caller lineage. Valued arguments are
+quoted for the target's declared shell. JSON's internal direct-launch setting
+does not disable remote multiplexing: `--target-no-mux` is the explicit override.
+
+Cross-space `--owner-ref` creation and raw Copilot arguments are unsupported and
+refused before a remote plan is emitted; invoke those operations on the target.
+Structured remote prompt admission supports its New/Resume selector and mux
+choice only (queued seed staging is intrinsic). Additional behavior options
+are rejected before SSH rather than omitted from the request. Staged seed IDs
+and launch-request admission/status options remain target-local, not selectors
+to forward through `--machine`.
+
 ## Keeping worktrees current
 
 The picker keeps idle worktrees aligned with the default branch, fast-forward

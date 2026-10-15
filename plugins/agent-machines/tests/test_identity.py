@@ -4,6 +4,9 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
+
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -75,6 +78,34 @@ def test_unknown_machine_preserves_raw_fallback(tmp_path):
     assert identity.topology_path is None
 
 
+@pytest.mark.parametrize("other", [
+    {"key": "other", "display_name": "Legacy label"},
+    {"key": "other", "alias": "Legacy label"},
+    {"key": "Legacy label"},
+])
+def test_automatic_legacy_display_gate_never_shadows_another_identity(tmp_path, monkeypatch, other):
+    key = other["key"]
+    _topology(tmp_path, {
+        "example-host": {"hostname": "generated-host", "display_name": "Legacy label"},
+        key: {name: value for name, value in other.items() if name != "key"},
+    })
+    monkeypatch.setattr("agent_machines.identity.platform.node", lambda: "generated-host")
+    monkeypatch.setattr("agent_machines.identity.detect_platform", lambda: "linux")
+    assert "Legacy label" not in resolve_machine(topology_repos=[tmp_path]).accepted
+
+
+def test_explicit_space_display_aliases_require_selected_context(tmp_path):
+    _topology(tmp_path, {"guest": {
+        "execution_platform": "wsl", "physical_host": "example-host", "display_name": "Legacy label",
+    }})
+    accepted = resolve_machine("guest", topology_repos=[tmp_path]).accepted
+    assert accepted[0] == "guest"
+    assert "Legacy label (WSL)" in accepted
+    from machine_transport import find_machine_entry, parse_machines_yaml_file
+    with pytest.raises(ValueError, match="does not select an execution space"):
+        find_machine_entry(parse_machines_yaml_file(tmp_path / "machines.yaml"), "Legacy label")
+
+
 def test_legacy_windows_wsl_identity_and_gate_aliases_are_independent(tmp_path):
     repo = tmp_path / "repo"
     _topology(repo, {"desktop": {
@@ -90,7 +121,9 @@ def test_legacy_windows_wsl_identity_and_gate_aliases_are_independent(tmp_path):
     assert native.physical_host == guest.physical_host == "desktop"
     assert (native.execution_platform, guest.execution_platform) == ("windows", "wsl")
     assert "native-compat" in native.accepted
-    assert guest.accepted == ("desktop-wsl", "guest-profile")
+    assert guest.accepted[:2] == ("desktop-wsl", "guest-profile")
+    assert "desktop (WSL)" in guest.accepted
+    assert "native-compat" not in guest.accepted
     assert resolve_machine(
         "generated-host", topology_repos=[repo], execution_platform="wsl",
     ).canonical == "desktop-wsl"
@@ -120,7 +153,9 @@ def test_explicit_logical_identity_preserves_physical_relationship(tmp_path):
     guest = resolve_machine("guest", topology_repos=[repo])
     assert guest.canonical == "guest"
     assert guest.physical_host == "desktop"
-    assert guest.accepted == ("guest",)
+    assert guest.accepted[0] == "guest"
+    assert "desktop (WSL)" in guest.accepted
+    assert "desktop" not in guest.accepted
 
 
 @pytest.mark.parametrize("reverse", [False, True])
@@ -155,7 +190,10 @@ def test_mixed_topologies_ignore_transport_details_in_identity_and_native_cli(
     assert identity.canonical == ("desktop" if platform_name == "windows" else "desktop-wsl")
     assert identity.execution_platform == platform_name
     assert identity.physical_host == "desktop"
-    assert identity.accepted == (identity.canonical, requested)
+    assert identity.accepted[:2] == (identity.canonical, requested)
+    assert (
+        "desktop (WSL)" if platform_name == "wsl" else "desktop (Windows)"
+    ) in identity.accepted
     assert identity.warnings == ()
 
     for repo in repos:
@@ -238,6 +276,182 @@ def test_known_platform_does_not_choose_among_same_platform_entries(tmp_path):
         resolve_machine("desktop", topology_repos=[repo], execution_platform="wsl")
 
 
+@pytest.mark.parametrize("hostname", ["example-host", "EXAMPLE-HOST"])
+def test_automatic_hostname_key_selects_explicit_guest_but_manual_native_stays_strict(
+    tmp_path, monkeypatch, hostname,
+):
+    from agent_machines import identity as identity_module
+
+    _topology(tmp_path, {
+        "example-host": {
+            "execution_platform": "windows", "physical_host": "example-host",
+            "ssh": {"environments": [{"name": "windows", "alias": "native-profile"}]},
+        },
+        "example-host-wsl": {
+            "execution_platform": "wsl", "physical_host": "example-host",
+            "ssh": {"environments": [{"name": "wsl", "alias": "guest-profile"}]},
+        },
+    })
+    monkeypatch.setattr(identity_module.platform, "node", lambda: hostname)
+    monkeypatch.setattr(identity_module, "detect_platform", lambda: "wsl")
+    assert resolve_machine(topology_repos=[tmp_path]).canonical == "example-host-wsl"
+    assert resolve_machine(
+        "guest-profile", topology_repos=[tmp_path], execution_platform="wsl",
+    ).canonical == "example-host-wsl"
+    for manual in (hostname, "native-profile"):
+        with pytest.raises(ManifestError, match="conflicts"):
+            resolve_machine(manual, topology_repos=[tmp_path], execution_platform="wsl")
+
+
+@pytest.mark.parametrize("environment", ["windows", "wsl", "linux"])
+def test_default_identity_distinguishes_guest(tmp_path, monkeypatch, environment):
+    from agent_machines import identity as identity_module
+
+    _topology(tmp_path, {
+        "example-host": {"hostname": "generated-host", "alias": "host-label"},
+        "example-host-wsl": {"hostname": "generated-host", "alias": "guest-label"},
+    })
+    monkeypatch.setattr(identity_module.platform, "node", lambda: "generated-host")
+    monkeypatch.setattr(identity_module, "local_execution_platform", lambda: environment)
+    identity = resolve_machine(topology_repos=[tmp_path])
+    assert identity.canonical == (
+        "example-host-wsl" if environment == "wsl" else "example-host"
+    )
+    if environment == "wsl":
+        assert "example-host" not in identity.accepted
+        assert "generated-host" not in identity.accepted
+        assert "host-label" not in identity.accepted
+
+
+@pytest.mark.parametrize("hostname", ["example-host", "example-host-wsl"])
+def test_standalone_default_guest_is_qualified_once(monkeypatch, hostname):
+    from agent_machines import identity as identity_module
+
+    monkeypatch.setattr(identity_module.platform, "node", lambda: hostname)
+    monkeypatch.setattr(identity_module, "local_execution_platform", lambda: "wsl")
+    assert resolve_machine().canonical == "example-host-wsl"
+
+
+@pytest.mark.parametrize("environment", ["windows", "linux", "wsl"])
+def test_default_hostname_case_is_portable(monkeypatch, environment):
+    from agent_machines import identity as identity_module
+
+    monkeypatch.setattr(identity_module.platform, "node", lambda: "EXAMPLE-HOST")
+    monkeypatch.setattr(identity_module, "local_execution_platform", lambda: environment)
+    identity = resolve_machine()
+    assert identity.canonical == (
+        "example-host-wsl" if environment == "wsl" else "example-host"
+    )
+    assert identity.raw == "EXAMPLE-HOST"
+
+
+@pytest.mark.parametrize("system,release,expected", [
+    ("Windows", "10", "windows"),
+    ("Linux", "6.6-microsoft-standard-WSL2", "wsl"),
+    ("Linux", "6.6-generic", "linux"),
+])
+def test_execution_platform_ignores_inherited_environment(monkeypatch, system, release, expected):
+    import io
+    from machine_transport import detect_platform
+
+    monkeypatch.setattr("sys.platform", "win32" if system == "Windows" else "linux")
+    monkeypatch.setattr("os.uname", lambda: SimpleNamespace(release=release), raising=False)
+    monkeypatch.setattr(Path, "read_text", lambda *_args, **_kwargs: "0::/user.slice")
+    real_is_file = Path.is_file
+    monkeypatch.setattr(
+        Path, "is_file",
+        lambda path: False if path in (Path("/.dockerenv"), Path("/run/.containerenv"))
+        else real_is_file(path),
+    )
+    monkeypatch.setattr("builtins.open", lambda *_args, **_kwargs: io.StringIO("Linux generic"))
+    monkeypatch.setenv("WSL_DISTRO_NAME", "inherited-transport-environment")
+    assert detect_platform() == expected
+
+
+@pytest.mark.parametrize("marker", ["/.dockerenv", "/run/.containerenv", None])
+@pytest.mark.parametrize("inherited_wsl_tags", [False, True])
+def test_container_marker_distinguishes_shared_wsl_kernel(monkeypatch, marker, inherited_wsl_tags):
+    import io
+    from machine_transport import detect_platform
+
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr("os.uname", lambda: SimpleNamespace(release="6.6-microsoft-standard-WSL2"), raising=False)
+    monkeypatch.setattr(Path, "read_text", lambda *_args, **_kwargs: "0::/user.slice")
+    real_is_file = Path.is_file
+    monkeypatch.setattr(
+        Path, "is_file",
+        lambda path: (path == Path(marker) if marker else False)
+        if path in (Path("/.dockerenv"), Path("/run/.containerenv")) else real_is_file(path),
+    )
+    monkeypatch.setattr(
+        "builtins.open", lambda *_args, **_kwargs: io.StringIO("Linux microsoft-standard-WSL2"),
+    )
+    for name in ("WSL_DISTRO_NAME", "WSL_INTEROP"):
+        if inherited_wsl_tags:
+            monkeypatch.setenv(name, "inherited-example-value")
+        else:
+            monkeypatch.delenv(name, raising=False)
+    assert detect_platform() == ("linux" if marker else "wsl")
+
+
+def test_actual_container_is_linux_execution():
+    import platform
+    from machine_transport import detect_platform
+
+    if platform.system() != "Linux" or not any(
+        Path(marker).is_file() for marker in ("/.dockerenv", "/run/.containerenv")
+    ):
+        pytest.skip("requires an actual container root")
+    assert detect_platform() == "linux"
+
+
+def test_headless_wsl_proc_fallback_without_container_marker(monkeypatch):
+    import io
+    from machine_transport import detect_platform
+
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr("os.uname", lambda: SimpleNamespace(release="generic-kernel"), raising=False)
+    monkeypatch.setattr(Path, "read_text", lambda *_args, **_kwargs: "0::/user.slice")
+    real_is_file = Path.is_file
+    monkeypatch.setattr(
+        Path, "is_file",
+        lambda path: False if path in (Path("/.dockerenv"), Path("/run/.containerenv"))
+        else real_is_file(path),
+    )
+    monkeypatch.setattr(
+        "builtins.open", lambda *_args, **_kwargs: io.StringIO("Linux microsoft-standard"),
+    )
+    monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+    monkeypatch.delenv("WSL_INTEROP", raising=False)
+    assert detect_platform() == "wsl"
+
+
+def test_explicit_selector_is_not_reinterpreted_as_local_guest(tmp_path, monkeypatch):
+    from agent_machines import identity as identity_module
+
+    _topology(tmp_path, {"example-host": {"hostname": "generated-host"}})
+    monkeypatch.setattr(identity_module, "local_execution_platform", lambda: "wsl")
+    assert resolve_machine("generated-host", topology_repos=[tmp_path]).canonical == "example-host"
+
+
+def test_guest_without_entry_cannot_accept_host_package_gates(tmp_path, monkeypatch):
+    from agent_machines import identity as identity_module
+
+    _topology(tmp_path, {
+        "example-host": {"hostname": "generated-host", "alias": "host-label"},
+    })
+    monkeypatch.setattr(identity_module.platform, "node", lambda: "generated-host")
+    monkeypatch.setattr(identity_module, "local_execution_platform", lambda: "wsl")
+    identity = resolve_machine(topology_repos=[tmp_path])
+    assert identity.canonical == "example-host-wsl"
+    assert identity.accepted == ("example-host-wsl",)
+    assert "no guest entry" in identity.warnings[0]
+    host_package = load_package(write_package(
+        tmp_path, "host.yaml", base_package(gate=["host-label"]),
+    ))
+    assert not host_package.applies_to(identity.canonical, identity.accepted)
+
+
 def test_malformed_topology_is_advisory_and_preserves_fallback(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -277,6 +491,64 @@ def test_ambiguous_alias_fails_even_when_resolving_canonical_key(tmp_path):
 
     with pytest.raises(ManifestError, match="ambiguous.*machine-a, machine-b"):
         resolve_machine("machine-a", topology_repos=[repo])
+
+
+@pytest.mark.parametrize("environment", ["windows", "wsl", "linux"])
+def test_shared_display_names_are_metadata(tmp_path, monkeypatch, environment):
+    from agent_machines import identity as identity_module
+
+    _topology(tmp_path, {
+        "example-host": {
+            "hostname": "generated-host", "display_name": "Example workstation",
+        },
+        "example-host-wsl": {
+            "hostname": "generated-host", "display_name": "Example workstation",
+        },
+    })
+    monkeypatch.setattr(identity_module.platform, "node", lambda: "generated-host")
+    monkeypatch.setattr(identity_module, "detect_platform", lambda: environment)
+    identity = resolve_machine(topology_repos=[tmp_path])
+    assert identity.canonical == (
+        "example-host-wsl" if environment == "wsl" else "example-host"
+    )
+    assert "Example workstation" not in identity.accepted
+    for key in ("example-host", "example-host-wsl"):
+        assert resolve_machine(key, topology_repos=[tmp_path]).canonical == key
+    with pytest.raises(ManifestError, match="display label.*multiple machines"):
+        resolve_machine("Example workstation", topology_repos=[tmp_path])
+
+
+def test_display_metadata_collision_does_not_override_machine_key(tmp_path):
+    _topology(tmp_path, {
+        "example-host": {"hostname": "generated-host"},
+        "other-host": {"display_name": "example-host"},
+    })
+    assert resolve_machine("example-host", topology_repos=[tmp_path]).canonical == "example-host"
+    other = resolve_machine("other-host", topology_repos=[tmp_path])
+    assert "example-host" not in other.accepted
+
+
+@pytest.mark.parametrize("owner", ["example-host", "other-host"])
+def test_guest_fallback_collision(tmp_path, monkeypatch, owner):
+    from agent_machines import identity as identity_module
+
+    machines = {"example-host": {"hostname": "generated-host"}}
+    machines.setdefault(owner, {})["alias"] = "example-host-wsl"
+    _topology(tmp_path, machines)
+    monkeypatch.setattr(identity_module.platform, "node", lambda: "generated-host")
+    monkeypatch.setattr(identity_module, "detect_platform", lambda: "wsl")
+    with pytest.raises(ManifestError, match="guest identity.*collides.*native machine"):
+        resolve_machine(topology_repos=[tmp_path])
+
+
+def test_guest_fallback_collision_with_native_hostname(tmp_path, monkeypatch):
+    from agent_machines import identity as identity_module
+
+    _topology(tmp_path, {"native-host": {"hostname": "generated-host-wsl"}})
+    monkeypatch.setattr(identity_module.platform, "node", lambda: "generated-host")
+    monkeypatch.setattr(identity_module, "detect_platform", lambda: "wsl")
+    with pytest.raises(ManifestError, match="guest identity.*collides.*native machine"):
+        resolve_machine(topology_repos=[tmp_path])
 
 
 def test_per_machine_overlay_and_nested_gates_accept_alias(tmp_path):

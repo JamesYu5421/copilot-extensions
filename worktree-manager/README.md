@@ -108,6 +108,17 @@ The initial loading tab is labelled `Local` with its environment until the
 machine roster resolves its canonical name. It does not present the OS hostname
 as a configured machine or add roster/configuration I/O to first paint.
 
+Windows and WSL tabs for `<host>` and `<host>-wsl` share one physical-host
+heading. An explicit `physical_host` association takes precedence over suffix
+inference. Grouping changes presentation only: environment selection, source
+identities, SSH aliases and worktree routing remain distinct.
+Physical siblings are presented together even when the roster separates them;
+keyboard traversal uses that same stable first-host-appearance order.
+The configured local key or alias need not match the OS hostname: source
+construction and per-row locality checks resolve it in the running execution
+environment. Its current tab loads in-process; sibling environments keep their
+own SSH targets, and returned rows retain the selected source's logical identity.
+
 Ordinary Worktrees loads require the engine's resident current-roster
 publication, including its observed git/session/mux facts and bounded claim
 aggregates. The local and machine-SSH loaders hold the CLI's
