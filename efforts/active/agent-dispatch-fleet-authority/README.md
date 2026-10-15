@@ -8,7 +8,8 @@
 - **Status:** Active. Design merged in #6618; initial task grants merged in
   #6630. Check-in found missing deny-by-default route authorization and
   transactional incarnation fences; those corrections merged in #6665.
-  Phase 2 assignment push merged in #6698; restricted-worker delivery is next.
+  Phase 2 assignment push merged in #6698; the strict task-only client merged
+  in #6718. Trusted restricted-worker delivery and renewal are next.
   Direct restricted-worker calls, container placement
   and explicit local/central authority remain the completion gate.
 - **Vision:** [`machine-fleet`](../../../visions/machine-fleet/README.md):
@@ -225,6 +226,10 @@ subscription-ready frame; no additional long-poll endpoint is needed.
 - [x] Implement a strict task-only client/CLI boundary before any ordinary
   endpoint discovery, autostart, identity lookup or fleet credential path.
   This is the worker call surface only; automatic delivery remains below.
+- [x] Add control-authorized grant issuance/renewal fenced to the existing
+  worker, native session, generation and coordinator epoch, with a reloadable
+  private token-file client. Renewal neither starts/rebinds the task nor
+  extends its lease. Provider delivery and supervisor renewal remain below.
 - [ ] Implement the relay as an **operating mode of the existing local
   supervisor** (`supervisor.py`/`supervisor_daemon.py`), not a new
   standalone process -- per the operator's own "could just be the local
@@ -237,6 +242,8 @@ subscription-ready frame; no additional long-poll endpoint is needed.
   the Phase-1 task-scoped token for that exact task/worker identity and
   injects **only that token** into the container (env var or a mounted
   read-only file) -- the shared/control bearer never enters the container.
+  Renewal must recheck the current owner, native session and task generation;
+  the worker cannot mint or renew through issuer authority of its own.
 - [x] **Approach confirmed by the operator (2026-10-13): start with direct
   scoped-token calls** -- the containerized agent calls the coordinator's
   HTTP API directly using only the scoped token; the token alone already
@@ -318,6 +325,212 @@ _Reviewed by the operator 2026-10-13 -- see Journal for the decisions
 recorded against each open fork._
 
 ## Journal
+
+### 2026-10-15 -- Known supersession takes precedence over discovery outage
+- Further #6722 review reproduced an active epoch-one lease renewing during a
+  discovery-only outage after independently reading floor five. The lease now
+  clears active status immediately on known supersession, before entering the
+  old availability fallback. It neither renews the old entry nor withdraws or
+  overwrites the successor when discovery is unavailable.
+- The new regression failed before the two-line state correction. Final lease
+  selection passes 41, including retained-floor HTTP takeover, same-floor
+  discovery-outage heartbeat compatibility and the superseded-owner refusal.
+  Touched Python lint passes. Required published-head review and CI remain gates.
+
+### 2026-10-15 -- HTTP replacement leases consume the durable floor
+- Follow-up #6722 review found the HTTP rendezvous still exposing only live
+  coordinator presence. Added a non-cacheable `/directory/fencing-epoch` read,
+  strict client validation and the hosted rendezvous getter used before lease
+  takeover. An absent, malformed or unavailable authoritative floor never
+  becomes an epoch-zero fallback; older authorities require an upgrade before
+  a new coordinator/standby lease can activate.
+- Real HTTP expiry and fresh-server construction against retained state both
+  advance replacement leases from floor five to epoch six and reject epoch-five
+  fencing tokens afterward. Directory epoch inputs and returned floors are
+  bounded to SQLite's integer range; empty, invalid UTF-8 and malformed JSON
+  report explicit client errors.
+- Final coupled native grant, lease, directory, scoped-route and federation
+  selection: 129 passed in 71.95 seconds. No ordinary test deadline, queue
+  ownership, service installation or promotion behavior was changed.
+- The complete Windows coverage run passed 605 tests with six platform skips,
+  but correctly refused to earn a baseline: a native child crosses an opaque
+  build-tool boundary, and copied SDK modules execute with `-I -S -B`, which
+  suppresses interpreter startup hooks. Copied SDK bytes were verified against
+  17 canonical modules. A separate design decision is required for genuine
+  trace activation; no wrapper, argv rewrite, approximate attribution or
+  exemption was silently introduced, and strict coverage activation remains off.
+
+### 2026-10-15 -- Coordinator presence loss cannot lower task fencing
+- Current-head review of #6722 reproduced epoch-zero renewal succeeding after
+  an unread epoch-five registration expired. The task queue now durably retains
+  a monotonic coordinator floor; registration and coordinator heartbeats commit
+  that floor before advertising presence. Expiry, deregistration, demotion and
+  restart cannot restore older task grants. A never-federated queue stays at zero.
+- Fencing guards retain observed floors and lease takeover advances above the
+  durable floor, including after restart or lower-epoch discovery. A restarted
+  lease for the still-advertised coordinator adopts its actual retained epoch.
+  This adds one queue-owned metadata table, not another queue or state authority.
+- Coupled native grant, lease, directory, scoped-route and federation selection:
+  117 passed; touched Python lint passes. Proof includes the originally failing
+  real HTTP route, concurrent database writers, fresh app/queue construction,
+  and a genuinely cold native child reading the durable floor.
+- A disconnected, read-only existing Linux validation image lacks pytest.
+  No dependency or installer configuration was changed to work around that
+  absence. Required published-head CI remains the Linux runtime validation gate;
+  real central-container enrollment remains an explicit campaign gate.
+
+### 2026-10-15 -- Renewal narrowed and lightweight collection prototype
+- Rebased #6722 while preserving upstream CI and scope contracts; removed
+  this slice's incidental CI-budget edits and obsolete budget documentation.
+  Grant issuance and credential-file consumption remain the only runtime
+  behavior changes. Required CI and current-head review still gate merging.
+- Rebased grant/CLI selection: 95 passed, one platform skip, and one native
+  HTTP subprocess exceeded its unchanged 20-second bound. The isolated
+  direct/file HTTP pair then passed twice under the original bounds.
+  No deadline, fixture, skip, or CI bypass was changed.
+- The lightweight child-attribution prototype eliminates coverage-package
+  import and startup waits: median prelude 0.108 seconds, 13.2 times faster;
+  maximum 0.579 seconds, so the uniform 0.2-second target is not yet met.
+  The real two-node recovery pair passes both tests with its original
+  deadlines and a contained wall-time ratio of 0.923 versus ordinary execution.
+  Exact normal, abrupt-exit, forced-termination and thread-only attribution
+  parity passed. Integration and producer-completeness accounting are next;
+  no complete native baseline or strict CI activation is claimed.
+
+### 2026-10-14 -- Coverage-selected fleet CI and provider review corrections
+- Narrow renewal PR #6722 back to its issuance/consumption contract.
+  Its incidental CI-budget changes force unrelated whole-fleet and bridge
+  validation despite touching neither runtime. Retain the measured budget
+  corrections under #6733 for the dedicated coverage/CI activation slice,
+  rather than coupling that infrastructure bootstrap to renewal publication.
+  Required checks still run; no timing gate or failing test is waived.
+- The operator subsequently requested a massively more efficient profiling
+  path, not timing-family exemptions. Child instrumentation optimization is
+  now measured against the ordinary five-/fifteen-second boundaries and
+  unchanged process concurrency; no fixture deadline is expanded.
+- The operator requires coverage-based selection for the fleet lane, not a
+  full suite, fixed smoke filter or increased full-suite timeout. Bootstrap
+  the standalone dispatch service's trusted coverage collection/enrollment
+  in the existing full promotion lane first; activate a strict selected-node
+  required runner only after a real accepted baseline is available. Missing
+  or stale evidence must then fail explicitly, without a full-suite fallback.
+- PR #6745's current review found three remaining provider gaps: acknowledged
+  expiry did not fence ambiguous credential delivery, live host admission
+  refused a duplicate with the wrong exit code, and lifecycle only probed
+  Copilot markers rather than the guest-held task lock. The correction keeps
+  a separate attempted-expiry fence before publication, maps the specific
+  busy refusal to exit 75, and probes guest liveness under the lifecycle hold
+  both before rescue and before destruction.
+- The native focused provider contracts passed 116 tests with three opt-in
+  skips. Real Docker proved a live-wrapper duplicate is busy, a guest survives
+  termination of only its wrapper, and stop/remove/recreate all defer after
+  host admission is pruned. No module-size baseline or required CI gate was
+  widened. This is provider lifetime proof, not central task execution.
+- The provider PR's CI also exposed a retry fixture that monkeypatched shared
+  standard-library sleep and counted unrelated subprocess timing. Isolating
+  that module's clock instrumentation preserves real child conflicts and
+  retries; all four native cases passed with containment state checks.
+- Both renewal and provider PRs remain open. Renewal merges first; supervisor
+  integration, container task isolation, central/local authority and fleet
+  placement remain unresolved parent completion gates.
+- A subsequent provider review correctly identified guest helpers surviving
+  Docker-client timeouts and live legacy wrappers using the old lock protocol.
+  Publication now holds a guest lock and checks its own monotonic expiry before
+  replacing the credential. A real timed-out-client regression proves the
+  surviving older guest publisher is rejected after a newer publication.
+- Host lock cutover uses a private directory barrier rather than reusing an
+  unlinkable legacy inode. It waits for legacy lock release and refuses live
+  legacy admission/lifecycle writers without terminating their workers.
+  Native Windows and isolated POSIX process proofs cover mixed-version
+  exclusion; the expanded native lease/admission contracts passed 201 tests
+  with four platform/opt-in skips. Existing explicit stale-corruption recovery
+  remains available without admitting live legacy writers.
+- The coverage prerequisite is PR #6783. Its first required guard refused
+  dynamic runner routing, so the correction uses two literal native runner
+  lanes rather than weakening that guard. Review also requires crash-child
+  coverage persistence and compatibility checks, plus a narrowly optional
+  YAML-only assertion in the minimal manual caller. These corrections and
+  fresh baseline evidence remain pending; no strict selector is activated.
+
+### 2026-10-14 -- Renewal PR blocked by a measured CI job timeout
+- PR #6722's post-description run 38610631180 passed all bridge test
+  batches and the shared SSH contract tests, but the job exceeded its
+  eight-minute wall-clock limit during teardown and was cancelled. The
+  required aggregate correctly refused merge.
+- Tracked the fix as #6733: preserve the full bridge smoke selection and
+  required timeout failure semantics, with a bounded ten-minute allowance
+  for setup, the measured seven-minute-plus test run and teardown.
+  Dispatch retains twelve minutes and other smoke plugins retain eight.
+  Three native workflow contract checks and touched-code lint passed;
+  the real repaired CI run must still prove completion before merge.
+- No retry, CI bypass or manual promotion substitutes for that proof.
+- The repaired-head run 38617667464 proved bridge completion within the
+  new bound, but exposed the same teardown failure in the combined native
+  Windows runner: every step succeeded and the job exceeded seven minutes
+  at 7m5s. Extend only that job's overall allowance to nine minutes, retaining
+  each selected diagnostic/wrapper/payload/fleet step's own limit. This
+  remains part of #6733; the required aggregate is not waived.
+- Run 38625257770 completed the bounded jobs but correctly failed both
+  platform payload-CWD scope checks: their independent contract still
+  expected the old seven-minute Windows aggregate. Update that coupled
+  assertion to nine while preserving Linux's five-minute bound, exact path
+  selection, native selectors and required aggregate membership.
+- All affected post-CI, installation-context scope and payload-CWD scope
+  contracts passed together: 115 native tests, plus touched-code lint.
+
+### 2026-10-14 -- Trusted renewal and private credential-file boundary
+- Added control-only `POST /tasks/{id}/task-grant` and
+  `DispatchClient.task_grant()`. Every request must identify the current held
+  ownership incarnation and epoch; workers cannot mint or renew, including
+  when a task header accompanies a control header. Responses contain the
+  fixed-lifetime token and expiry, are non-cacheable, and do not persist
+  credentials in task metadata, events or the audit trail.
+- The CLI reloads a bounded absolute private token file on each invocation.
+  Incomplete, unreadable, malformed and mixed projections fail closed before
+  discovery, credential lookup or ordinary handlers. The file contains only
+  the token; task, endpoint and worker identity remain separately pinned.
+- Native contained boundary selection passed 131 tests, including real TCP
+  with fresh CLI processes for both direct and file credentials. The file
+  path starts with an invalid grant, is explicitly denied, then accepts a
+  control-issued renewal through atomic replacement and completes the task.
+  Expanded issuance/epoch/binding and ordinary coordinator/client regression
+  selection passed 203 tests. Ruff and the install-contract check passed.
+- A final file-consumption check refuses non-regular files without opening
+  a blocking named pipe and rejects non-ASCII/control bytes before HTTP
+  header construction. Its native selection passed 14 tests with the POSIX
+  FIFO case skipped on Windows; both real CLI credential modes passed again.
+- Fresh Linux issuance/worker/scope selection passed 138 tests, including
+  the real FIFO rejection and both native CLI credential modes. This is
+  source-contract integration, not the unresolved admitted-container proof.
+  Review identified that the file-mode disclosure assertion retained the
+  original token; it now checks the renewed credential actually consumed.
+- This closes only the issuance/consumption contract, not provider delivery.
+  Container placement, per-incarnation file isolation, trusted supervisor
+  renewal, real restricted-container proof, central/local projections and
+  first-touch provisioning remain open. No installer changed in this slice;
+  fresh CLI/coordinator integration was exercised without claiming that it
+  proves a fresh container or external deployment.
+
+### 2026-10-14 -- Strict client merged; trusted grant delivery next
+- PR #6718 squash-merged as `e9d2d585861976679faec1c2e67c4f369dc0363d`
+  after current-head Copilot approval with zero open findings and successful
+  required CI. The corrected native worker/TLS selection passed 56; the
+  fresh Linux correction selection passed eight. Earlier full scoped-client
+  Linux proof passed 89. The source worktree is finalized; #6617 stays open.
+- Phase 3's client boundary is resolved, not Phase 3 itself. Next implement
+  trusted coordinator grant issuance/renewal and a private renewable worker
+  projection, then integrate it with the existing supervisor and admitted
+  provider launch. Bind the exact native session before delivering a grant or
+  task prompt. Keep signing/fleet authority outside worker containers and
+  credentials outside public task/agent metadata and prompts.
+- Natural promotion is currently blocked by the already-owned receiving-
+  authority fixture repair in #6693/#6696 and #6212: run 38589060318 failed
+  the two owning-directory registration tests and the terminal-registration
+  fixture, with no other failing job. #6696 remains open at
+  `11bbaaaab5824eface3f9269b4b85db8d609995b`; its owner retains the fix,
+  including two Medium findings in the latest review overview. No competing
+  patch, merge/review bypass, pipeline retry or manual release is being made.
+  Continue containerization while that owner clears the normal release gate.
 
 ### 2026-10-14 -- Phase 3 strict worker client implemented
 - Task-only CLI mode activates before command handlers or coordinator

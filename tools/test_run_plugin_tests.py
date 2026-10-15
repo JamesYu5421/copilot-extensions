@@ -59,7 +59,14 @@ def test_explicit_reinstall_invalidates_uv_cached_path_dependency_wheels(
             python.touch()
         return subprocess.CompletedProcess(command, 0)
 
+    def install(uv, arguments, **kwargs):
+        assert kwargs == {
+            "cwd": plugin, "trusted_source_roots": (runner.REPO,), "check": True,
+        }
+        return run([uv, "pip", "install", *arguments])
+
     monkeypatch.setattr(runner.subprocess, "run", run)
+    monkeypatch.setattr(runner, "run_uv_install", install)
     assert runner._ensure_venv("example", "uv", reinstall=reinstall) == python
     installs = [command for command in calls if command[:3] == ["uv", "pip", "install"]]
     assert len(installs) == int(reinstall or not cached)
@@ -85,41 +92,41 @@ def test_explicit_test_files_preserve_default_grouping_and_filter_only_collectio
     assert len(runner._test_file_groups("example", 1, filtered=True)[0]) == 3
     assert runner._test_file_groups(
         "example", 1, filtered=True,
-        test_files=["test_selected.py", "nested/test_child.py", "test_selected.py"],
+        test_files=("tests/test_selected.py", "tests/nested/test_child.py", "tests/test_selected.py"),
     ) == [[tests / "nested/test_child.py", tests / "test_selected.py"]]
 
 
 @pytest.mark.parametrize("path", [
-    "missing.py", "../test_selected.py", "tests/test_selected.py", "nested",
+    "missing.py", "../test_selected.py", "test_selected.py", "nested",
 ])
 def test_explicit_test_files_reject_unknown_or_nonowned_paths_before_preparation(
     selectable_tests, monkeypatch, path,
 ):
     monkeypatch.setattr(runner, "_ensure_venv", lambda *a, **kw: pytest.fail("prepared invalid selection"))
-    with pytest.raises(ValueError, match="owned file beneath tests"):
+    with pytest.raises(ValueError, match="existing, unlinked"):
         runner.run_plugin(
-            "example", "unused", reinstall=False, kexpr=None, test_files=[path],
+            "example", "unused", reinstall=False, kexpr=None, test_files=(path,),
             limits=runner.Limits(), plugin_timeout=60, test_timeout=10,
             max_files_per_subsuite=25,
         )
 
 
 def test_explicit_test_files_reject_absolute_and_linked_escape(selectable_tests, tmp_path):
-    with pytest.raises(ValueError, match="owned file beneath tests"):
-        runner._test_file_groups("example", 25, test_files=[str(selectable_tests / "test_selected.py")])
+    with pytest.raises(ValueError, match="existing, unlinked"):
+        runner._test_file_groups("example", 25, test_files=(str(selectable_tests / "test_selected.py"),))
     outside = tmp_path / "test_outside.py"
     outside.write_text("raise AssertionError('must not collect')\n", encoding="utf-8")
     try:
         (selectable_tests / "test_link.py").symlink_to(outside)
     except OSError:
         pytest.skip("file symlinks unavailable")
-    with pytest.raises(ValueError, match="owned file beneath tests"):
-        runner._test_file_groups("example", 25, test_files=["test_link.py"])
+    with pytest.raises(ValueError, match="existing, unlinked"):
+        runner._test_file_groups("example", 25, test_files=("tests/test_link.py",))
 
 
 @pytest.mark.parametrize("arguments", [
-    ["example", "other", "--test-file", "test_selected.py"],
-    ["example", "--prepare-only", "--test-file", "test_selected.py"],
+    ["example", "other", "--test-file", "tests/test_selected.py"],
+    ["example", "--prepare-only", "--test-file", "tests/test_selected.py"],
 ])
 def test_explicit_test_files_require_one_executing_plugin(arguments):
     with pytest.raises(SystemExit) as error:
@@ -135,13 +142,96 @@ def test_explicit_test_files_reach_contained_pytest_without_unrelated_modules(
     monkeypatch.setattr(runner, "run_contained", lambda command, **kw: calls.append(command) or 0)
     assert runner.run_plugin(
         "example", "unused", reinstall=False, kexpr="example",
-        test_files=["test_selected.py"], limits=runner.Limits(),
+        test_files=("tests/test_selected.py",), limits=runner.Limits(),
         plugin_timeout=60, test_timeout=10, max_files_per_subsuite=25,
     ) == 0
     assert len(calls) == 1
     assert str(Path("tests") / "test_selected.py") in calls[0]
     assert not any("unrelated" in argument for argument in calls[0])
     assert calls[0][-3:-1] == ["-k", "example"]
+def test_explicit_file_selection_avoids_unrelated_collection(monkeypatch, tmp_path):
+    monkeypatch.setattr(runner, "PLUGINS", tmp_path)
+    tests = tmp_path / "example" / "tests"
+    tests.mkdir(parents=True)
+    for name in ("test_reconcile.py", "test_binding.py", "test_unrelated.py"):
+        (tests / name).touch()
+    groups = runner._test_file_groups(
+        "example", 25, filtered=True,
+        test_files=("tests/test_reconcile.py", "tests/test_binding.py", "tests/test_binding.py"),
+    )
+    assert groups == [[tests / "test_binding.py", tests / "test_reconcile.py"]]
+    assert runner._test_file_groups("example", 25) == [[
+        tests / "test_binding.py", tests / "test_reconcile.py", tests / "test_unrelated.py",
+    ]]
+
+
+@pytest.mark.parametrize("value", [
+    "../test_outside.py", "tests/../test_outside.py", "tests/test_missing.py",
+    "tests/helper.py", "tests/test_directory.py",
+])
+def test_explicit_file_selection_refuses_invalid_paths(monkeypatch, tmp_path, value):
+    monkeypatch.setattr(runner, "PLUGINS", tmp_path)
+    tests = tmp_path / "example" / "tests"
+    tests.mkdir(parents=True)
+    (tests / "helper.py").touch()
+    (tests / "test_directory.py").mkdir()
+    with pytest.raises(ValueError, match="existing, unlinked"):
+        runner._test_file_groups("example", 25, test_files=(value,))
+
+
+def test_explicit_file_selection_refuses_absolute_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(runner, "PLUGINS", tmp_path)
+    tests = tmp_path / "example" / "tests"
+    tests.mkdir(parents=True)
+    target = tests / "test_absolute.py"
+    target.touch()
+    with pytest.raises(ValueError, match="existing, unlinked"):
+        runner._test_file_groups("example", 25, test_files=(str(target),))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX unprivileged symlink creation")
+def test_explicit_file_selection_refuses_linked_file_or_parent(monkeypatch, tmp_path):
+    monkeypatch.setattr(runner, "PLUGINS", tmp_path)
+    tests = tmp_path / "example" / "tests"
+    tests.mkdir(parents=True)
+    target = tests / "test_target.py"
+    target.touch()
+    (tests / "test_link.py").symlink_to(target)
+    (tests / "linked").symlink_to(tests, target_is_directory=True)
+    for value in ("tests/test_link.py", "tests/linked/test_target.py"):
+        with pytest.raises(ValueError, match="existing, unlinked"):
+            runner._test_file_groups("example", 25, test_files=(value,))
+
+
+@pytest.mark.parametrize("args", [
+    ["--all"], ["--changed"], ["example", "other"], ["example", "--prepare-only"],
+])
+def test_explicit_file_selection_requires_one_execution_target(args):
+    with pytest.raises(SystemExit) as error:
+        runner.main([*args, "--test-file", "tests/test_example.py"])
+    assert error.value.code == 2
+
+
+def test_explicit_empty_selection_is_not_a_guard_success(monkeypatch, tmp_path):
+    monkeypatch.setattr(runner, "PLUGINS", tmp_path)
+    tests = tmp_path / "example" / "tests"
+    tests.mkdir(parents=True)
+    (tests / "test_empty.py").touch()
+    monkeypatch.setattr(runner, "_ensure_venv", lambda *args, **kwargs: Path(sys.executable))
+    calls = []
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return 5
+    monkeypatch.setattr(runner, "run_contained", run)
+    assert runner.run_plugin(
+        "example", "uv", reinstall=False, kexpr="missing", guards=True,
+        limits=containment.Limits(), plugin_timeout=60, test_timeout=30,
+        max_files_per_subsuite=25, test_files=("tests/test_empty.py",),
+    ) == 5
+    assert len(calls) == 1
+    assert calls[0][0][-1] == str(Path("tests") / "test_empty.py")
+    assert "--timeout=30" in calls[0][0]
+    assert 0 < calls[0][1]["limits"].wall_seconds <= 60
 
 
 def test_worker_launch_uses_canonical_headlessness(monkeypatch, tmp_path):
@@ -162,6 +252,62 @@ def test_worker_launch_uses_canonical_headlessness(monkeypatch, tmp_path):
             {"check": False, "creationflags": 123, **containment._windows_stdio_kwargs()},
         )
     ]
+
+
+@pytest.mark.parametrize("has_project", [False, True])
+def test_fresh_preparation_attributes_repository_sources(monkeypatch, tmp_path, has_project):
+    plugin = tmp_path / "plugins" / "example"
+    plugin.mkdir(parents=True)
+    if has_project:
+        (plugin / "pyproject.toml").write_text(
+            '[build-system]\nrequires=[]\nbuild-backend="setuptools.build_meta"\n'
+            '[project]\nname="example"\nversion="1.0"\ndependencies=["owned-lib"]\n'
+            '[tool.uv.sources]\nowned-lib={path="../../libs/owned"}\n'
+            '[tool.setuptools.packages.find]\nwhere=["src"]\n',
+            encoding="utf-8",
+        )
+        (plugin / "src").mkdir()
+        library = tmp_path / "libs" / "owned"
+        library.mkdir(parents=True)
+        (library / "pyproject.toml").write_text(
+            '[project]\nname="owned-lib"\nversion="1.0"\n', encoding="utf-8",
+        )
+    monkeypatch.setattr(runner, "REPO", tmp_path)
+    monkeypatch.setattr(runner, "PLUGINS", tmp_path / "plugins")
+    monkeypatch.setattr(runner, "VENV_ROOT", tmp_path / "environments")
+    monkeypatch.setattr(runner, "_dep_fingerprint", lambda name: "fixture")
+    environment = runner.VENV_ROOT / "example"
+    environment.mkdir(parents=True)
+    python = runner._venv_python("example")
+    admitted = runner.run_uv_install
+    installs = []
+    probes = []
+
+    def prepare(uv, arguments, **kwargs):
+        assert kwargs["trusted_source_roots"] == (tmp_path,)
+        return admitted(uv, arguments, **kwargs)
+
+    def command(arguments, **kwargs):
+        if arguments[1] == "venv":
+            python.parent.mkdir(parents=True, exist_ok=True)
+            python.touch()
+        elif "--show-settings" in arguments:
+            probes.append(arguments)
+            return subprocess.CompletedProcess(arguments, 0, """PipInstallSettings { settings: PipSettings {
+                index_locations: IndexLocations { indexes: [], flat_index: [], },
+                exclude_newer: ExcludeNewer { global: None, package: ExcludeNewerPackage({}), },
+            }, }""", "")
+        else:
+            installs.append(arguments)
+        return subprocess.CompletedProcess(arguments, 0, "", "")
+
+    monkeypatch.setattr(runner, "run_uv_install", prepare)
+    monkeypatch.setattr(runner.subprocess, "run", command)
+    assert runner._ensure_venv("example", "uv", reinstall=False) == python
+    assert len(probes) == 2 and len(installs) == 1
+    assert "--exclude-newer" in installs[0] and "--reinstall" in installs[0]
+    assert ("-e" in installs[0]) is has_project
+    assert (environment / ".dep-fingerprint").read_text() == "fixture"
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX creation permissions")

@@ -1,7 +1,7 @@
 {
   "asset": "agent-mcp.json",
-  "measured_commit": "2182afbff462df67c7717203381f2a3a8cbb47b1",
+  "measured_commit": "d959de8511ccba374af02e2e804d4b52cc113ecd",
   "plugin": "agent-mcp",
-  "release_tag": "coverage-baselines-2182afbff462df67c7717203381f2a3a8cbb47b1",
+  "release_tag": "coverage-baselines-d959de8511ccba374af02e2e804d4b52cc113ecd",
   "schema": "copilot-extensions.coverage-baseline-pointer"
 }

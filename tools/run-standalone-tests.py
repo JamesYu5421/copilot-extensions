@@ -24,6 +24,7 @@ from plugin_test_containment import (
     run_contained,
 )
 from standalone_consumers import STANDALONE_CONSUMERS
+from seasoned_uv import run_uv_install
 
 REPO = Path(__file__).resolve().parent.parent
 COMPONENT_ALIASES = {
@@ -218,8 +219,10 @@ def prepare(component: str, python: Path, *, smoke: bool = False) -> None:
             core = (REPO / "plugins" / "agent-dispatch").resolve().as_uri()
             override.write_text(f"agent-dispatch @ {core}\n", encoding="utf-8")
             overrides = ["--override", str(override)]
-        subprocess.run(
-            ["uv", "pip", "install", "--python", str(python), *overrides, *sources],
+        run_uv_install(
+            "uv", ["--python", str(python), *overrides, *sources],
+            trusted_source_roots=(REPO,),
+            retained_resource_roots=(REPO / "libs" / "versioned-runtime",),
             cwd=REPO,
             check=True,
             capture_output=True,

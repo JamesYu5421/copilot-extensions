@@ -2,9 +2,12 @@
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[tool.uv]
+exclude-newer = "7 days"
+
 [project]
 name = "agent-dispatch-service"
-version = "0.1.0-dev1"
+version = "0.1.1-dev1"
 description = "Standalone, Copilot-independent distribution of the agent-dispatch coordinator daemon."
 readme = "README.md"
 license = "MIT"
