@@ -1,0 +1,29 @@
+name: Darwin construction custody capability probe
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - ".github/workflows/darwin-custody-probe.yml"
+      - "tools/darwin_custody_probe.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: darwin-custody-probe-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  native-capabilities:
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Probe native custody capabilities without elevated privileges
+        run: python -I -B tools/darwin_custody_probe.py
