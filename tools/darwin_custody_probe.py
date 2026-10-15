@@ -63,6 +63,26 @@ def send(identity: dict, number: int, *, stale: bool = False) -> int:
     return libproc().proc_signal_with_audittoken(ctypes.byref(token), number)
 
 
+def retired(identity: dict) -> bool:
+    try:
+        current = info(identity["pid"])
+    except OSError as error:
+        if error.errno == errno.ESRCH:
+            return True
+        raise
+    if current["unique_id"] != identity["unique_id"]:
+        return True
+    # PROC_PIDTBSDINFO's fixed 136-byte ABI starts with flags/status/xstatus.
+    status = ctypes.create_string_buffer(136)
+    ctypes.set_errno(0)
+    count = libproc().proc_pidinfo(identity["pid"], 3, 0, status, len(status))
+    if count != len(status):
+        if ctypes.get_errno() == errno.ESRCH:
+            return True
+        raise OSError(ctypes.get_errno(), f"BSD process status returned {count}")
+    return ctypes.c_uint32.from_buffer(status, 4).value == 5
+
+
 def wait(predicate, description: str, timeout: float = 20) -> None:
     deadline = time.monotonic() + timeout
     while not predicate():
@@ -163,10 +183,10 @@ def main() -> None:
                 "double-fork/setsid escaped launchd coalition"
             )
             assert info(descendant["pid"])["coalitions"] == root["coalitions"]
-            assert send(descendant, 0, stale=True) == errno.ESRCH, (
+            assert send(descendant, signal.SIGCONT, stale=True) == errno.ESRCH, (
                 "stale audit identity did not refuse"
             )
-            assert send(descendant, 0) == 0
+            assert send(descendant, signal.SIGCONT) == 0
             assert send(descendant, signal.SIGSTOP) == 0
             time.sleep(0.1)
             before = (base / "writes").read_bytes()
@@ -174,7 +194,7 @@ def main() -> None:
             assert (base / "writes").read_bytes() == before
             assert send(descendant, signal.SIGKILL) == 0
             wait(
-                lambda: send(descendant, 0) == errno.ESRCH,
+                lambda: retired(descendant),
                 "kernel did not confirm exact descendant retirement",
             )
             (base / "release").touch()
@@ -198,7 +218,7 @@ def main() -> None:
                 launchctl("bootout", target, str(plist))
             for identity in owned:
                 wait(
-                    lambda identity=identity: send(identity, 0) == errno.ESRCH,
+                    lambda identity=identity: retired(identity),
                     "Exact probe participant survived cleanup",
                 )
 
