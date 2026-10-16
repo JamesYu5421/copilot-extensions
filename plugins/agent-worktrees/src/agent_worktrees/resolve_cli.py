@@ -266,6 +266,8 @@ class _ResolveEarlyExit(RuntimeError):
 
 
 def _remote_selector_args(state: ResolveCommandState) -> list[str]:
+    if getattr(state.args, "require_native_seed", False):
+        raise ValueError("Remote --require-native-seed is unsupported; launch on the target.")
     if getattr(state.args, "owner_ref", None):
         raise ValueError("Remote --owner-ref is unsupported; create owned worktrees on the target.")
     if getattr(state.args, "copilot_args", None):
@@ -368,6 +370,11 @@ def add_parsers(sub) -> None:
         help="Keep creation prompts queued until the returned command executes",
     )
     parser.add_argument("--stage-launch-seed", action="store_true", help="Require typed launch-seed staging")
+    # The fence is unconditional; this capability flag excludes older engines before mutation.
+    parser.add_argument(
+        "--require-native-seed", action="store_true",
+        help="Require atomically fenced native launch-seed staging",
+    )
     parser.add_argument("--seed-id", default=None, help="Execute this already-staged launch intent")
     parser.add_argument("--launch-request-b64", default=None, help="Accept a structured target-local launch request")
     parser.add_argument("--launch-request-status", default=None, help="Inspect an admitted target-local launch request")

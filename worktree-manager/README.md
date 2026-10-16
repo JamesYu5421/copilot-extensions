@@ -175,6 +175,45 @@ last-good rows until a complete replacement arrives. Explicit peer timeout,
 authentication, malformed-protocol and incompatible-capability refusals remain
 terminal; none authorizes a polling fallback or a daemon restart.
 
+Supported local-native New and cold-Resume composers save each nonempty accepted
+prompt to the Manager's local `seed-history/history.sqlite3` **before** requesting
+an engine launch plan. A timeout or failed launch therefore does not erase the submitted
+paste buffer. Reopen the composer and press **Up/Down** to recall older/newer
+seeds; multiline cursor movement remains available until the first/last text
+line, and **Ctrl+Up/Down** recalls history from anywhere. Browsing back past the
+newest entry restores the current unsent draft, including edits made while
+browsing.
+
+History is per project, survives Manager restarts and runtime updates, and
+retains exact submitted text locally under `WORKTREE_MANAGER_ROOT` (or the
+normal `~/.worktree-manager` root). It is not synced, logged, or automatically
+executed. Consecutive identical submissions do not create duplicates; entries
+are not automatically expired. Treat this database as private prompt content.
+Initialized history accepts only the expected table with zero application/version
+markers; extra triggers, indexes, tables or foreign markers refuse prompt reads/writes.
+The history directory and database are owner-only on POSIX; Windows uses a
+protected owner/SYSTEM ACL, including inherited protection for SQLite journals.
+Existing history permissions are repaired before access; failure blocks submission.
+Blank or cancelled prompts are not recorded. If saving fails, the composer
+stays open with its text and an error rather than launching an unprotected
+request. This recovery history is separate from the engine's pending launch
+intent and never retries an allocation automatically.
+
+History reads open SQLite in read-only mode. A valid uninitialized empty database
+is treated as empty history without creating its schema. Corrupt, foreign, or
+incompatible stores refuse access instead of being silently repaired or migrated.
+
+Nonempty prompts with Anchor, Bare, AHP, or Local model selected refuse
+confirmation visibly and keep the draft open without recording it. Clear the
+prompt or change the options to continue. Remote and cross-environment
+(including Windows-to-WSL) New and Resume do not offer a prompt composer; programmatic
+prompt requests for those transports, Bare resume, or active/uncertain execution
+legs refuse before engine staging. Seedless launches are unchanged. No Mux is a
+supported prompt launch modifier. History retains the exact paste buffer;
+launch submission retains the composer's existing surrounding-whitespace trimming.
+Programmatic seeded Resume requests must identify an existing worktree; missing
+or empty worktree ids refuse before any execution-leg lookup or launch resolution.
+
 Sessionless workspaces retained by another controller appear separately under
 **Owned**, not as ordinary resumable conversations. Use **Go to controller**
 when its exact target is loaded, or **Refresh** / **View details** to diagnose
@@ -200,9 +239,10 @@ visible but refuses automatic resubmission, avoiding a duplicate turn.
 A later explicitly supplied prompt replaces the pending intent; a stale
 handoff acknowledgement cannot discard that replacement.
 
-For SSH machine sources, the host renders the same composer and sends a bounded
-structured request to the target engine before opening its interactive SSH
-launch. The target daemon admits the request, allocates at most one New
+The engine's structured SSH launch-request boundary is separate from the
+Manager's local-native prompt composer. A caller sends a bounded structured
+request to the target engine before opening its interactive SSH launch.
+The target daemon admits the request, allocates at most one New
 worktree, and stages the prompt in that target's worktree state. The launch then
 carries only the target worktree and seed identity. Arbitrary prompt text is
 encoded, not interpolated into the remote shell. Requests are limited to an
@@ -218,8 +258,14 @@ allocated worktree and staged intent without submitting another prompt.
 Resume that existing worktree only when its state is `staged`; an incomplete
 creation or unconfirmed handoff requires explicit inspection.
 
-Prompted requests require `--stage-launch-seed` support; ordinary seedless
-launches retain older-engine compatibility. Uninstrumented legacy/custom
+Prompted requests require `--stage-launch-seed --require-native-seed` support;
+ordinary seedless launches retain older-engine compatibility. The engine
+serializes native prompt staging and hosted-provider activation under the same
+worktree record lock. A provider that wins first refuses staging; a staged seed
+that wins first blocks provider activation until its native handoff finishes.
+The Manager's early execution-leg read is only a preflight, not that fence.
+Accepted recovery history survives either refusal and does not itself reserve
+an execution leg. Uninstrumented legacy/custom
 prompt launchers refuse without consuming the seed; use normalized setup or
 adopt the engine's documented launch-seed invocation boundary.
 The `gh copilot` intermediary cannot acknowledge actual Copilot startup;
