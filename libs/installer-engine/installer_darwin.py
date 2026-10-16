@@ -198,9 +198,14 @@ class Kernel:
             time.sleep(.01)
 
 
-def _peer_pid(connection: socket.socket) -> int:
-    # Darwin SOL_LOCAL / LOCAL_PEERPID: kernel identity, not a JSON PID.
-    return struct.unpack("i", connection.getsockopt(0, 2, struct.calcsize("i")))[0]
+def _peer_identity(connection: socket.socket, kernel: Kernel) -> Identity:
+    # Darwin SOL_LOCAL / LOCAL_PEERTOKEN: credentials and PID generation from
+    # the kernel. CPython does not expose the BSD getpeereid() function.
+    token = struct.unpack("8I", connection.getsockopt(0, 6, 32))
+    identity = kernel.identity(token[5])
+    if token[1] != os.getuid() or identity.idversion != token[7]:
+        raise RuntimeError("Construction control peer credentials changed")
+    return identity
 
 
 def _send(connection: socket.socket, value: dict) -> None:
@@ -281,8 +286,8 @@ def run(descriptor: int, argv: list[str], cwd: Path, timeout: float, env) -> sub
                 _launchctl("bootstrap", target.rsplit("/", 1)[0], str(plist))
                 connection, _ = server.accept()
                 connection.settimeout(max(.001, timeout - (time.monotonic() - started)))
-                root = kernel.identity(_peer_pid(connection))
-                if connection.getpeereid()[0] != os.getuid() or root.coalition == owner.coalition:
+                root = _peer_identity(connection, kernel)
+                if root.coalition == owner.coalition:
                     raise RuntimeError("Construction guardian has no private user coalition")
                 coalition = root.coalition
                 counts = kernel.counts(coalition)
@@ -314,6 +319,10 @@ def run(descriptor: int, argv: list[str], cwd: Path, timeout: float, env) -> sub
         stdout, stderr = _streams(base)
         if isinstance(failure, TimeoutError):
             raise subprocess.TimeoutExpired(argv, timeout, output=stdout, stderr=stderr) from failure
+        if isinstance(failure, EOFError) or (isinstance(failure, OSError) and failure.errno == errno.ENOTCONN):
+            diagnostic = base / "guardian-err"
+            detail = diagnostic.read_text(encoding="utf-8", errors="replace").strip() if diagnostic.exists() else ""
+            raise RuntimeError(f"Construction guardian exited before completing its command: {detail}") from failure
         if failure is not None:
             raise failure
         completed = subprocess.CompletedProcess(argv, result, stdout, stderr)
@@ -332,10 +341,9 @@ def guardian_main(endpoint: str, owner_pid: str, owner_unique: str, target: str)
         try:
             connection.settimeout(15)
             connection.connect(endpoint)
-            owner = kernel.identity(_peer_pid(connection))
+            owner = _peer_identity(connection, kernel)
             if (
-                connection.getpeereid()[0] != os.getuid()
-                or owner.pid != int(owner_pid) or owner.unique_id != int(owner_unique)
+                owner.pid != int(owner_pid) or owner.unique_id != int(owner_unique)
                 or owner.coalition == identity.coalition
             ):
                 raise RuntimeError("Construction control peer does not match the original owner")
