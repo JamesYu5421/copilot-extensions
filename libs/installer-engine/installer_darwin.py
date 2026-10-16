@@ -208,17 +208,27 @@ def _peer_identity(connection: socket.socket, kernel: Kernel) -> Identity:
     return identity
 
 
-def _send(connection: socket.socket, value: dict) -> None:
+def _deadline(connection: socket.socket, deadline: float | None) -> None:
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Construction command exceeded its bounded budget")
+        connection.settimeout(remaining)
+
+
+def _send(connection: socket.socket, value: dict, deadline: float | None = None) -> None:
     data = json.dumps(value).encode("utf-8")
     if len(data) > 16 * 1024 * 1024:
         raise ValueError("Construction control message is too large")
+    _deadline(connection, deadline)
     connection.sendall(struct.pack("!I", len(data)) + data)
 
 
-def _receive(connection: socket.socket) -> dict:
+def _receive(connection: socket.socket, deadline: float | None = None) -> dict:
     def read(size: int) -> bytes:
         result = bytearray()
         while len(result) < size:
+            _deadline(connection, deadline)
             chunk = connection.recv(size - len(result))
             if not chunk:
                 raise EOFError("Construction control peer exited")
@@ -246,7 +256,10 @@ def _launchctl(*arguments: str, absent_ok: bool = False) -> None:
 
 
 def _streams(base: Path) -> tuple[str, str]:
-    return tuple((base / name).read_text(encoding="utf-8", errors="replace") for name in ("out", "err"))
+    return (
+        (base / "out").read_text(encoding="utf-8", errors="replace"),
+        (base / "err").read_text(encoding="utf-8", errors="replace"),
+    )
 
 
 def run(descriptor: int, argv: list[str], cwd: Path, timeout: float, env) -> subprocess.CompletedProcess[str]:
@@ -276,16 +289,17 @@ def run(descriptor: int, argv: list[str], cwd: Path, timeout: float, env) -> sub
         connection = None
         coalition = None
         started = time.monotonic()
+        deadline = started + timeout
         result = None
         failure = None
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
             server.bind(str(endpoint))
             server.listen(1)
-            server.settimeout(min(timeout, 15))
             try:
                 _launchctl("bootstrap", target.rsplit("/", 1)[0], str(plist))
+                _deadline(server, min(deadline, started + 15))
                 connection, _ = server.accept()
-                connection.settimeout(max(.001, timeout - (time.monotonic() - started)))
+                _deadline(connection, deadline)
                 root = _peer_identity(connection, kernel)
                 if root.coalition == owner.coalition:
                     raise RuntimeError("Construction guardian has no private user coalition")
@@ -293,17 +307,16 @@ def run(descriptor: int, argv: list[str], cwd: Path, timeout: float, env) -> sub
                 counts = kernel.counts(coalition)
                 if kernel.members(coalition) != [root] or counts is None or counts[0] - counts[1] != 1:
                     raise RuntimeError("Construction coalition is not exclusively the new guardian")
+                _deadline(connection, deadline)
                 sent = connection.sendmsg(
                     [b"F"], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [descriptor]))],
                 )
-                if sent != 1 or _receive(connection) != {"custody": True}:
+                if sent != 1 or _receive(connection, deadline) != {"custody": True}:
                     raise RuntimeError("Construction guardian did not acknowledge inherited lease custody")
                 _send(connection, {
                     "argv": argv, "cwd": str(cwd), "env": dict(os.environ if env is None else env),
-                })
-                response = _receive(connection)
-                if "error" in response:
-                    raise RuntimeError(response["error"])
+                }, deadline)
+                response = _receive(connection, deadline)
                 code = response.get("returncode")
                 if type(code) is not int:
                     raise RuntimeError("Construction guardian returned no command result")
@@ -313,9 +326,13 @@ def run(descriptor: int, argv: list[str], cwd: Path, timeout: float, env) -> sub
             finally:
                 if connection is not None:
                     connection.close()
-                if coalition is not None:
-                    _cleanup(lambda: kernel.quiesce(coalition))
-                _cleanup(lambda: _launchctl("bootout", target, absent_ok=True))
+
+                def retire():
+                    if coalition is not None:
+                        kernel.quiesce(coalition)
+                    _launchctl("bootout", target, absent_ok=True)
+
+                _cleanup(retire)
         stdout, stderr = _streams(base)
         if isinstance(failure, TimeoutError):
             raise subprocess.TimeoutExpired(argv, timeout, output=stdout, stderr=stderr) from failure

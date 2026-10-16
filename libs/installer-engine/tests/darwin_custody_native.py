@@ -76,13 +76,25 @@ def owner(base: Path, mode: str) -> None:
         return real_launchctl(*arguments, **kwargs)
 
     installer_darwin._launchctl = record
+    if mode == "cleanup-interrupt":
+        original = installer_darwin.Kernel.quiesce
+        interrupted = False
+
+        def interrupt_once(kernel, *arguments, **kwargs):
+            nonlocal interrupted
+            if not interrupted:
+                interrupted = True
+                raise KeyboardInterrupt()
+            return original(kernel, *arguments, **kwargs)
+
+        installer_darwin.Kernel.quiesce = interrupt_once
     with (base / "lease").open("a+b") as lease:
         fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
         commands = OwnedCommands(lease.fileno())
         try:
             result = commands.run(
                 [sys.executable, "-I", "-B", "-c", WRITER, str(base),
-                 "success" if mode == "retained" else mode],
+                 "success" if mode in ("retained", "cleanup-interrupt") else mode],
                 cwd=base, timeout=4 if mode == "timeout" else 30,
             )
         except subprocess.TimeoutExpired as error:
@@ -162,7 +174,7 @@ class NativeCustody(unittest.TestCase):
             try:
                 self.identities.append(self.kernel.identity(pid))
             except ProcessLookupError:
-                self.assertIn(mode, ("success", "retained"))
+                self.assertIn(mode, ("success", "retained", "cleanup-interrupt"))
         return pids
 
     def live(self, identity):
@@ -247,6 +259,12 @@ class NativeCustody(unittest.TestCase):
         self.assertNotEqual(self.process.returncode, 0, out + err)
         self.assertIn("KeyboardInterrupt", err)
         self.assertFalse((self.base / "settled").exists())
+
+    def test_cleanup_cancellation_still_deregisters_the_exact_job(self):
+        self.start("cleanup-interrupt")
+        out, err = self.assert_retired_under_lease()
+        self.assertNotEqual(self.process.returncode, 0, out + err)
+        self.assertIn("KeyboardInterrupt", err)
 
     def test_foreign_caller_coalition_is_never_retired(self):
         identity = self.kernel.identity(os.getpid())
