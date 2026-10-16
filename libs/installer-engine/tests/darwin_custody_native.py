@@ -20,7 +20,7 @@ WRITER = r"""
 import json, os, sys, time
 from pathlib import Path
 base = Path(sys.argv[1])
-assert Path.cwd() == base
+assert Path.cwd() == base.resolve()
 assert sys.stdin.read() == ""
 assert os.environ["CONSTRUCTION_TEST_ENV"] == "owned inheritance"
 guardian = os.getppid()
@@ -91,6 +91,9 @@ def owner(base: Path, mode: str) -> None:
             (base / "result").write_text(json.dumps({
                 "timeout": True, "stdout": error.stdout, "stderr": error.stderr,
             }))
+        except subprocess.CalledProcessError as error:
+            print(error.stderr, file=sys.stderr, flush=True)
+            raise RuntimeError(f"Native writer failed with exit {error.returncode}") from None
         else:
             if mode not in ("success", "retained"):
                 raise AssertionError("A cancelled/failed guardian returned success")
