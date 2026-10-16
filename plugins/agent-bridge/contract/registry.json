@@ -2117,6 +2117,12 @@
           "sha256": "077eeeaa01db68b4c332692fb3b658a74575dfdf4a18cb968ca42fbad9aea667",
           "role": "Generation-42 independent expected-vector re-attestation: workspace-exact-owner-generation-42.json",
           "generation": 42
+        },
+        {
+          "path": "plugins/agent-bridge/contract/fixtures/http/current/workspace-finalization-retry-generation-37.json",
+          "sha256": "46d9ac3f68871931a1b4b86c45f96cda379413748fb30d0d29a4d4a31775bd83",
+          "role": "Generation-37 keyed workspace finalization refuses retryably without replacing allocation or native history",
+          "generation": 37
         }
       ],
       "provenance": [
