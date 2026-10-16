@@ -73,7 +73,10 @@ def owner(base: Path, mode: str) -> None:
 
             job = plistlib.loads(Path(arguments[2]).read_bytes())
             (base / "target").write_text(arguments[1] + "/" + job["Label"])
-        return real_launchctl(*arguments, **kwargs)
+        result = real_launchctl(*arguments, **kwargs)
+        if mode == "manager-error" and arguments[0] == "bootout":
+            raise RuntimeError("Injected registration-only cleanup failure after native retirement")
+        return result
 
     installer_darwin._launchctl = record
     if mode == "cleanup-interrupt":
@@ -94,7 +97,7 @@ def owner(base: Path, mode: str) -> None:
         try:
             result = commands.run(
                 [sys.executable, "-I", "-B", "-c", WRITER, str(base),
-                 "success" if mode in ("retained", "cleanup-interrupt") else mode],
+                 "success" if mode in ("retained", "cleanup-interrupt", "manager-error") else mode],
                 cwd=base, timeout=4 if mode == "timeout" else 30,
             )
         except subprocess.TimeoutExpired as error:
@@ -174,7 +177,7 @@ class NativeCustody(unittest.TestCase):
             try:
                 self.identities.append(self.kernel.identity(pid))
             except ProcessLookupError:
-                self.assertIn(mode, ("success", "retained", "cleanup-interrupt"))
+                self.assertIn(mode, ("success", "retained", "cleanup-interrupt", "manager-error"))
         return pids
 
     def live(self, identity):
@@ -265,6 +268,13 @@ class NativeCustody(unittest.TestCase):
         out, err = self.assert_retired_under_lease()
         self.assertNotEqual(self.process.returncode, 0, out + err)
         self.assertIn("KeyboardInterrupt", err)
+
+    def test_registration_only_failure_does_not_deadlock_the_next_installer(self):
+        self.start("manager-error")
+        out, err = self.assert_retired_under_lease()
+        self.assertNotEqual(self.process.returncode, 0, out + err)
+        self.assertIn("registration-only cleanup failure", err)
+        self.assertFalse((self.base / "settled").exists())
 
     def test_foreign_caller_coalition_is_never_retired(self):
         identity = self.kernel.identity(os.getpid())

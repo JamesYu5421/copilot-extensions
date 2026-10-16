@@ -251,7 +251,8 @@ def _launchctl(*arguments: str, absent_ok: bool = False) -> None:
     )
     if result.returncode and not (absent_ok and result.returncode == errno.ESRCH):
         raise RuntimeError(
-            f"Construction launchctl {arguments[0]} failed ({result.returncode}): {result.stderr.strip()}"
+            f"Construction launchctl {arguments[0]} {arguments[1]} failed "
+            f"({result.returncode}): {result.stderr.strip()}"
         )
 
 
@@ -327,12 +328,14 @@ def run(descriptor: int, argv: list[str], cwd: Path, timeout: float, env) -> sub
                 if connection is not None:
                     connection.close()
 
-                def retire():
+                try:
                     if coalition is not None:
-                        kernel.quiesce(coalition)
+                        _cleanup(lambda: kernel.quiesce(coalition))
+                finally:
+                    # Writer uncertainty retains custody. Registration-only
+                    # failure after quiescence must instead report boundedly,
+                    # never hold every future installer in an infinite retry.
                     _launchctl("bootout", target, absent_ok=True)
-
-                _cleanup(retire)
         stdout, stderr = _streams(base)
         if isinstance(failure, TimeoutError):
             raise subprocess.TimeoutExpired(argv, timeout, output=stdout, stderr=stderr) from failure
