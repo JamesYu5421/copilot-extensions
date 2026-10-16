@@ -66,7 +66,9 @@ remain independent. Missing, malformed or unavailable exact records refuse
 while retaining the allocation and creation key; they do not establish disposal
 or authorize another create. A changed path/nonce conflicts before lifecycle
 classification, and finalizing/terminal workspaces cannot start another native
-conversation. Positive sessionless admission requires zero sessions, indexed
+conversation. Finalizing metadata refuses with retryable `transition_pending`,
+preserving the keyed allocation; legacy `completed` is terminal.
+Positive sessionless admission requires zero sessions, indexed
 history, absent execution/backend bindings, and nonopaque owner facts.
 A positively observed terminal workspace or retired native result still
 refuses replay. Ordinary same-key replay reconciles a
