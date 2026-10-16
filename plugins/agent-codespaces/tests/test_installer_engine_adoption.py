@@ -1127,6 +1127,9 @@ def codespaces_engine_transition(tmp_path_factory):
         source_root, canonical_root=source_root, human_sources=human_sources,
     )
     _assert_codespaces_engine_wiring(source, repo_root=source_root)
+    normalized_inputs = {
+        path: path.read_bytes() for path in source_root.rglob("*") if path.is_file()
+    }
     payload = tmp_path / "release" / "plugins" / PLUGIN.name
     shutil.copytree(source, payload)
     logs = mm.materialize_uv_editable_refs(tmp_path / "release", canonical_root=REPO)
@@ -1140,6 +1143,9 @@ def codespaces_engine_transition(tmp_path_factory):
     assert not skipped, "\n".join(skipped)
     assert sum(line.startswith("OK") and "installer-engine." in line for line in logs) == 2
     _assert_codespaces_engine_wiring(source, repo_root=source_root)
+    assert {
+        path: path.read_bytes() for path in source_root.rglob("*") if path.is_file()
+    } == normalized_inputs
     assert {path: path.read_bytes() for path in originals} == originals
     return payload
 
