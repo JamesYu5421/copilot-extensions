@@ -41,6 +41,248 @@ FIXTURES = LIB / "fixtures"
 ENV_KEYS = (ut.ENV_RUN_ID, ut.ENV_EVENTS, ut.ENV_OWNER)
 
 
+@pytest.mark.parametrize("interactive", [False, True])
+def test_shell_progress_shares_clocks_sinks_and_continuation_redaction(interactive):
+    import io
+    from datetime import datetime, timezone
+
+    from update_telemetry.shell import ShellProgress
+
+    log = io.StringIO()
+    terminal = io.StringIO()
+    wall = [datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)]
+    clock = [10.0]
+    flow = ShellProgress(
+        log, terminal, interactive=interactive,
+        wall=lambda: wall[0], monotonic=lambda: clock[0],
+    )
+    secret = "-".join(("synthetic", "shell", "credential"))
+    with flow.root:
+        flow.record("status", "INFO", "planning")
+        flow.record("begin", "1", "reconcile/pass-1/example")
+        clock[0] = 12.0
+        wall[0] = wall[0].replace(hour=11)
+        flow.record("log", "INFO", "".join(("Bea", "rer")))
+        assert secret not in log.getvalue()
+        flow.record("log", "INFO", secret)
+        flow.record("log", "INFO", "first\n\nlast")
+        canonical = "[01:02:03.004Z] child done ready [duration 1.0s]"
+        flow.record("log", "INFO", canonical)
+        clock[0] = 13.5
+        flow.record("end", "failed", "exit 7; continuing")
+        assert flow.record("finish", "", "") is False
+    lines = log.getvalue().splitlines()
+    assert secret not in log.getvalue() + terminal.getvalue()
+    assert canonical in lines
+    assert lines.count(canonical) == 1
+    assert "[11:00:00.000Z] launch/reconcile/pass-1/example failed exit 7; continuing [duration 3.5s]" in lines
+    assert lines[-1] == (
+        "[11:00:00.000Z] launch warning maintenance finished with warnings; launch continues [duration 3.5s]"
+    )
+    assert all(line.count("[elapsed ") + line.count("[duration ") == 1 for line in lines)
+    if interactive:
+        assert terminal.getvalue()
+        assert all(line in lines for line in terminal.getvalue().splitlines())
+        assert "first" not in terminal.getvalue(), "child diagnostics stay in the setup log"
+    else:
+        assert terminal.getvalue() == ""
+
+
+@pytest.mark.parametrize("records", [
+    [("unknown", "", "")],
+    [("end", "done", "")],
+    [("begin", "1", "one"), ("begin", "2", "two")],
+    [("begin", "1", "one"), ("finish", "", "")],
+])
+def test_shell_progress_rejects_invalid_phase_transitions(records):
+    import io
+
+    from update_telemetry.shell import ShellProgress
+
+    flow = ShellProgress(io.StringIO(), io.StringIO())
+    with flow.root:
+        try:
+            with pytest.raises(ValueError):
+                for record in records:
+                    flow.record(*record)
+        finally:
+            if flow.action is not None:
+                error = ValueError("synthetic invalid phase")
+                flow.action.__exit__(ValueError, error, None)
+
+
+def test_shell_progress_cli_uses_one_process_and_rejects_parent_loss(tmp_path):
+    events = tmp_path / "events"
+    ready = tmp_path / "ready"
+    log = tmp_path / "setup.log"
+    records = [
+        ("status", "INFO", "preparing"),
+        ("begin", "1", "reconcile/example"),
+        ("log", "INFO", "x" * 70000),
+        ("log", "INFO", "non-ascii " + "".join(map(chr, (0xe9, 0x3bb, 0x4e2d)))),
+        ("end", "done", "exit 0"),
+        ("finish", "", ""),
+    ]
+    events.write_bytes(b"".join(
+        field.encode("utf-8") + b"\0" for record in records for field in record
+    ))
+    command = [
+        getattr(sys, "_base_executable", sys.executable), "-m", "update_telemetry.shell",
+        "--events", str(events), "--ready", str(ready),
+        "--log", str(log), "--parent", str(os.getpid()), "--interactive", "0",
+    ]
+    flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    environment = dict(os.environ, PYTHONPATH=str(LIB / "src"))
+    result = subprocess.run(command, env=environment, capture_output=True, timeout=10, **flags)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == result.stderr == b""
+    assert ready.read_text() == "finished\n"
+    rendered = log.read_text(encoding="utf-8")
+    assert "x" * 70000 in rendered
+    assert records[3][2] in rendered
+    assert "done exit 0 [duration " in rendered
+
+    log.unlink()
+    command[command.index("--parent") + 1] = "-1"
+    lost = subprocess.run(command, env=environment, capture_output=True, timeout=10, **flags)
+    assert lost.returncode == 1
+    assert lost.stdout == b""
+    assert ready.with_name(ready.name + ".failure").read_text() == "parent-exited\n"
+
+
+def test_shell_action_clock_excludes_queued_output_drain(tmp_path, monkeypatch):
+    import io
+    import threading
+    import time
+
+    from update_telemetry import shell
+
+    clock = [10.0]
+    blocked = threading.Event()
+    release = threading.Event()
+    captured = threading.Event()
+    errors = []
+    events, ready = tmp_path / "events", tmp_path / "ready"
+    events.write_bytes(b"")
+
+    def monotonic():
+        value = clock[0]
+        if value == 12.0:
+            captured.set()
+        return value
+
+    class SlowSink(io.StringIO):
+        def write(self, text):
+            if "queued-diagnostic" in text:
+                blocked.set()
+                assert release.wait(5), "test did not release its output sink"
+            return super().write(text)
+
+    sink = SlowSink()
+    progress_type = shell.ShellProgress
+    monkeypatch.setattr(
+        shell, "ShellProgress",
+        lambda *a, **kw: progress_type(*a, **kw, monotonic=monotonic),
+    )
+
+    def append(*record):
+        with events.open("ab") as target:
+            target.write(b"".join(field.encode() + b"\0" for field in record))
+
+    def run():
+        try:
+            shell.render(events, ready, sink, io.StringIO(), parent=os.getppid(), interactive=False)
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    try:
+        append("begin", "1", "native-action")
+        deadline = time.monotonic() + 5
+        while (not ready.exists() or ready.read_text() != "1\n") and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert ready.read_text() == "1\n"
+        append("log", "INFO", "queued-diagnostic")
+        assert blocked.wait(5)
+        clock[0] = 12.0
+        append("end", "done", "exit 0")
+        append("finish", "", "")
+        assert captured.wait(2), "native completion clock waited for the blocked output sink"
+    finally:
+        clock[0] = 100.0
+        release.set()
+        worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert errors == []
+    assert "native-action done exit 0 [duration 2.0s]" in sink.getvalue()
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "pidfd_open"), reason="Linux identity-bound grandchild cleanup",
+)
+@pytest.mark.parametrize("blocked", ["begin", "status"])
+def test_shell_parent_loss_exits_while_terminal_pipe_is_blocked(tmp_path, blocked):
+    import select
+    import signal
+    import time
+
+    events, ready = tmp_path / "events", tmp_path / "ready"
+    log, pid_file, exit_gate = tmp_path / "setup.log", tmp_path / "pid", tmp_path / "parent-exit"
+    events.write_bytes(b"")
+    controller = tmp_path / "controller.py"
+    controller.write_text(
+        "import os,subprocess,sys,time\nfrom pathlib import Path\n"
+        f"child=subprocess.Popen([sys.executable,'-m','update_telemetry.shell',"
+        f"'--events',{str(events)!r},'--ready',{str(ready)!r},'--log',{str(log)!r},"
+        "'--parent',str(os.getpid()),'--interactive','1'],"
+        "stdout=subprocess.DEVNULL,stderr=sys.stderr)\n"
+        f"Path({str(pid_file)!r}).write_text(str(child.pid))\n"
+        "deadline=time.monotonic()+15\n"
+        f"while not Path({str(exit_gate)!r}).exists() and time.monotonic()<deadline: time.sleep(.01)\n"
+    )
+    reader, writer = os.pipe()
+    parent = subprocess.Popen(
+        [getattr(sys, "_base_executable", sys.executable), str(controller)],
+        env=dict(os.environ, PYTHONPATH=str(LIB / "src")),
+        stdout=subprocess.DEVNULL, stderr=writer,
+    )
+    os.close(writer)
+    identity = None
+    try:
+        deadline = time.monotonic() + 5
+        while (not pid_file.exists() or not ready.exists()) and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert pid_file.exists() and ready.exists(), "renderer did not start"
+        identity = os.pidfd_open(int(pid_file.read_text()))
+        message = "blocked-output-" + "x" * (1024 * 1024)
+        record = ("begin", "1", message) if blocked == "begin" else ("status", "INFO", message)
+        with events.open("ab") as target:
+            target.write(b"".join(field.encode() + b"\0" for field in record))
+            if blocked == "status":
+                target.write(b"finish\0\0\0")
+        deadline = time.monotonic() + 5
+        while log.stat().st_size < len(message) and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert log.stat().st_size >= len(message), "renderer did not enter its terminal write"
+        assert not select.select([identity], [], [], 0)[0]
+        exit_gate.write_text("exit")
+        assert parent.wait(timeout=5) == 0
+        # Keep the pipe's reader open and deliberately never consume it.
+        assert select.select([identity], [], [], 5)[0], "blocked renderer survived parent loss"
+        assert ready.with_name(ready.name + ".failure").read_text() == "parent-exited\n"
+    finally:
+        exit_gate.write_text("exit")
+        if identity is not None:
+            if not select.select([identity], [], [], 0)[0]:
+                signal.pidfd_send_signal(identity, signal.SIGKILL)
+            os.close(identity)
+        if parent.poll() is None:
+            parent.kill()
+        parent.wait(timeout=5)
+        os.close(reader)
+
+
 @pytest.mark.guard
 def test_human_operation_clocks_nesting_and_outcomes():
     import io

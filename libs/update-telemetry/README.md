@@ -116,6 +116,40 @@ After that command returns, the relay drains bytes already written without
 waiting for EOF from detached service descendants. Parsed JSON commands,
 binary/private protocols and interactive passthroughs must not use this adapter.
 
+### Shell maintenance adapter
+
+`python -m update_telemetry.shell` reuses `HumanOperation` for a native shell
+that cannot provide portable UTC and monotonic clocks itself (notably Bash
+3.2). It is one bounded child per maintenance phase, not a service or updater.
+The shell retains command execution, environment, stdin, exit handling and
+fresh planning. It sends NUL-delimited record triples through a private
+temporary spool; records are not JSON/protocol stdout or durable update events.
+The renderer acknowledges startup and each action's live clock before native
+execution, streams diagnostics only to the setup log, and echoes selected
+status/completion records to stderr only for an interactive launch.
+One in-process clock thread observes completion records independently of
+the output sink. Admission starts the action clock after earlier output and
+the start line drain; completion uses the observed end boundary even if
+presentation is still draining diagnostics. Only boundary timestamps are
+retained in memory, not another queue of diagnostic text.
+
+`HumanLineBuffer` shares the existing native relay's credential-continuation
+handling; ordinary lines remain live while credential prefixes wait for their
+continuation. An end record completes the corresponding action, and a finish
+record drains the phase without waiting for inherited descriptors in detached
+descendants. A known warning/failure prevents a misleading clean phase summary.
+The final ready-file receipt follows closed output and clock-thread shutdown;
+the launcher can distinguish successful completion from failure even after
+Bash reaps the completed job.
+The CLI's parent monitor starts before its first output write and remains
+active during action admission and final output drain. Parent loss records
+`parent-exited` in `ready.failure` and exits only this dedicated renderer
+process nonzero, without waiting for a blocked terminal writer or its locks.
+Embedded `render()` callers retain their normal exception/lifetime ownership.
+The shell owns bounded startup/shutdown and cleanup; the renderer also exits
+when its launch parent disappears. Renderer failures report an explicit error
+and never replace the native command's exit or launch-continuation policy.
+
 ### Native producer admission
 
 Captured PowerShell installers opt in through generated
@@ -149,13 +183,11 @@ UTF-8 capture. Direct POSIX `.sh` installer calls retain the existing Python
 stream owner's UTF-8 human adapter. This is not a claim that an arbitrary
 private protocol or every standalone installer has the same encoding.
 
-This does **not** yet frame every standalone native bootstrap or shell launch
-maintenance line. In particular, the native launchers' bootstrap/self-update
-and two-pass reconcile blocks still own their existing setup-log/status
-adapters; Bash's `SECONDS` timing there is not a monotonic-clock guarantee.
-Before adding a streaming interpreter at that boundary, its admission and
-lifetime must be independent of any runtime the same operation updates or
-collects. A first bootstrap before an interpreter is admitted retains native
-diagnostics rather than claiming fabricated monotonic timing. The Python-owned
-native-child adapter needs no such extra interpreter and does not alter
-runtime-slot retention or activation.
+This does **not** yet frame every standalone native bootstrap line. The
+native launchers' setup-log/status adapters now use the maintenance clocks
+described above, but inherited bootstrap child streams, detached installer
+output and early/late Bash diagnostics remain outside that boundary.
+A first bootstrap before an interpreter is admitted retains native diagnostics
+rather than claiming fabricated monotonic timing. The Python-owned native-child
+adapter needs no extra interpreter and does not alter runtime-slot retention
+or activation.

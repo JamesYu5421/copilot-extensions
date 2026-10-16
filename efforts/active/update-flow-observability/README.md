@@ -111,6 +111,8 @@ matrix below are _(agent-recommended)_ implementation details.
   shell launch-maintenance path while preserving its fresh replanning.
 - [x] Correct the supervisor JSON-framing defect before applying human line
   formatting (#6827); preserve diagnostic stderr and identity-scoped retirement.
+- [x] Land the Python-owned aggregate and nested-output formatter, declared
+  native encoding boundary and release-materialization contract (#6869).
 - [ ] Implement the smallest shared extension of the existing formatter
   ownership, covering aggregate progress, plugin installers, nested child
   output and persistent diagnostics.
@@ -212,6 +214,114 @@ Bridge serving-version gap and supervisor framing defect survived that
 bounded source delta inspection.
 
 ## Journal
+
+### 2026-10-15 - Native maintenance acceptance and isolated Windows blocker
+
+- Further review found successful jobs could already be reaped before
+  cleanup, and a blocked terminal could keep an orphaned renderer alive.
+  Both were reproduced before their repairs. Final cleanup now requires
+  an explicit drained/closed receipt and absence of a live owned job,
+  rather than relying on retained Bash exit status. The parent monitor
+  starts before output, checks liveness during admission, remains active
+  through final drain and can terminate only its dedicated CLI process
+  without waiting for sink locks. A private failure reason survives.
+  Native regressions keep a pipe open and unread while the actual parent
+  exits, covering both a blocked start and final status/drain. Both now
+  exit; Linux pidfds constrain fixture cleanup to its exact grandchild.
+  Final complete-file acceptance passed 113 telemetry and 22 preparation
+  cases on Linux (12 Windows-only skips); canonical Windows telemetry
+  passed 111 cases (two Linux-only skips). The equivalent final 256-line
+  comparison measured medians of 3.724s before and 2.154s after, with
+  256 versus zero `date` processes, one formatter and all messages retained.
+  These replace all earlier overhead figures, not runtime/update cost proof.
+- A subsequent review identified queued output inflating native action
+  durations. A blocked-sink regression failed before the repair: completion
+  could not be sampled until that sink was released. One in-process clock
+  reader now observes end records independently; action admission starts
+  its clock after prior output drains. Only boundary timestamps are queued
+  in memory, while diagnostics retain the existing private spool.
+  The repaired regression distinguishes a two-second action from an
+  additional 88 seconds of simulated drain delay. Spool initialization
+  failure is also explicitly reported without aborting native continuation.
+  Windows shared renderer coverage passed 30 cases; complete native Linux
+  telemetry and preparation files passed 111 and 21 cases respectively
+  (12 Windows-only skips), retaining the original limits.
+  Repeated the equivalent 256-line comparison at that clock-repair stage,
+  including clock-reader and job-shutdown costs: before 3.435s median,
+  after 1.900s, still 256 `date` processes versus none and one formatter.
+  All diagnostics remain; these supersede the pre-review overhead figures.
+- Review of #6904 identified cached-PID shutdown targeting. A contained
+  pre-fix regression reproduced signalling a disposable unrelated process.
+  Shutdown now verifies the parent shell's renderer job, command and PID
+  before signalling or waiting, including completed-job cleanup. A separate
+  regression preserves a different job even when its numeric identity is
+  supplied as the stale renderer handle. The complete native Linux
+  preparation file passed 20 cases with 12 Windows-only skips afterward;
+  stopped/missing helpers and normal spool cleanup remain covered.
+- Native PowerShell 5.1/7 progress and real output-sink fixtures passed on
+  Windows: 26 cases with two POSIX skips. Native Linux engine/library and
+  Manager coverage passed 128 cases with 12 Windows-only skips, including
+  helper death, bounded shutdown, unchanged planning and streamed failure.
+  Focused Windows shared-renderer coverage passed 29 cases.
+- Equivalent 256-line synthetic presentation trials, including helper
+  startup/shutdown, retained every diagnostic. The median fell from
+  3.784s with 256 `date` processes to 1.252s with one bounded renderer and
+  no per-line clock process. These measure presentation overhead only,
+  not installer or end-to-end update savings.
+- Broader Windows pane coverage exposed a separate unchanged error-output
+  boundary. Instrumentation attributed about 13.272s to `Write-Error`,
+  not the roughly 29ms exclusive-file failure. A minimal unrelated
+  `pwsh -File` script also exceeded its existing 15s deadline under
+  ConciseView; its NormalView counterpart completed in 2.453s. Track
+  the actual PowerShell error-rendering cause in #6900; do not weaken
+  deadlines, change global ErrorView or claim that the broader lane passed.
+- A prior broader run also detected persistent OneDrive environment drift.
+  Causality is unestablished on the shared host; no rollback or production
+  repair was attempted. Subsequent isolated timing probes detected no drift.
+- Fresh synthetic native consumers exercise the changed boundary.
+  Full fresh-machine bootstrap and an actual macOS Bash 3.2 host were not
+  available; Linux Bash execution does not substitute for that platform.
+  No live rollout was attempted: promoted artifacts and sole-owner update
+  authorization remain required. Required PR review and CI remain gates.
+
+### 2026-10-15 - Formatter merged; continue native presentation and speed proof
+
+- #6869 merged as `85eb63693a071f22f607a16063fd4be3044d75d4`
+  after current-head approval with zero findings and all observed CI
+  checks successful, including the required PR gate. This lands only the
+  bounded Python-owned presentation slice, not this whole effort.
+- Its source was pulled forward onto the contribution branch without
+  dropping unmerged changes or bypassing publication checks. The original
+  PR rebase and final accepted tree remain recoverable through local refs.
+- Notified the retained #6826 source owner that the actual-merge dependency
+  is satisfied. #6877 still owes synchronization, owner-tool declaration
+  regeneration, resulting-head review and all CI; production rollout and
+  native-recovery custody remain separate.
+
+### 2026-10-15 - Portable native maintenance clock decision
+
+- The operator selected one bounded formatter helper per Bash maintenance
+  phase rather than removing Bash 3.2 support or pretending its `SECONDS`
+  variable is monotonic. The helper is stopped before Copilot handoff; no
+  per-line Python/date spawn, daemon or lifecycle authority is introduced.
+- The native slice reuses the shared formatter, continuation redactor and
+  human output grammar. PowerShell renders natively with UTC and Stopwatch;
+  Bash retains command execution and delegates presentation only.
+- Standalone/detached and inherited bootstrap installer streams, plus
+  early/late Bash launcher diagnostics, remain explicit follow-on scope.
+  Native-shell tests and
+  measured overhead must clear before publication; this is not a rollout
+  or whole-effort completion.
+- Next: finish native shell/standalone and persistent-log timing through
+  their actual output owners, starting with
+  `worktree-manager/bin/launch-session.{ps1,sh}`. Preserve Bash 3.2,
+  monotonic-duration honesty, machine streams, native argv/exit behavior
+  and the absence of per-line subprocess or telemetry-write overhead.
+  Do not re-audit the already-accounted 249-line reference or rebuild the
+  already-merged Python formatter.
+- No installed update has been run on this evidence. Promotion, sole-owner
+  rollout, equivalent before/after cost measurements, Codespaces reuse
+  verification and the parent launch's acceptance gates remain open.
 
 ### 2026-10-15 - Preserve in-place promotion and receipt-owned execution
 

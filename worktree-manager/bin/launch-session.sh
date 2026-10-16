@@ -24,7 +24,137 @@ export WORKTREE_LAUNCH_ID="$LAUNCH_ID"
 
 setup_log() {
     local level="$1" msg="$2"
+    if [[ -n "${_SETUP_PROGRESS_DIR:-}" || "${_SETUP_PROGRESS_FAILED:-}" == 1 ]]; then
+        _setup_progress_emit log "$level" "$msg" || _setup_progress_unavailable "$level" "$msg" 0
+        return 0
+    fi
     printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$level" "$msg" >> "$SETUP_LOG" 2>/dev/null || true
+}
+
+_setup_progress_unavailable() {
+    local level="$1" msg="$2" echo_line="$3" state=running line
+    case "$level" in WARN) state=warning ;; ERROR) state=failed ;; esac
+    while IFS= read -r line; do
+        line="[time unavailable] launch $state $line [elapsed unavailable]"
+        printf '%s\n' "$line" >> "$SETUP_LOG" 2>/dev/null || true
+        [[ "$echo_line" == 1 && "$_SHOW_LAUNCH_STATUS" == 1 ]] && printf '%s\n' "$line" >&2 || true
+    done <<< "$msg"
+}
+
+_setup_progress_emit() {
+    if [[ "${_SETUP_PROGRESS_FAILED:-}" != 1 ]] && kill -0 "$_SETUP_PROGRESS_PID" 2>/dev/null \
+        && printf '%s\0%s\0%s\0' "$1" "$2" "$3" >> "$_SETUP_PROGRESS_DIR/events"; then
+        return 0
+    fi
+    if [[ "${_SETUP_PROGRESS_FAILED:-}" != 1 ]]; then
+        printf 'WARNING: launch progress formatter unavailable; timing is unavailable (diagnostics: %s).\n' "$_SETUP_PROGRESS_DIR" >&2
+    fi
+    _SETUP_PROGRESS_FAILED=1
+    return 1
+}
+
+_setup_progress_wait() {
+    local expected="$1" attempt seen
+    for (( attempt=0; attempt<500; attempt++ )); do
+        kill -0 "$_SETUP_PROGRESS_PID" 2>/dev/null || return 1
+        if [[ -f "$_SETUP_PROGRESS_DIR/ready" ]]; then
+            IFS= read -r seen < "$_SETUP_PROGRESS_DIR/ready" || seen=""
+            [[ "$seen" == "$expected" ]] && return 0
+        fi
+        sleep 0.01
+    done
+    return 1
+}
+
+_setup_progress_job() {
+    local job pid remainder
+    _SETUP_PROGRESS_FOUND_JOB=""
+    while read -r job pid remainder; do
+        [[ "$pid" == "$_SETUP_PROGRESS_PID" ]] || continue
+        [[ "$remainder" == *"-m update_telemetry.shell"* ]] || continue
+        job="${job#\[}"
+        job="${job%%\]*}"
+        [[ -z "${_SETUP_PROGRESS_JOB:-}" || "$job" == "$_SETUP_PROGRESS_JOB" ]] || continue
+        _SETUP_PROGRESS_FOUND_JOB="$job"
+        return 0
+    done < <(jobs -l -r; jobs -l -s)
+    return 1
+}
+
+_setup_progress_signal() {
+    [[ -n "${_SETUP_PROGRESS_JOB:-}" ]] || return 1
+    _setup_progress_job || return 1
+    # Resolve the shell's still-owned job, never signal a cached numeric PID.
+    kill "-$1" -- "%$_SETUP_PROGRESS_FOUND_JOB" 2>/dev/null
+}
+
+_start_setup_progress() {
+    if ! _SETUP_PROGRESS_DIR="$(mktemp -d "$_SETUP_LOG_DIR/progress-$$-XXXXXXXX")"; then
+        printf 'WARNING: could not create private launch progress spool; native timing remains unavailable.\n' >&2
+        _SETUP_PROGRESS_FAILED=1
+        return 0
+    fi
+    if ! : > "$_SETUP_PROGRESS_DIR/events"; then
+        printf 'WARNING: could not initialize launch progress spool; timing is unavailable.\n' >&2
+        _SETUP_PROGRESS_FAILED=1
+        return 0
+    fi
+    "$PYTHON" -m update_telemetry.shell \
+        --events "$_SETUP_PROGRESS_DIR/events" --ready "$_SETUP_PROGRESS_DIR/ready" \
+        --log "$SETUP_LOG" --parent "$$" --interactive "$_SHOW_LAUNCH_STATUS" \
+        </dev/null >/dev/null &
+    _SETUP_PROGRESS_PID=$!
+    _setup_progress_job || true
+    _SETUP_PROGRESS_JOB="$_SETUP_PROGRESS_FOUND_JOB"
+    if ! _setup_progress_wait 0; then
+        printf 'WARNING: launch progress formatter did not become ready; timing is unavailable.\n' >&2
+        _SETUP_PROGRESS_FAILED=1
+    fi
+}
+
+_setup_progress_begin() {
+    _SETUP_PROGRESS_SEQUENCE=$((_SETUP_PROGRESS_SEQUENCE + 1))
+    if ! _setup_progress_emit begin "$_SETUP_PROGRESS_SEQUENCE" "$1" \
+        || ! _setup_progress_wait "$_SETUP_PROGRESS_SEQUENCE"; then
+        _SETUP_PROGRESS_FAILED=1
+        _setup_progress_unavailable WARN "$1 starting; timing unavailable" 1
+    fi
+}
+
+_setup_progress_end() {
+    _setup_progress_emit end "$1" "$2" || _setup_progress_unavailable WARN "$2; duration unavailable" 1
+}
+
+_stop_setup_progress() {
+    [[ -n "$_SETUP_PROGRESS_DIR" ]] || return 0
+    _setup_progress_emit finish "" "" || true
+    local attempt completed=""
+    for (( attempt=0; attempt<500; attempt++ )); do
+        _setup_progress_job || break
+        [[ "$_SETUP_PROGRESS_FAILED" == 1 ]] && break
+        sleep 0.01
+    done
+    if _setup_progress_job; then
+        _setup_progress_signal TERM || true
+        _SETUP_PROGRESS_FAILED=1
+        for (( attempt=0; attempt<100; attempt++ )); do
+            _setup_progress_job || break
+            sleep 0.01
+        done
+        if _setup_progress_job; then
+            _setup_progress_signal KILL || true
+        fi
+    fi
+    if [[ -f "$_SETUP_PROGRESS_DIR/ready" ]]; then
+        IFS= read -r completed < "$_SETUP_PROGRESS_DIR/ready" || completed=""
+    fi
+    if [[ "$completed" == finished && "$_SETUP_PROGRESS_FAILED" != 1 ]] && ! _setup_progress_job; then
+        rm -f -- "$_SETUP_PROGRESS_DIR/events" "$_SETUP_PROGRESS_DIR/ready"
+        rmdir -- "$_SETUP_PROGRESS_DIR"
+    else
+        printf 'WARNING: launch progress formatter failed; retained private diagnostics at %s.\n' "$_SETUP_PROGRESS_DIR" >&2
+    fi
+    _SETUP_PROGRESS_DIR=""
 }
 
 launch_trace() {
@@ -44,6 +174,10 @@ launch_trace() {
 _SHOW_LAUNCH_STATUS=""
 setup_status() {
     local level="$1" msg="$2"
+    if [[ -n "${_SETUP_PROGRESS_DIR:-}" || "${_SETUP_PROGRESS_FAILED:-}" == 1 ]]; then
+        _setup_progress_emit status "$level" "$msg" || _setup_progress_unavailable "$level" "$msg" 1
+        return 0
+    fi
     setup_log "$level" "$msg"
     [[ "$_SHOW_LAUNCH_STATUS" == "1" ]] && printf '  %s\n' "$msg" >&2 || true
 }
@@ -356,6 +490,8 @@ invoke_update_apply() {
     _SHOW_LAUNCH_STATUS="${2:-0}"
     [[ -n "$_UPDATE_APPLIED" ]] && return 0
     _UPDATE_APPLIED=1
+    local _SETUP_PROGRESS_DIR="" _SETUP_PROGRESS_PID="" _SETUP_PROGRESS_JOB="" _SETUP_PROGRESS_SEQUENCE=0 _SETUP_PROGRESS_FAILED=0
+    _start_setup_progress
 
     local status_file="$HOME/.agent-worktrees/updater-status.json"
     local stage_done="" plugin_changed="" skipped="" plugin_dir="" runtime_root="" runtime_apply_blocked=""
@@ -622,20 +758,17 @@ for key, value in update.get('environment', {}).items():
                 while IFS= read -r _reconcile_env; do
                     [[ -n "$_reconcile_env" ]] && _RENV+=("$_reconcile_env")
                 done <<< "$_RENV_TEXT"
-                # SECONDS is available on stock macOS Bash 3.2 (whole seconds).
-                _raction_start=$SECONDS
-                setup_status INFO "Plugin reconcile: $_RSVC starting (pass $_rpass) [elapsed 0s]"
-                if env ${_RENV[@]+"${_RENV[@]}"} "${_RARGV[@]}" 2>&1 | while IFS= read -r _rl || [[ -n "$_rl" ]]; do setup_log INFO "reconcile: $_rl"; done; then
+                _setup_progress_begin "reconcile/pass-$_rpass/$_RSVC"
+                if env ${_RENV[@]+"${_RENV[@]}"} "${_RARGV[@]}" 2>&1 | while IFS= read -r _rl || [[ -n "$_rl" ]]; do setup_log INFO "$_rl"; done; then
                     _raction_status=("${PIPESTATUS[@]}")
                 else
                     _raction_status=("${PIPESTATUS[@]}")
                 fi
                 _raction_exit=${_raction_status[0]}
-                _raction_duration=$((SECONDS - _raction_start))
                 if [[ "$_raction_exit" == "0" ]]; then
-                    setup_status INFO "Plugin reconcile: $_RSVC done (exit 0) [duration ${_raction_duration}s]"
+                    _setup_progress_end done "Plugin reconcile: $_RSVC done (exit 0)"
                 else
-                    setup_status WARN "Plugin reconcile: $_RSVC failed (exit $_raction_exit) [duration ${_raction_duration}s]; continuing"
+                    _setup_progress_end failed "Plugin reconcile: $_RSVC failed (exit $_raction_exit); continuing"
                 fi
             done
             # Re-resolve before the next pass: this pass's reconcile actions
@@ -647,6 +780,7 @@ for key, value in update.get('environment', {}).items():
             fi
         done
     fi
+    _stop_setup_progress
 }
 
 # ── Pre-launch self-update + reconcile now run via invoke_update_apply ────

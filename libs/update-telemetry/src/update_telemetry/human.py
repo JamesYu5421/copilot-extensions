@@ -9,6 +9,7 @@ import re
 import sys
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -131,11 +132,11 @@ class HumanOperation:
             raise ValueError(f"unknown human output state: {state}")
         self._write(message, state=state)
 
-    def complete(self, state: str = "done", message: str = "") -> None:
+    def complete(self, state: str = "done", message: str = "", *, elapsed: float | None = None) -> None:
         if state not in _STATES - {"starting", "running"}:
             raise ValueError(f"invalid completion state: {state}")
         if not self._completed:
-            elapsed = self.monotonic() - self.started
+            elapsed = self.monotonic() - self.started if elapsed is None else elapsed
             self._write(f"{state} {message}".rstrip(), completed=True, elapsed=elapsed)
             self._completed = True
 
@@ -149,6 +150,29 @@ class HumanOperation:
             if self._token is not None:
                 _CURRENT.reset(self._token)
                 self._token = None
+
+
+class HumanLineBuffer:
+    """Retain only credential prefixes needing a following physical line."""
+
+    def __init__(self, emit: Callable[[str], None]):
+        self.emit = emit
+        self.pending: str | None = None
+
+    def feed(self, line: str) -> None:
+        message = line if self.pending is None else self.pending + "\n" + line
+        probe = "human_output_continuation_probe"
+        suffixes = ("\n" + probe, "\n: " + probe, "\n= " + probe)
+        if any(not redact(message + suffix).endswith(probe) for suffix in suffixes):
+            self.pending = message
+        else:
+            self.emit(message)
+            self.pending = None
+
+    def flush(self) -> None:
+        if self.pending is not None:
+            self.emit(self.pending)
+            self.pending = None
 
 
 @contextmanager
@@ -170,32 +194,18 @@ def native_output():
     def relay():
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         pending = ""
-        logical = None
-
-        def emit(line: str):
-            nonlocal logical
-            message = line if logical is None else logical + "\n" + line
-            # Ask the existing redactor whether a following token would be
-            # sensitive; retain only prefixes requiring that continuation.
-            probe = "human_output_continuation_probe"
-            suffixes = ("\n" + probe, "\n: " + probe, "\n= " + probe)
-            if any(not redact(message + suffix).endswith(probe) for suffix in suffixes):
-                logical = message
-            else:
-                operation.progress(message)
-                logical = None
+        lines = HumanLineBuffer(operation.progress)
 
         def consume(data: bytes, *, final: bool = False):
-            nonlocal pending, logical
+            nonlocal pending
             pending += decoder.decode(data, final=final)
             while "\n" in pending:
                 line, pending = pending.split("\n", 1)
-                emit(line.removesuffix("\r"))
+                lines.feed(line.removesuffix("\r"))
             if final and pending:
-                emit(pending)
-            if final and logical is not None:
-                operation.progress(logical)
-                logical = None
+                lines.feed(pending)
+            if final:
+                lines.flush()
 
         try:
             while not stopped.is_set():
