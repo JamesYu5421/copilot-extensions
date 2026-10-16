@@ -77,12 +77,16 @@ class PublicationDirectory(ArchiveDirectory):
 
 
 @contextmanager
-def publication_directory(path: Path) -> Iterator[PublicationDirectory]:
+def publication_directory(
+    path: Path, *, create: bool = True,
+) -> Iterator[PublicationDirectory]:
     """Create and pin a lexical directory chain without following redirects.
 
     POSIX child creation and all later I/O are descriptor-relative. Windows
     keeps each parent unrenamable before creating/opening the next child.
-    No unchecked pathname mkdir precedes this boundary.
+    No unchecked pathname mkdir precedes this boundary. Readback uses
+    ``create=False``: missing children fail without mkdir or durability writes,
+    and successful exit requires the pinned ancestry to retain its lexical names.
     """
     absolute = path.expanduser().absolute()
     if ".." in absolute.parts:
@@ -90,25 +94,36 @@ def publication_directory(path: Path) -> Iterator[PublicationDirectory]:
     with ExitStack() as stack:
         current = Path(absolute.anchor)
         fd: int | None = None
+        readback_edges: list[tuple[int, str, int]] = []
         if os.name == "nt":
             stack.enter_context(_windows_directory(current))
             for component in absolute.parts[1:]:
                 current /= component
-                try:
-                    os.mkdir(windows_extended_path(current))
-                except FileExistsError:
-                    pass
+                if create:
+                    try:
+                        os.mkdir(windows_extended_path(current))
+                    except FileExistsError:
+                        pass
                 stack.enter_context(_windows_directory(current))
         else:
             flags = _posix_flags("O_DIRECTORY", "O_NOFOLLOW")
             fd = os.open(current, flags)
             stack.callback(os.close, fd)
             for component in absolute.parts[1:]:
-                try:
-                    os.mkdir(component, dir_fd=fd)
-                except FileExistsError:
-                    pass
-                os.fsync(fd)
-                fd = os.open(component, flags, dir_fd=fd)
+                if create:
+                    try:
+                        os.mkdir(component, dir_fd=fd)
+                    except FileExistsError:
+                        pass
+                    os.fsync(fd)
+                parent_fd = fd
+                fd = os.open(component, flags, dir_fd=parent_fd)
                 stack.callback(os.close, fd)
+                if not create:
+                    readback_edges.append((parent_fd, component, fd))
         yield PublicationDirectory(absolute, fd)
+        for parent_fd, component, child_fd in readback_edges:
+            named = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+            held = os.fstat(child_fd)
+            if (named.st_dev, named.st_ino) != (held.st_dev, held.st_ino):
+                raise ValueError("process-log readback directory changed during verification")
