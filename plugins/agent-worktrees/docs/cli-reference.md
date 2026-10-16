@@ -574,6 +574,12 @@ authorize caller-side git/session/mux reconstruction. The Manager explicitly
 requires `--current`, and incompatible engines report an upgrade error rather
 than dropping that requirement.
 
+An installed tmux binary with no running server is a healthy empty session
+inventory, not a failed probe. Its recognized no-server responses do not block
+current-roster publication or make session liveness unknown by themselves.
+Permission errors, timeouts, missing executables and other probe failures remain
+unavailable evidence; they are never treated as proof that sessions are gone.
+
 Responses include complete generation/revision/count provenance. A failed
 producer preserves last-good rows with explicit stale availability. An
 unreachable or incompatible resident permits only independently indexed,
@@ -740,6 +746,42 @@ removes the settings).
 > Manager owns `~/.tmux.conf` or `~/.psmux.conf`.
 
 
+## Claim handoff locality
+
+Every handoff actor must match its receiving project's exact tracking record,
+actual execution platform and absolute checkout namespace, including same-name
+native records with an unscoped machine registry. Mixed historical/current
+producer references use full-record locality at admission and acceptance;
+stored references and producer metadata are not relabeled.
+
+An accepted bundle can finish or retry from its consumer and child records
+without requiring a retired source ledger or acquiring a new cross-machine
+fence. Receiving-side identity, platform, namespace and artifact checks still
+apply; acceptance does not authorize a foreign execution space.
+Before releasing source claims, the transaction persists child-specific
+`source_owner_refs` for validated source aliases. This optional version-1
+metadata survives local/remote serialization and is used only for accepted
+completion of those exact children. Older bundles still support exact source
+references; an alias-only retry without either the source ledger or durable
+proof fails explicitly rather than guessing equivalence.
+
+## Remote launch options
+
+Machine-targeted JSON and interactive resolve use the same option policy.
+Ordinary remote plans preserve resume opt-outs (`--no-resume`,
+`--no-fast-forward`), bare/restore mode, dry-run, recovery, projection/seed
+deferral, bridge kind, profile and parent/caller lineage. Valued arguments are
+quoted for the target's declared shell. JSON's internal direct-launch setting
+does not disable remote multiplexing: `--target-no-mux` is the explicit override.
+
+Cross-space `--owner-ref` creation and raw Copilot arguments are unsupported and
+refused before a remote plan is emitted; invoke those operations on the target.
+Structured remote prompt admission supports its New/Resume selector and mux
+choice only (queued seed staging is intrinsic). Additional behavior options
+are rejected before SSH rather than omitted from the request. Staged seed IDs
+and launch-request admission/status options remain target-local, not selectors
+to forward through `--machine`.
+
 ## Keeping worktrees current
 
 The picker keeps idle worktrees aligned with the default branch, fast-forward
@@ -801,6 +843,23 @@ on a cadence at two natural lifecycle boundaries -- **picker launch** and
 | `get` | Query config values (e.g., `agent-worktrees get repo-dir`) |
 
 ### `update` results: exit codes, events, and status
+
+Required payload acquisition is a barrier before the engine's runtime work:
+if its own payload refresh or an active/activation-unknown target refresh
+fails, the engine returns that failure without running runtime installers,
+anchor synchronization, pruning or local command/profile finishing. Successfully
+refreshed payloads remain available for a retry; the error names the cause and
+asks the caller to resolve it and retry `update`. Inactive inventory failures
+remain advisory.
+
+The engine collects the logical target selection before acquisition, refreshes
+its own payload once, and attempts required registered payloads before inactive
+inventory. A required failure stops remaining payload attempts immediately;
+retired inactive payloads are not removed until acquisition succeeds. The summary
+distinguishes attempted failures from remaining targets that were not attempted.
+This does not persist a resumable runtime plan or add automatic retry. The
+barrier does not make the existing combined installers prepare-only or undo
+Manager's earlier self-update.
 
 `update` (and `worktree-manager update`, which drives it) records each run
 through the shared [`update-telemetry`](../../../libs/update-telemetry/README.md)

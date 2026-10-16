@@ -76,6 +76,12 @@ class _SessionResumeMixin:
         async with session._lifecycle_lock:
             from .acquisition_gates import assert_resume_allowed
             assert_resume_allowed(self._db, session)
+            if self._db.execute_read(
+                "SELECT 1 FROM provider_embodiments WHERE session_id=? LIMIT 1",
+                (session_id,),
+            ):
+                # Creation identity survives an interrupted acknowledgement too.
+                allow_recreate = False
             core = _core()
             if session.status != SessionStatus.STOPPED:
                 raise ValueError(
@@ -168,7 +174,8 @@ class _SessionResumeMixin:
                             await asyncio.wait_for(
                                 client.load_session(
                                     cwd=(
-                                        session.target.cwd
+                                        _venue_workspace_cwd(session.target)
+                                        or session.target.cwd
                                         or _default_cwd(session.target)
                                     ),
                                     session_id=session.acp_session_id,
@@ -181,7 +188,8 @@ class _SessionResumeMixin:
                             resumed_acp_id = await asyncio.wait_for(
                                 client.new_session(
                                     cwd=(
-                                        session.target.cwd
+                                        _venue_workspace_cwd(session.target)
+                                        or session.target.cwd
                                         or _default_cwd(session.target)
                                     ),
                                     mcp_servers=session.mcp_servers,

@@ -7,7 +7,6 @@ import datetime
 import json
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -370,77 +369,6 @@ def _daemon_launch_argv() -> list[str]:
     return ["agent-bridge", "start"]
 
 
-def _spawn_via_wmi_broker_pid(argv: list[str]) -> int | None:
-    """Launch the daemon through WMI ``Win32_Process.Create``.
-
-    The WMI-created process inherits the WMI provider's environment rather than
-    the caller's, so the install/config root overrides are set explicitly.
-    """
-    import base64
-    import subprocess as _sp
-
-    core = _core()
-    root = os.path.abspath(core._INSTALL_DIR)
-    log = os.path.join(root, "agent-bridge.log")
-    err = os.path.join(root, "agent-bridge-err.log")
-    env = "".join(f'set "{name}={value}" && ' for name, value in _daemon_root_env().items())
-    inner = env + " ".join(f'"{a}"' for a in argv) + f' >> "{log}" 2>> "{err}"'
-    cmdline = f'conhost.exe --headless cmd.exe /c "{inner}"'
-    ps_cmdline = cmdline.replace("'", "''")
-    ps_cwd = root.replace("'", "''")
-    ps = (
-        "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create "
-        f"-Arguments @{{ CommandLine = '{ps_cmdline}'; "
-        f"CurrentDirectory = '{ps_cwd}' }}; "
-        "if ($r.ReturnValue -eq 0) { "
-        "[Console]::Out.WriteLine([int]$r.ProcessId) }; "
-        "exit [int]$r.ReturnValue"
-    )
-    encoded = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
-    try:
-        out = _sp.run(
-            [_powershell_host(), "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            **core.no_window_kwargs(),
-        )
-        if out.returncode != 0:
-            return None
-        try:
-            pid = int((out.stdout or "").strip())
-        except (TypeError, ValueError):
-            return None
-        return pid if pid > 0 else None
-    except (OSError, _sp.TimeoutExpired):
-        return None
-
-
-def _spawn_via_wmi_broker(argv: list[str]) -> bool:
-    return _spawn_via_wmi_broker_pid(argv) is not None
-
-
-class _BrokeredProcessHandle:
-    def __init__(self, pid: int):
-        self.pid = pid
-
-    def poll(self) -> int | None:
-        from .session_host.osutil import pid_alive
-
-        return None if pid_alive(self.pid) else 0
-
-    def terminate(self) -> None:
-        core = _core()
-        subprocess.run(
-            ["taskkill", "/PID", str(self.pid), "/T", "/F"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-            **core.no_window_kwargs(),
-        )
-
-
 def _daemon_root_env() -> dict[str, str]:
     """Anchor caller-relative install/config root overrides for the child.
 
@@ -467,49 +395,46 @@ def _launch_bridge_daemon(argv: list[str], *, display: str, contained_last_resor
     accepts a daemon that dies with its Job (``contained_last_resort``), is it
     started inside the Job; otherwise the launch failure is raised.
     """
-    from agent_procutil import DaemonSpawnError
-
     core = _core()
     root = os.path.abspath(core._INSTALL_DIR)
     os.makedirs(root, exist_ok=True)
+    environment = _daemon_root_env()
+    if (
+        argv and os.name == "nt" and os.path.isabs(argv[0])
+        and os.path.basename(argv[0]).lower() in ("python.exe", "pythonw.exe")
+    ):
+        from agent_procutil import direct_python
+
+        python, extra_env = direct_python(argv[0])
+        argv = [python, *argv[1:]]
+        environment.update(extra_env)
     launch = {
         "cwd": root,
         "log_path": os.path.join(root, "agent-bridge.log"),
         "stderr_log_path": os.path.join(root, "agent-bridge-err.log"),
-        "env_overrides": _daemon_root_env(),
+        "env_overrides": environment,
         "console_children": True,
     }
-    try:
-        return core.spawn_daemon(argv, display=display, **launch)
-    except DaemonSpawnError:
-        if sys.platform != "win32":
-            raise
-        pid = core._spawn_via_wmi_broker_pid(argv)
-        if pid is not None:
-            return _BrokeredProcessHandle(pid)
-        if not contained_last_resort:
-            raise
     return core.spawn_daemon(
-        argv,
-        breakaway=False,
-        display=f"{display} (contained: breakaway denied and the WMI broker failed)",
-        **launch,
+        argv, display=display, contained_fallback=contained_last_resort, **launch,
     )
 
 
-def _spawn_detached_argv(argv: list[str]) -> None:
-    """Spawn ``argv`` as a detached, job-surviving bridge process.
+def _spawn_detached_argv(argv: list[str]):
+    """Spawn ``argv`` as a detached, job-surviving bridge process; return its handle.
 
     Never the caller's ambient cwd: this is a long-lived supervised daemon that
     may outlive whatever checkout the caller ran from, so it is rooted at the
     durable install dir where its logs also live.
     """
-    _launch_bridge_daemon(argv, display="agent-bridge service", contained_last_resort=True)
+    return _launch_bridge_daemon(
+        argv, display="agent-bridge service", contained_last_resort=True
+    )
 
 
-def _spawn_detached_daemon() -> None:
+def _spawn_detached_daemon():
     """Spawn ``agent-bridge start`` through the job-surviving launch path."""
-    _spawn_detached_argv(_daemon_launch_argv())
+    return _spawn_detached_argv(_daemon_launch_argv())
 
 
 def _spawn_watchdog_replacement(
@@ -694,7 +619,25 @@ def _ensure_daemon() -> bool:
             core._release_ensure_lock(fd)
 
 
-def _service_start() -> None:
+def _record_started_pid(handle) -> None:
+    """Record the actual daemon's pid for direct and brokered starts alike."""
+    if handle is None:
+        return
+    try:
+        with open(_core()._PID_FILE, "w", encoding="utf-8") as fh:
+            fh.write(str(handle.pid))
+    except OSError:
+        pass
+
+
+def _service_start(direct: bool = False) -> None:
+    """Start the daemon, through the platform service manager when one is registered.
+
+    ``direct`` skips systemd and the scheduled task -- for an installer that has
+    already tried them -- and starts the daemon through the strict job-surviving
+    ``spawn_daemon`` launch (never inside the caller's Job); it exits non-zero
+    when that launch is impossible or the daemon does not become healthy.
+    """
     import subprocess as sp
 
     core = _core()
@@ -707,13 +650,30 @@ def _service_start() -> None:
             "forward (active.json) that is not answering; not starting a local "
             "daemon over it",
         )
+        if direct:
+            sys.exit(1)
         return
     if core._reconcile_live_dynamic_daemon():
         print(f"[OK] agent-bridge recovered dynamic route (port {core._service_port()})")
         return
 
     used_platform_manager = False
-    if core._systemd_available():
+    if direct:
+        from agent_procutil import DaemonSpawnError
+
+        # Strict: a daemon started inside the caller's Job would die with it,
+        # so when breakaway and the WMI broker both fail this start fails.
+        try:
+            handle = core._launch_bridge_daemon(
+                core._daemon_launch_argv(),
+                display="agent-bridge service",
+                contained_last_resort=False,
+            )
+        except DaemonSpawnError as exc:
+            print(f"[FAIL] agent-bridge: {exc}", file=sys.stderr)
+            sys.exit(1)
+        _record_started_pid(handle)
+    elif core._systemd_available():
         sp.run(["systemctl", "--user", "start", core._SYSTEMD_UNIT])
         used_platform_manager = True
     elif sys.platform == "win32" and core._win_task_exists():
@@ -739,6 +699,8 @@ def _service_start() -> None:
         "agent-bridge-err.log",
         file=sys.stderr,
     )
+    if direct:
+        sys.exit(1)
 
 
 def _service_stop() -> None:
@@ -822,7 +784,10 @@ def _cmd_service(
     if conditional is not None and action != "restart":
         raise ValueError("conditional service operation only supports restart")
     if action == "start":
-        core._service_start()
+        if getattr(args, "direct", False):
+            core._service_start(direct=True)
+        else:
+            core._service_start()
     elif action == "stop":
         core._service_stop()
     elif action == "restart":
@@ -865,6 +830,16 @@ def register_service_control_commands(sub: argparse._SubParsersAction) -> None:
         ("status", "Show daemon status, port, and PID"),
     ):
         action_p = service_sub.add_parser(_act, help=_help)
+        if _act == "start":
+            action_p.add_argument(
+                "--direct",
+                action="store_true",
+                help=(
+                    "Skip systemd/the scheduled task and start the daemon through the "
+                    "job-surviving detached launch (for installers that already tried "
+                    "them); exits non-zero if it does not become healthy"
+                ),
+            )
         if _act == "restart":
             # Same flags as `venue deploy` -- `restart` calls _cmd_deploy
             # directly, via the shared registration helper so the two never

@@ -1784,6 +1784,9 @@ deploy_package() {
     # remote_login_shell, copilot-extensions#5207). Same materialized-release
     # guard as zdd above.
     local remote_login_shell_dir="$PLUGIN_DIR/libs/remote-login-shell"
+    if [[ ! -f "$remote_login_shell_dir/pyproject.toml" ]]; then
+        remote_login_shell_dir="$(cd "$PLUGIN_DIR/../.." && pwd)/libs/remote-login-shell"
+    fi
     if [[ -f "$remote_login_shell_dir/pyproject.toml" ]]; then
         if ! "$VENV_PYTHON" -I "$SCRIPT_DIR/installer_dependency_policy.py" --uv uv -- --python "$VENV_PYTHON" --reinstall-package agent-remote-login-shell \
                 "$remote_login_shell_dir" --quiet; then
@@ -1793,10 +1796,13 @@ deploy_package() {
     fi
 
     # Vendored machine-transport lib (agent-machine-transport / module
-    # machine_transport). Same materialized-release guard as
-    # remote-login-shell above -- installed after it since machine-transport
-    # itself depends on remote-login-shell.
+    # machine_transport); local release payload or canonical dev source.
+    # Installed after remote-login-shell since machine-transport itself
+    # depends on remote-login-shell.
     local machine_transport_dir="$PLUGIN_DIR/libs/machine-transport"
+    if [[ ! -f "$machine_transport_dir/pyproject.toml" ]]; then
+        machine_transport_dir="$(cd "$PLUGIN_DIR/../.." && pwd)/libs/machine-transport"
+    fi
     if [[ -f "$machine_transport_dir/pyproject.toml" ]]; then
         if ! "$VENV_PYTHON" -I "$SCRIPT_DIR/installer_dependency_policy.py" --uv uv -- --python "$VENV_PYTHON" --reinstall-package agent-machine-transport \
                 "$machine_transport_dir" --quiet; then
@@ -2168,6 +2174,9 @@ reconcile_binstubs() {
     # for every registered project and remove signature-matched stubs for
     # deregistered ones. Delegates to the Python implementation (single,
     # cross-platform source of truth) so it runs regardless of project context.
+    if [[ "${AGENT_WORKTREES_DEFER_LOCAL_INTEGRATION:-}" == "1" ]]; then
+        return 0
+    fi
     if [[ ! -x "$VENV_PYTHON" ]]; then
         return 0
     fi

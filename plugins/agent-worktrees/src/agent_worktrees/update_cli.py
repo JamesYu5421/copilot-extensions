@@ -6,19 +6,20 @@ import argparse
 import json
 import os
 import platform
-import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from . import config as cfg
-from . import installer as inst, output, services as svc
+from . import output, services as svc
 from . import picker_profiles_cli, services_cli
-from . import update_events as _events, update_options
+from . import update_events as _events, update_options, update_runtime_plan, update_acquisition
 from . import worktree_identity
 from .update_runtime import describe_copilot_spawn_error as _describe_copilot_spawn_error
-from .update_runtime import _installer_timeout, _run_engine_installer, installer_deadline_status
+from .update_runtime import (  # noqa: F401 - compatibility seams used by the plan collector
+    _installer_timeout, _run_engine_installer, installer_deadline_status,
+)
 
 
 def _core():
@@ -233,67 +234,58 @@ def _cmd_update_in_plugin(args: argparse.Namespace) -> int:
     Records the run's phases/targets through ``update_events`` and returns an
     exit code from the shared table (0 success, non-zero failure classes).
     """
-    _events.start("engine")
-    try:
-        rc = _update_in_plugin_steps(args)
-    except BaseException as exc:
-        _events.finish(None, exc)
-        raise
-    return _events.finish(rc)
+    with output.human_operation("update/engine") as human:
+        _events.start("engine")
+        try:
+            rc = _update_in_plugin_steps(args)
+        except BaseException as exc:
+            _events.finish(None, exc)
+            raise
+        rc = _events.finish(rc)
+        if human is not None:
+            human.complete("done" if rc == 0 else "failed", f"exit {rc}")
+        return rc
 
 
 def _update_in_plugin_steps(args: argparse.Namespace) -> int:
-    output.header("Updating Agent Worktrees")
-
     if getattr(args, "recreate_venv", False):
         output.warn(
             "--recreate-venv is not supported by the plugin-based "
             "update flow; use 'agent-worktrees install' instead"
         )
 
+    registered_targets = dict(_core_helper(
+        "_registered_plugin_targets", _registered_plugin_targets
+    )())
     plugin_ref = "agent-worktrees@copilot-extensions"
     _events.enter("payload_refresh")
     output.info(f"Updating plugin: {plugin_ref}")
-    payloads_ok, payload_status = True, "OK"
     update_context = _core_helper(
         "_invocation_update_context", _invocation_update_context
     )() or _core_helper("_project_update_context", _project_update_context)()
-    try:
-        r = subprocess.run(
-            [_resolve_copilot() or "copilot", "plugin", "update", plugin_ref],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            cwd=update_context,
-        )
-        if r.returncode == 0:
-            for line in r.stdout.strip().splitlines():
-                output.ok(line)
-        else:
-            detail = "\n".join(x for x in [r.stdout.strip(), r.stderr.strip()] if x)
-            output.warn(f"Plugin update returned non-zero:\n{detail}")
-            payloads_ok, payload_status = (
-                False, f"plugin update failed: {_events.bounded(detail, 200, tail=True)}"
-            )
-    except OSError as exc:
-        message = _describe_copilot_spawn_error(exc, cwd=update_context)
-        output.warn(f"{message} -- skipping plugin update")
-        payloads_ok, payload_status = False, f"plugin update failed: {message}"
-    except subprocess.TimeoutExpired:
-        output.warn("Plugin update timed out -- continuing with installed version")
-        payloads_ok, payload_status = False, "timed out"
+    payload_status = update_acquisition.acquire(
+        "agent-worktrees", "copilot-extensions", _resolve_copilot() or "copilot",
+        cwd=update_context, engine=True,
+    )
+    payloads_ok = payload_status.startswith("OK")
     _events.record("payload_refresh", plugin_ref, payload_status)
 
-    registered_targets = _core_helper(
-        "_registered_plugin_targets", _registered_plugin_targets
-    )()
     if (
-        _core_helper("_update_registered_plugins", _update_registered_plugins)(
-            registered_targets
+        payloads_ok
+        and _core_helper("_update_registered_plugins", _update_registered_plugins)(
+            {name: target for name, target in registered_targets.items()
+             if name != "agent-worktrees"}
         )
         is False
     ):
         payloads_ok = False
+
+    if not payloads_ok:
+        output.err(
+            "Required payload acquisition failed; no runtime installers or local "
+            "integration will run. Resolve the reported failure and retry update."
+        )
+        return 1
 
     plugin_dir = _core_helper("_find_installed_plugin_dir", _find_installed_plugin_dir)()
     if not plugin_dir:
@@ -303,101 +295,69 @@ def _update_in_plugin_steps(args: argparse.Namespace) -> int:
         return 1
 
     output.info(f"Plugin source: {plugin_dir}")
-    _events.enter("engine_runtime")
-    if not update_options.check_forced_runtimes(args, registered_targets, plugin_dir):
-        return 1
-
-    from . import reconcile as _reconcile
+    _events.enter("runtime_preflight")
 
     plat = cfg.detect_platform()
     force = getattr(args, "force", False)
     forced = update_options.forced_runtimes(args)
-    try:
-        aw_runtime_env, aw_runtime_root = _reconcile.runtime_installer_environment(
-            "agent-worktrees",
-            plugin_dir,
-        )
-    except ValueError as error:
-        output.err(f"Installation context invalid: {error}")
-        _events.record("engine_runtime", plugin_ref, f"installation context invalid: {error}")
-        return 1
-    aw_payload_ver = _reconcile.payload_version(plugin_dir)
-    aw_context_selected = "COPILOT_EXTENSIONS_CONTEXT" in aw_runtime_env
-    aw_deployed_ver = _reconcile.runtime_deployed_version("agent-worktrees", root=aw_runtime_root)
-    versions_equal = bool(aw_payload_ver and aw_payload_ver == aw_deployed_ver)
-    version_match = not (force or "agent-worktrees" in forced) and versions_equal
-    hooks_drifted = (
-        bool(version_match)
-        and not aw_context_selected
-        and _reconcile.hook_shims_drifted(plugin_dir)
+    skip_modules = getattr(args, "skip_modules", None)
+    engine_step = update_runtime_plan.plan_engine(
+        plugin_dir, plat, force=force or "agent-worktrees" in forced,
     )
-    if version_match and not hooks_drifted:
+    module_plan = update_runtime_plan.plan_modules(
+        plugin_dir, plat, skip_modules, force=force,
+        targets=registered_targets, force_runtimes=forced,
+    )
+    excluded = {step.name for step in module_plan} | {"agent-worktrees"}
+    if skip_modules:
+        excluded.update(skip_modules)
+    registered_plan = tuple(
+        update_runtime_plan.plan_registered(
+            name, plat, force=force or name in forced,
+            gate_context=target.context,
+        )
+        for name, target in sorted(registered_targets.items())
+        if target.required and name not in excluded
+        and not (skip_modules is not None and not skip_modules)
+    )
+    portfolio = (engine_step, *module_plan, *registered_plan)
+    if not update_options.check_forced_runtimes(
+        args, registered_targets, plugin_dir,
+        eligible={step.name for step in portfolio if step.eligible},
+        phase="runtime_preflight",
+    ):
+        return 1
+    blockers = [
+        step for step in portfolio
+        if step.required and step.blocked
+    ]
+    if blockers:
+        for step in blockers:
+            output.err(f"Runtime preflight: {step.name}: {step.status}")
+            _events.record("runtime_preflight", f"{step.name}@copilot-extensions", step.status)
+        output.err(
+            "Required runtime preflight failed; no runtime installers or local "
+            "integration will run. Resolve the reported blockers and retry update."
+        )
+        return 1
+
+    _events.enter("engine_runtime")
+    if engine_step.status:
         output.ok(
-            f"Runtime already at {aw_deployed_ver} -- skipping installer "
+            f"Runtime already at {engine_step.target_version} -- skipping installer "
             "(use --force to re-deploy)"
         )
         _events.record("engine_runtime", plugin_ref, "SKIPPED (current)", changed=False)
-        if plat == "windows":
-            _refresh_terminal_profiles()
     else:
-        if hooks_drifted:
-            output.warn(
-                f"Runtime already at {aw_deployed_ver}, but deployed hook shims "
-                "have drifted from the payload -- re-deploying (bin/ hook shims "
-                "deploy independently of the runtime version; dotfiles #1171)"
-            )
-        if plat == "windows":
-            installer = plugin_dir / "scripts" / "install.ps1"
-            shell = shutil.which("pwsh") or shutil.which("powershell")
-            if not shell:
-                output.err("PowerShell not found")
-                _events.record("engine_runtime", plugin_ref, "powershell not found")
-                return 1
-            argv = [
-                shell,
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(installer),
-                "update",
-                "-InstallDir",
-                str(aw_runtime_root),
-            ]
-        else:
-            installer = plugin_dir / "scripts" / "install.sh"
-            argv = [
-                "bash",
-                str(installer),
-                "update",
-                "--install-dir",
-                str(aw_runtime_root),
-            ]
-
-        if not installer.exists():
-            output.err(f"Installer not found: {installer}")
-            _events.record("engine_runtime", plugin_ref, "installer not found")
-            return 1
-
-        try:
-            installer_timeout = max(600, _installer_timeout("agent-worktrees", aw_runtime_env, plugin_dir))
-        except (OSError, ValueError) as error:
-            output.err(str(error))
-            _events.record("engine_runtime", plugin_ref, installer_deadline_status(error))
-            return 1
-        rc = _run_engine_installer(argv, plugin_dir, installer_timeout, aw_runtime_env)
+        rc = _run_engine_installer(
+            list(engine_step.argv), plugin_dir, engine_step.deadline_s,
+            engine_step.environment, runtime_root=engine_step.runtime_root,
+            target_version=engine_step.target_version,
+        )
         if rc != 0:
             return rc
 
-    _events.enter("binstubs")
-    try:
-        inst.reconcile_binstubs()
-    except Exception as e:
-        output.warn(f"Binstub reconcile skipped: {e}")
-        _events.record("binstubs", "binstubs", f"binstub reconcile failed: {e}", required=False)
-
     _events.enter("module_update")
-    skip_modules = getattr(args, "skip_modules", None)
     runtimes_ok = True
     if (
         _core_helper("_update_modules", _update_modules)(
@@ -407,6 +367,7 @@ def _update_in_plugin_steps(args: argparse.Namespace) -> int:
             force=force,
             targets=registered_targets,
             force_runtimes=forced,
+            plan=module_plan,
         )
         is False
     ):
@@ -421,6 +382,7 @@ def _update_in_plugin_steps(args: argparse.Namespace) -> int:
             force=force,
             targets=registered_targets,
             force_runtimes=forced,
+            plan=registered_plan,
         )
         is False
     ):
@@ -434,7 +396,10 @@ def _update_in_plugin_steps(args: argparse.Namespace) -> int:
         _events.enter("prune")
         _core_helper("_prune_stale_pivots_after_update", _prune_stale_pivots_after_update)()
 
-    return 0 if payloads_ok and runtimes_ok else 1
+    from .update_integration import finish
+
+    integration_ok = finish(plugin_dir, plat, dict(engine_step.environment))
+    return 0 if payloads_ok and runtimes_ok and integration_ok else 1
 
 
 def _prune_stale_pivots_after_update() -> None:
@@ -595,74 +560,9 @@ def _uninstall_one_plugin_payload(name: str, marketplace: str, *, cwd: Path | No
 
 def _update_one_plugin_payload(name: str, marketplace: str, *, cwd: Path | None = None) -> str:
     """Update (or install) a single copilot-extensions plugin payload."""
-    from . import reconcile
-    from .activation_preservation import (
-        PluginStateError,
-        run_install_preserving_activation,
+    return update_acquisition.acquire(
+        name, marketplace, _resolve_copilot() or "copilot", cwd=cwd,
     )
-
-    ref = f"{name}@{marketplace}"
-    installed = reconcile.core_installed_payload_dir(name) is not None
-    verb = "update" if installed else "install"
-    copilot = _resolve_copilot() or "copilot"
-
-    def _run(selected_verb: str):
-        argv = [copilot, "plugin", selected_verb, ref]
-        kwargs = {
-            "capture_output": True,
-            "text": True,
-            "timeout": 120,
-            "cwd": cwd,
-        }
-        if selected_verb == "install":
-            return run_install_preserving_activation(argv, ref, **kwargs)
-        return subprocess.run(argv, **kwargs)
-
-    try:
-        r = _run(verb)
-    except OSError as exc:
-        message = _describe_copilot_spawn_error(exc, cwd=cwd)
-        output.warn(f"{message} -- skipping plugin payload update")
-        return message
-    except PluginStateError as exc:
-        output.warn(f"Plugin state for {name} could not be preserved: {exc}")
-        return f"plugin state error: {exc}"
-    except subprocess.TimeoutExpired:
-        output.warn(f"Plugin {verb} for {name} timed out -- continuing")
-        return "timed out"
-
-    if r.returncode == 0:
-        for line in r.stdout.strip().splitlines():
-            output.ok(line)
-        return "OK" if installed else "OK (installed)"
-
-    if installed:
-        output.info(f"Plugin update for {name} returned non-zero -- retrying with install")
-    else:
-        output.info(f"Plugin install for {name} returned non-zero -- retrying")
-    try:
-        r2 = _run("install")
-    except subprocess.TimeoutExpired:
-        output.warn(f"Plugin install retry for {name} timed out")
-        return "timed out"
-    except (FileNotFoundError, PluginStateError) as exc:
-        output.warn(f"Plugin install retry for {name} failed: {exc}")
-        if isinstance(exc, PluginStateError):
-            return f"plugin state error: {exc}"
-        return _describe_copilot_spawn_error(exc, cwd=cwd)
-    if r2.returncode == 0:
-        for line in r2.stdout.strip().splitlines():
-            output.ok(line)
-        return "OK (installed)"
-    if installed:
-        output.warn(
-            f"Plugin update for {name} returned non-zero (continuing with installed version)"
-        )
-        return f"update exited {r.returncode}"
-    else:
-        output.warn(f"Plugin install for {name} returned non-zero")
-    detail = "\n".join(x for x in [r2.stdout.strip(), r2.stderr.strip()] if x)
-    return detail or f"plugin install exited {r2.returncode}"
 
 
 from . import update_runtime

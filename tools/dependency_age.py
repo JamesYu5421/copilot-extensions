@@ -29,6 +29,7 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 from seasoned_public_feed import DEFAULT_MIN_AGE_DAYS, _default_fetch
+from standalone_consumers import local_dependency_source
 
 MIN_AGE_SECONDS = DEFAULT_MIN_AGE_DAYS * 86400
 
@@ -219,20 +220,52 @@ def _literal_repo_source(node: ast.AST) -> tuple[str, ...] | None:
     return None
 
 
+def _plugin_contract_sources(path: Path, root: Path) -> list[Path]:
+    runner = root / "tools" / "run-plugin-tests.py"
+    if not runner.is_file():
+        return []
+    tree = ast.parse(contained_path(runner, root).read_text(encoding="utf-8"))
+    prepare = next((node for node in tree.body
+                    if isinstance(node, ast.FunctionDef) and node.name == "_ensure_venv"), None)
+    sources = []
+    for branch in ast.walk(prepare) if prepare is not None else ():
+        condition = branch.test if isinstance(branch, ast.If) else None
+        if (isinstance(condition, ast.Compare) and isinstance(condition.left, ast.Name)
+                and condition.left.id == "name" and len(condition.ops) == 1
+                and isinstance(condition.ops[0], ast.Eq) and len(condition.comparators) == 1
+                and isinstance(condition.comparators[0], ast.Constant)
+                and type(condition.comparators[0].value) is str
+                and path.parent == root / "plugins" / condition.comparators[0].value):
+            for statement in branch.body:
+                call = statement.value if isinstance(statement, ast.Expr) else None
+                if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                        and isinstance(call.func.value, ast.Name) and call.func.value.id == "cmd"
+                        and call.func.attr == "extend" and len(call.args) == 1
+                        and isinstance(call.args[0], ast.List)):
+                    values = call.args[0].elts
+                    if len(values) == 2 and isinstance(values[0], ast.Constant) and values[0].value == "-e":
+                        parts = _literal_repo_source(values[1])
+                        if parts is not None:
+                            sources.append(root.joinpath(*parts) / "pyproject.toml")
+    return sources
+
+
 def contract_source(req: Requirement, path: Path, projects: dict[Path, dict], root: Path) -> Path | None:
     """Attribute existing first-party source installs without changing UV packaging.
 
-    Standalone tests explicitly supply canonical path sources where published
-    service metadata intentionally has no UV pointer. Extract those literal
-    paths from the registered consumer's prepare branch, never a package-name
-    whitelist. The nested engine's installers explicitly preinstall its parent
-    package on both platforms. Canonical inventory supplies each external
+    Test runners explicitly supply canonical path sources where published
+    metadata intentionally has no UV pointer. Extract those literal
+    paths from the exact consumer's prepare branch, never a package-name
+    whitelist. Declared dependencies also follow that selected project's own
+    validated path mappings, not a replacement canonical source. The nested
+    engine's installers explicitly preinstall its parent package on both
+    platforms. Canonical inventory supplies each external
     closure; absence, replacement or drift of this evidence revokes exemption.
     """
     consumer = path.parent.relative_to(root).as_posix()
     runner = root / "tools" / "run-standalone-tests.py"
     registry = root / "tools" / "standalone_consumers.py"
-    sources = []
+    sources = _plugin_contract_sources(path, root)
     if runner.is_file() and registry.is_file():
         registry_tree = ast.parse(contained_path(registry, root).read_text(encoding="utf-8"))
         consumers = next((
@@ -290,11 +323,24 @@ def contract_source(req: Requirement, path: Path, projects: dict[Path, dict], ro
         if not source.is_file():
             raise DeclarationError("source contract points to a missing project")
         source_data = projects.get(source) or _toml(source)
-        if canonicalize_name(source_data.get("project", {}).get("name", "")) != canonicalize_name(req.name):
-            continue
         if source not in projects:
             raise DeclarationError("source contract does not point to an inventoried canonical project")
-        return source
+        if canonicalize_name(source_data.get("project", {}).get("name", "")) == canonicalize_name(req.name):
+            return source
+        dependencies = source_data.get("project", {}).get("dependencies", [])
+        mappings = source_data.get("tool", {}).get("uv", {}).get("sources", {})
+        if (
+            not any(canonicalize_name(Requirement(value).name) == canonicalize_name(req.name)
+                    for value in dependencies)
+            or not any(canonicalize_name(name) == canonicalize_name(req.name) for name in mappings)
+        ):
+            continue
+        try:
+            selected = local_dependency_source(source.parent, req.name, source_root=root)
+        except ValueError as exc:
+            raise DeclarationError("source contract dependency mapping is invalid") from exc
+        attributed_project(req, selected, projects, root)
+        return contained_path(selected / "pyproject.toml", root)
     return None
 
 

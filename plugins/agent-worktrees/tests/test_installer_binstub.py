@@ -328,9 +328,13 @@ def test_wsl_binstub_routes_through_tool_binstub_not_retired_launcher():
 
 
 def _reg(monkeypatch, names: list[str]) -> None:
+    snapshot = {"projects": {n: {} for n in names}}
+    path = inst.projects_yaml_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
     monkeypatch.setattr(
         inst, "read_projects_registry",
-        lambda: {"projects": {n: {} for n in names}},
+        lambda **_kwargs: snapshot,
     )
 
 
@@ -362,7 +366,7 @@ def test_reconcile_adds_registered_and_removes_stale(monkeypatch, tmp_path: Path
     assert any("staleproj" in r for r in result["removed"])
 
 
-def test_reconcile_migrates_matching_legacy_unreceipted_stub(
+def test_reconcile_preserves_signature_only_legacy_unreceipted_stub(
     monkeypatch, tmp_path: Path
 ):
     lb = tmp_path / "bin"
@@ -397,12 +401,12 @@ def test_reconcile_migrates_matching_legacy_unreceipted_stub(
 
     result = inst.reconcile_binstubs()
 
-    assert result["migrated"] == ["demo"]
-    assert inst._read_receipt("demo") is not None
+    assert result["migrated"] == []
+    assert result["blocked"] == ["demo"]
+    assert inst._read_receipt("demo") is None
     for target, _content in specs:
         deployed = target.read_text(encoding="utf-8")
-        assert "agent-worktrees project binstub" in deployed
-        assert "WORKTREE_PROJECT" not in deployed
+        assert "WORKTREE_PROJECT" in deployed
 
 
 def test_reconcile_preserves_legacy_stub_for_different_project(
@@ -697,11 +701,11 @@ def test_registration_serializes_shared_registries_before_project(
             events.append(f"release:{name}")
 
     monkeypatch.setattr(inst, "_binstub_lock", _lock)
-    monkeypatch.setattr(
-        inst,
-        "_project_binstub_context",
-        lambda *args, **kwargs: events.append("preflight"),
-    )
+    def _preflight(*args, **kwargs):
+        events.append("preflight")
+        return {}, {}, [], None
+
+    monkeypatch.setattr(inst, "_project_binstub_context", _preflight)
     monkeypatch.setattr(
         inst,
         "_deploy_project_binstub_unlocked",
@@ -750,10 +754,9 @@ def test_reconcile_preserves_modified_receipt_owned_stub(monkeypatch, tmp_path: 
 
     assert target.exists()
     assert target.read_text(encoding="utf-8") == "modified\n"
-    expected_removed = [
-        str(path) for path, _ in inst._project_binstub_specs("demo")[1:]
-    ]
-    assert set(result["removed"]) == set(expected_removed)
+    assert result["removed"] == []
+    assert result["preserved"] == ["demo"]
+    assert all(path.exists() for path, _ in inst._project_binstub_specs("demo"))
 
 
 def test_explicit_transfer_replaces_other_owner(monkeypatch, tmp_path: Path):

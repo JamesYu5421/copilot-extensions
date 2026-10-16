@@ -26,7 +26,10 @@ def test_legacy_stdio_dependency_is_not_part_of_host_profile():
     assert extras["stdio-mcp"] == ["mcp>=2.0,<3.0"]
     for dependencies in (project["dependencies"], extras["store"], extras["server"]):
         assert not any(value.startswith("mcp") for value in dependencies)
-    assert "agent-index[store,server,stdio-mcp]" in extras["dev"]
+    assert "agent-index[store,server,stdio-mcp,fleet]" in extras["dev"]
+    assert extras["fleet"] == ["fleet-manager[auth]>=0.1.0.dev1"]
+    for dependencies in (project["dependencies"], extras["store"], extras["server"]):
+        assert not any(value.startswith("fleet-manager") for value in dependencies)
 
 
 @pytest.mark.parametrize("role", ["host", "client", "unconfigured"])
@@ -224,14 +227,17 @@ def test_default_durable_autostart_stays_unprivileged_and_tasks_remain_opt_in():
     ps = (PLUGIN / "scripts" / "install.ps1").read_text(encoding="utf-8")
     sh = (PLUGIN / "scripts" / "install.sh").read_text(encoding="utf-8")
 
-    start_fn = ps.split("function Start-LauncherDetached {", 1)[1].split(
-        "\nfunction Install-LogonAutostartEntry {", 1
-    )[0]
     autostart_fn = ps.split("function Install-LogonAutostartEntry {", 1)[1].split(
         "\nfunction Install-LogonAutostart {", 1
     )[0]
     assert "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" in ps
-    assert "Start-Process -FilePath 'conhost.exe'" in start_fn
+    # Start-now goes through the user-mode ensure path (spawn_daemon), never a
+    # PowerShell process launch that would stay inside the installer's Job.
+    assert "function Start-LauncherDetached" not in ps
+    assert "& $Ensure" in autostart_fn
+    assert "Start-Process" not in autostart_fn
+    assert "-Ensure { Ensure-ServiceRunning }" in ps
+    assert "-Ensure { Ensure-EngineRunning }" in ps
     assert "Invoke-ScopedElevation" not in autostart_fn
     assert "Get-ScheduledTask -TaskName $ScheduledTaskName" in autostart_fn
     assert "Remove-LogonAutostart -Name $Name" in autostart_fn

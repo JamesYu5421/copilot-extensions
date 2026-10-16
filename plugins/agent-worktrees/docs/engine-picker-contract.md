@@ -20,6 +20,9 @@ Structured admission/status accepts only its protocol options and `--json`;
 ordinary resolve selectors, modifiers and positional Copilot arguments are
 rejected before reading or mutating target launch state. Exactly one nonempty
 protocol option is required; an empty value never enters ordinary resolve.
+Nonprotocol modifiers, including `--machine`, use the same structured
+launch-request error envelope and exit status 3 for both admission and status;
+they never enter ordinary or remote machine resolution.
 
 The target's existing tracking-write daemon owns admission and seed staging.
 Admission retains a text-free fingerprint and allocated worktree/intent IDs
@@ -138,8 +141,14 @@ Relay error frames carry `error.code`, `error.message` and Boolean
 timeouts, malformed transactions, incompatible capabilities and authentication
 failures are terminal for that load. The Manager retains labeled last-good
 rows but stops automatic CLI respawn for terminal errors until an explicit
-reload. Its own publication/heartbeat watchdog is terminal too. Neither
-classification authorizes daemon restart or caller-side fact computation.
+reload. The Manager separates its existing bounded source process/SSH startup
+budget (20 seconds by default) from two-second snapshot/update publication
+and five-second idle heartbeat deadlines. Only an admitted `begin` or `update`
+starts the transaction deadline; intermediate frames cannot extend it.
+Its own transient transport watchdog expiry permits cancellable reconnect
+with bounded backoff and visible failed/stale state. Explicit terminal peer
+errors remain terminal. Neither classification authorizes daemon restart,
+polling fallback or caller-side fact computation.
 
 Held projects remain demanded for the subscription lifetime; cancellation
 releases the subscription and resumes the ordinary bounded linger. Planned
