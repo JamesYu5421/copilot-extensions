@@ -1,9 +1,20 @@
 {
   "last_promotion": {
-    "dev_head": "fc61ab3aa44ac2b235ea540601127ff91129b81c",
-    "main_before": "ad7376904b0e622f7f44abf516cbef560b322f36",
-    "promoted_at": "2026-10-16T06:19:44Z",
-    "tag": "promote-20261016061944"
+    "control_preserved": {
+      "files": {
+        ".github/promotion-control.json": "5c1f0e6e60905d53b94db8a438b9a9db5a40beea",
+        ".github/workflows/base-branch-reminder.yml": "6fab6e5516a4f187ef8fdf06006faee0192887f5",
+        ".github/workflows/ci.yml": "2f8ec3cc1acd86b74a9578ce4381a80cfd583b02",
+        ".github/workflows/validate-and-promote.yml": "06e708be4a1678e9919fbb1b90f8a57922fdab05"
+      },
+      "main_head": "f1837c45e71ead77fe21f01227931f0d85d6786e",
+      "manifest_blob": "5c1f0e6e60905d53b94db8a438b9a9db5a40beea"
+    },
+    "dev_head": "40f3f51dac6b0e69124d51215a2b4371571394c1",
+    "main_before": "f1837c45e71ead77fe21f01227931f0d85d6786e",
+    "promoted_at": "2026-10-16T23:38:22Z",
+    "release_id": "40f3f51dac6b0e69124d51215a2b4371571394c1",
+    "tag": "promote-dev-40f3f51dac6b0e69124d51215a2b4371571394c1"
   },
   "last_rollback": null,
   "pause_reason": "Operator-approved containment until pre-merge qualification makes Main safe to consume (#6237)",

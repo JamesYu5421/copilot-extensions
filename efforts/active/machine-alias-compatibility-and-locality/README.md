@@ -7,7 +7,7 @@
 - **Status:** Active
 - **Vision:** `visions/plugins/agent-worktrees/README.md` (durable repository/worktree identity); `visions/agent-fabric/README.md` (shared identity authority)
 - **Umbrella issue:** #5674
-- **Related issues:** #5972 · #6170 · #6692 · #6739
+- **Related issues:** #5972 · #6170 · #6692 · #6739 · #6945 · #7057
 
 ## Guiding Intent
 
@@ -30,6 +30,8 @@ example, a source commit, or a merged individual pull request.
 | Windows validation | Native configuration, payload execution and installed launch/resume proof | Adopting host's configured native transport |
 | WSL validation | Guest configuration, historical records and installed launch/resume proof | Adopting host's configured guest transport |
 | Runtime readiness owner | Empty-mux current-roster and liveness prerequisite | Managed source `grimy-cylinder` |
+| Guest installation identity repair | Bounded #6945 proposal, shared identity repair and entry-path acceptance | Managed source `tinkling-toolbox` |
+| Explicit owner migration | Bounded #7057 report-first local ownership repair; owns its plan and implementation PRs only | Managed source `chugging-ratchet` |
 
 ## Coordination
 
@@ -45,6 +47,14 @@ example, a source commit, or a merged individual pull request.
   prerequisite, not its Dispatch, SSH, Index or Logger slices.
 - **Separate work:** Attribution-only blank update comments are tracked by
   #6815 and explicitly deferred until this repair is deployed.
+- **Containing rollout follow-up:** The #6945 owner takes only the declared
+  Phase 3b slice; the original repair, release qualification and wider
+  transport-convergence owners retain their responsibilities. The independent
+  #6947 installer and #6948 preview repairs do not become new ownership here.
+- **Explicit owner migration:** The #7057 participant owns only Phase 3c and its
+  validation. Existing campaign, release and installation owners remain intact.
+  The coordinator owns any separately authorized local application; source
+  implementation must not touch real records, topology, runtimes or services.
 
 ## Context
 
@@ -76,6 +86,28 @@ preferred name differ.
 The operator explicitly requested the effort retroactively and approved this
 slug. Public-safe request excerpts, with identifiers redacted but technical
 constraints retained, are in [inception-transcript.md](inception-transcript.md).
+
+**2026-10-16 continuation:** the operator confirmed a real launch after the
+released compatibility repair, then requested fixes for the discovered
+follow-ups. The designated worktree distro should be the host's default WSL.
+Guest addresses should follow a compact host/guest convention without another
+distribution suffix. Renaming the actual distro to match a logical guest name
+was suggested as an option, not ordered. The exact public-safe request is
+preserved in the request record.
+
+**Explicit owner-migration follow-up (public-safe verbatim excerpts; private
+identifiers and operational evidence REDACTED):**
+> "Implement upstream but also do locally to unblock since main promotion is held right now"
+>
+> "implement and land through dev PR a supported explicit provenance-checked local owner-machine migration for agent-worktrees, with report-first dry-run, exact old and new machine labels, safe authoritative locked writes and backup/audit, JSON, focused regression tests, docs + mandatory changefile."
+>
+> "Preserve IDs/paths (old name prefixes are historical identity not rename targets), sessions, head, titles, flags, lifecycle, PRs, claims semantics."
+>
+> "Account for embedded owner_refs/pair_refs/controller/resource references or refuse explicitly rather than leaving incoherent edges."
+
+Private topology, host labels, checkout paths and downstream context are
+redacted, not implementation inputs. One-time local application is explicitly
+authorized but separately coordinator-owned, not a release promotion or rollout.
 
 ## Plan
 
@@ -129,6 +161,47 @@ _(Agent-recommended prerequisite discovered while checking the requested live-da
 - [ ] Install the released repair through the unified update flow in both
   adopting environments; verify the selected running versions.
 
+### Phase 3b - Entry-path-independent guest installation identity
+- [x] Review the [#6945 guest-identity proposal](guest-execution-identity.md)
+  before introducing new registration or ownership behavior; #6993 merged
+  after exact-head approval and passing required checks.
+- [x] Establish one authoritative guest identity across direct, SSH and
+  supervised entry paths, preserving independent installation and execution
+  spaces; do not derive the caller from an incumbent ownership record.
+  The shared source contract landed in #7009; installed entry-path acceptance
+  remains part of the final Phase 3b gate below.
+- [x] Represent the designated/default WSL selection and compact host/guest
+  addressing through existing identity owners, without adding suffix chains
+  or a competing topology registry.
+  Source #7009 separates guest/default diagnostics from logical-address
+  authority; no OS default, distro name or existing record was changed.
+- [ ] Pass the proposal's same-guest, foreign-guest, default-drift and
+  cross-runner validation, then land, qualify, release and perform only
+  authorized installation/default-selection changes.
+
+### Phase 3c - Explicit provenance-checked local owner migration
+_(Agent-recommended integration details for the requested #7057 capability.)_
+- [ ] Review and merge this plan before implementation.
+- [ ] Add a dedicated public report-first CLI with exact old/new labels and
+  explicit apply, separate from ordinary `doctor --fix`. Require the new label
+  to be the receiving configured canonical execution-space key and platform;
+  reject alias/key ambiguity and arbitrary foreign takeovers.
+- [ ] Prove each selected record belongs to its registered receiving project,
+  platform and checkout namespace. Historical absent checkouts are eligible
+  only with sufficient independent provenance; never rename IDs or paths.
+- [ ] Scan canonical local project/repository relationships, including paired
+  knowledge repositories. Deliberately fence cross-project dependent references,
+  misplaced/duplicate records, claims, controller and resource references:
+  migrate coherently through the owning authority or refuse explicitly.
+- [ ] Reuse authoritative mutation/publication and tracking locks, validate
+  unchanged input under lock, retain original-byte backups and an audit report;
+  report partial/error outcomes honestly and make repeated apply idempotent.
+- [ ] Pass focused regressions, lint, install-contract and metadata/documentation
+  gates; add the agent-worktrees changefile and land through reviewed dev PR.
+- [ ] Transfer explicit one-time local application to the coordinator with the
+  retained clean source and public CLI commands. No runtime deployment, service
+  change, real-record repair or release promotion by this participant.
+
 ### Phase 4 - Installed acceptance and closure
 - [ ] Enumerate all registered projects and existing Windows/WSL worktrees;
   report removed checkouts separately from identity-resolution failures.
@@ -158,6 +231,15 @@ _(Agent-recommended prerequisite discovered while checking the requested live-da
   safety, documentation-impact review and required provider checks.
 - [ ] Verify released and installed behavior in both environments, preserving
   queued prompts, live sessions, historical strings and unrelated records.
+- [ ] Satisfy the [guest-identity validation matrix](guest-execution-identity.md#validation-plan)
+  before declaring the #6945 containing rollout gap closed.
+- [ ] For Phase 3c, prove read-only dry-run, exact selection and JSON, local
+  existing/missing checkouts, unchanged non-owner fields, repeated apply,
+  changed-record/lock failures and original-byte backup/audit recovery.
+- [ ] For Phase 3c, reject foreign project/platform/namespace, alias/key
+  ambiguity, ambiguous provenance and unsupported dependent references; verify
+  paired repository discovery and no incoherent cross-project edge or
+  success-shaped partial result. Ordinary doctor fix never migrates ownership.
 
 ## Proposal
 
@@ -172,6 +254,115 @@ operator's all-alias/all-worktree acceptance requirement, not authorization for
 unrelated service changes or a second machine registry.
 
 ## Journal
+
+### 2026-10-16 - Explicit owner-migration slice proposed
+- #7057 reserves the bounded capability; `chugging-ratchet` owns its source
+  plan and implementation, not the wider alias campaign or local application.
+- This closes the durable identity and explicit-relation vision requirements
+  through an explicit repair seam, not automatic alias-based ownership.
+  The daemon-mediated-write-authority and single-write-path-across-plugins
+  invariants remain binding: implementation must reuse the owning public
+  mutation path and locks rather than add an independent YAML writer.
+- Plan captures the requested report-first migration and preserves surrounding
+  authorization constraints. All algorithm/CLI integration details above are
+  visibly agent-recommended and require the implementation's own review/tests.
+
+### 2026-10-16 - Guest source repair merged; release containment remains
+- #7009 merged as `6fe63b78740cc0adbf49fad4cd8970dca656ce83`, from exact head
+  `3752cad431173bbb789581d5c0252a4450699d99`. Current-head Copilot approval
+  `5548783502`, zero unresolved findings and successful required CI
+  `38909598711` preceded the ordinary managed merge.
+- That candidate's native installation-context smoke passed 186 cases with
+  one platform skip, including all three guest writers/readers and the six
+  enrollment-admission parameters. Windows core/native coverage passed 28
+  with one POSIX-only skip; targeted doctor passed 14. The POSIX admission
+  cases were executed in hosted CI, not counted as Windows proof.
+- The independent MCP follow-up #7000 and read-only preview repair #6998 also
+  merged. Existing Dispatch and MCP argument-binding repairs were preserved.
+  None of those independent source merges proves deployment.
+- Main remains under the operator-approved promotion pause #6949 while #6237
+  retains release-pipeline qualification. No unpause, manual promotion/retry,
+  updater, service restart, guest enrollment or OS/default change was made
+  for this containing rollout.
+- The operator approved canonical post-merge reconciliation of the three
+  clean, fully landed source worktrees. Recovery refs and checkout directories
+  were retained; no worktree cleanup or unrelated data deletion was performed.
+- **Next slice:** await the retained owner's qualified containing release,
+  then use the authorized unified update path and obtain explicit enrollment
+  consent where required. Prove actual direct/SSH/supervised/interactive
+  entry, default-drift behavior and real launch/update before closing
+  Phase 3b. The effort remains Active; installed acceptance is still open.
+
+### 2026-10-16 - Guest review correction preserves comparison-only selectors
+- The first implementation review found one canonical defect, repeated across
+  its generated copies: the Python status comparison selector could supply
+  otherwise missing guest identity. Status now resolves actual identity first,
+  then compares the requested name, matching Bash and PowerShell.
+- Added pre-enrollment SSH refusal coverage for every native runner and the
+  targeted doctor, plus independent selector mismatch controls. All vendored
+  copies were regenerated from the canonical source.
+- The same review overview identified an enrollment admission race. Every
+  runner now re-resolves identity under the real enrollment lock, refusing a
+  conflicting registration published after its initial read and preserving
+  canonical case for idempotent admission. Native publication-at-lock-entry
+  fixtures cover the interleaving without mocking lock ownership or writers.
+- Hosted candidate `fc33b115bc4e204b078177e592d2b88d14f871af` passed the existing
+  installation-context smoke: 180 passed, one skip, with all three guest writer
+  parameters executed. The correction requires fresh hosted proof and review;
+  that earlier pass is not reused as current-head acceptance.
+- A later Containers CI assertion matches the retained #6791 timing failure,
+  owned by #6551. No competing lock-protocol fix or timeout change is included.
+  Actual passing required CI remains mandatory.
+
+### 2026-10-16 - Guest identity candidate prepared; POSIX proof pending
+- The shared Python, Bash and PowerShell primitive now supports explicit
+  guest enrollment and read-only status, without consulting incumbent runtime
+  ownership. Native/container detection and distribution conflicts retain
+  independent-space refusal.
+- Worktrees adds a targeted `doctor --guest-distribution` surface. Report mode
+  does not create enrollment; `--fix` enrolls only a matching named direct
+  guest entry and never repairs unrelated records or changes the OS default.
+- Native Windows core/PowerShell boundaries pass 24 cases with one POSIX-only
+  skip; targeted doctor passes 14, including real primitive enrollment,
+  repeated SSH-style no-write checks and the actual native CLI front door.
+  Existing context and vendoring coverage passes 45 with five platform skips;
+  governance/diagnostic smoke passes 127 with seven platform skips. Counts
+  describe rosters, not a cumulative test total.
+- A separate native PowerShell long-path failure was reproduced and tracked
+  in #7010. No unrelated final-path implementation was added to this slice;
+  the unchanged governance roster passes at ordinary temporary-path depth.
+- Local remote POSIX test invocation was denied before execution. That is a
+  validation-surface blocker, not a product verdict. All three POSIX writers
+  and readers remain in the existing hosted smoke selection; the candidate
+  stays draft until that native proof passes. No installed enrollment,
+  release, rollout or acceptance is claimed.
+
+### 2026-10-16 - Guest-identity proposal merged; implementation starts
+- #6993 merged as `7887dfb2c6f40e556a298f015e1d629f63a89e63`.
+  The source worktree was pulled forward through the supported sync path.
+- Phase 3b now implements the reviewed identity/registration and default
+  diagnostic boundary. The canonical effort remains Active; proposal approval
+  is not implementation, release qualification or installed acceptance.
+
+### 2026-10-16 - Installed compatibility succeeds; guest identity follow-up proposed
+- The operator confirmed a successful real launch after the authorized
+  Worktrees 1.24.68-dev1 and Manager 0.6.33-dev1 rollout. The historical
+  record's machine label was preserved while the launch selected its guest
+  execution environment.
+- The supported doctor report/apply/re-report flow covered eight adopted
+  project/environment registries. It repaired stale lifecycle and reciprocal
+  metadata without session garbage collection or checkout removal.
+- The updater exposed #6945: the same guest has a distribution identity
+  through a direct WSL entry but lacks it through SSH. The installation
+  primitive reads the missing variable as ordinary POSIX, then rejects the
+  incumbent completed lifecycle owner. The canonical source fingerprint,
+  profile and runtime namespace agree; no owner was reset or copied.
+- This amendment captures the default-WSL and compact host/guest direction
+  for reviewed implementation. The explicit registration mechanism and
+  default-drift safeguards in the linked proposal are agent recommendations,
+  not a claim that code or OS settings already changed.
+- Existing materialized-main qualification gates and original source owners
+  remain intact. #6947 and #6948 retain separate bounded repairs.
 
 ### 2026-10-16 - Authorized bootstrap merged; containing release remains open
 - The retained recovery owner landed workflow-only #6867 as

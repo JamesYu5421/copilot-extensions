@@ -10,6 +10,23 @@ import subprocess
 from pathlib import Path
 import pytest
 
+pytest.register_assert_rewrite("runtime_profile_cases")
+from runtime_profile_cases import TestExactRuntimeProfile as TestExactRuntimeProfile
+
+from test_installer_finalizers import (
+    test_posix_purge_ignores_cdpath_for_relative_roots as test_posix_purge_ignores_cdpath_for_relative_roots,
+    test_posix_purge_keeps_the_locked_inode_and_link_target as test_posix_purge_keeps_the_locked_inode_and_link_target,
+    test_posix_purge_keeps_the_live_pid_fallback as test_posix_purge_keeps_the_live_pid_fallback,
+    test_posix_purge_path_resolution_negative_controls as test_posix_purge_path_resolution_negative_controls,
+    test_posix_purge_propagates_removal_failure as test_posix_purge_propagates_removal_failure,
+    test_posix_purge_preserves_trailing_newlines_in_the_root as test_posix_purge_preserves_trailing_newlines_in_the_root,
+    test_posix_purge_preserves_trailing_newlines_in_home as test_posix_purge_preserves_trailing_newlines_in_home,
+    test_posix_purge_refuses_home_and_link_roots as test_posix_purge_refuses_home_and_link_roots,
+    test_posix_purge_refuses_unreadable_root as test_posix_purge_refuses_unreadable_root,
+    test_posix_purge_uses_the_physical_directory_holding_the_lock as test_posix_purge_uses_the_physical_directory_holding_the_lock,
+    test_posix_powershell_purge_compares_physical_home_identity as test_posix_powershell_purge_compares_physical_home_identity,
+)
+
 
 REPO = Path(__file__).resolve().parents[1]
 MODULE_PATH = REPO / "tools" / "check-install-contract.py"
@@ -19,6 +36,83 @@ _SPEC = importlib.util.spec_from_file_location("check_install_contract", MODULE_
 assert _SPEC is not None and _SPEC.loader is not None
 checker = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(checker)
+
+
+def _gate_source(tmp_path: Path) -> Path:
+    source = REPO / "plugins" / "agent-worktrees" / "src" / "agent_worktrees"
+    for name in ("reconcile.py", "update_gate.py", "update_runtime.py", "update_runtime_plan.py"):
+        shutil.copyfile(source / name, tmp_path / name)
+    return tmp_path
+
+
+def test_actual_update_machine_gate_contract() -> None:
+    source = REPO / "plugins" / "agent-worktrees" / "src" / "agent_worktrees"
+    assert checker.check_machine_gate(source) == []
+
+
+def test_install_guard_runs_machine_gate_contract(monkeypatch, capsys) -> None:
+    called = []
+
+    def fail(source):
+        called.append(source)
+        return ["synthetic machine-gate violation"]
+
+    monkeypatch.setattr(checker, "check_machine_gate", fail)
+    assert checker.check() == 1
+    assert called == [REPO / "plugins" / "agent-worktrees" / "src" / "agent_worktrees"]
+    output = capsys.readouterr()
+    assert "synthetic machine-gate violation" in output.out + output.err
+
+
+@pytest.mark.parametrize("name,before,after", [
+    ("update_gate.py", 'if scope != "machine-gated":', "if True:"),
+    ("update_gate.py", "repo_dir = context", "repo_dir = None"),
+    ("update_gate.py", "return not reconcile.runtime_allowed(", "return reconcile.runtime_allowed("),
+    ("update_gate.py", "gate_present=gate_present", "gate_present=True"),
+    ("update_gate.py", "load_runtime_gate(repo_dir)", "load_runtime_gate(Path('other'))"),
+    ("update_gate.py", "gate_manifest_present(repo_dir)", "gate_manifest_present(Path('other'))"),
+    ("update_runtime.py", "if step.status:", "if False:"),
+    ("reconcile.py", 'return machine in allowed', "return True"),
+])
+def test_machine_gate_contract_rejects_actual_source_regressions(
+    tmp_path: Path, name: str, before: str, after: str,
+) -> None:
+    source = _gate_source(tmp_path)
+    path = source / name
+    text = path.read_text(encoding="utf-8")
+    assert before in text
+    path.write_text(text.replace(before, after), encoding="utf-8")
+    assert checker.check_machine_gate(source)
+
+
+@pytest.mark.parametrize("function", ["plan_registered", "plan_module"])
+@pytest.mark.parametrize("before,after", [
+    ("if runtime._machine_gate_blocks(name, scope, gate_context):", "if False:"),
+    ("if runtime._machine_gate_blocks(name, scope, gate_context):",
+     "if not force and runtime._machine_gate_blocks(name, scope, gate_context):"),
+    ("status=runtime.MACHINE_GATED_SKIP, eligible=False", 'status="SKIPPED (current)"'),
+])
+def test_machine_gate_contract_rejects_each_planner_bypass(
+    tmp_path: Path, function: str, before: str, after: str,
+) -> None:
+    source = _gate_source(tmp_path)
+    path = source / "update_runtime_plan.py"
+    text = path.read_text(encoding="utf-8")
+    node = next(item for item in ast.parse(text).body if isinstance(item, ast.FunctionDef)
+                and item.name == function)
+    lines = text.splitlines(keepends=True)
+    body = "".join(lines[node.lineno - 1:node.end_lineno])
+    assert before in body
+    lines[node.lineno - 1:node.end_lineno] = [body.replace(before, after)]
+    path.write_text("".join(lines), encoding="utf-8")
+    assert checker.check_machine_gate(source)
+
+
+@pytest.mark.parametrize("name", ["update_gate.py", "update_runtime_plan.py"])
+def test_machine_gate_contract_reports_missing_source(tmp_path: Path, name: str) -> None:
+    source = _gate_source(tmp_path)
+    (source / name).unlink()
+    assert checker.check_machine_gate(source)
 
 
 def test_agent_pull_requests_wrapper_counts_as_real_engine_usage() -> None:

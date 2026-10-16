@@ -1186,6 +1186,9 @@ def _resolve_for(req, *, defer_projections: bool = False) -> "tuple[object | Non
         resolve_launch_plan,
     )
     try:
+        from .seed_launch import require_supported_seed
+
+        require_supported_seed(req)
         plan = resolve_launch_plan(
             req.project, worktree_id=req.worktree_id,
             new=(req.mode == "new"), bare_resume=(req.mode == "bare-resume"),
@@ -1540,7 +1543,9 @@ def _cmd_update_steps(rest: list[str], run) -> int:
         if getattr(e, "install_hint", False):
             run.say("Run `worktree-manager setup --apply` to install the engine first.")
         return 1
-    return 1 if cutover_failed and rc == 0 else rc
+    if su.action == "auth_required" and rc in (0, 3, 5):
+        return 4
+    return (1 if cutover_failed else 0) if rc == 0 else rc
 
 
 def main(argv: list[str] | None = None) -> int:

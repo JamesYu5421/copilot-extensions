@@ -36,6 +36,17 @@ scalar read; the shortcut does not change that targeting contract.
 
 ## Session machine identity
 
+For entry-path-independent WSL installation identity, use
+`doctor --guest-distribution "Example Distro" --json`. This is a targeted
+report: it never enters general session/record repair. On Windows it checks
+the designated name against the current user's WSL default; inside the guest
+it checks the guest registration and reports host-default evidence unavailable.
+`--fix` can enroll only a verified named direct guest entry. It is idempotent
+from SSH once enrolled, never changes the OS default, and cannot be combined
+with other doctor repair scopes. The shared
+[guest-identity contract](../../../libs/installation-context/README.md#wsl-guest-identity)
+owns enrollment, refusal and cross-runner mechanics.
+
 The existing `instructions/agent-worktrees/session-guidance.instructions.md`
 file in the exact Copilot session contains a compact **Current machine
 identity** block. `hostname` is the observed OS hostname; `machine` is the
@@ -94,6 +105,7 @@ Success exits zero with `{"version":1,"ok":true,"worktree":{...}}`.
 The worktree contains `id`, `repo`, `path`, `branch`, `creation_nonce`, `status`,
 `session_count`, `last_session_id`, `sessions_indexed`, `execution_leg`,
 `execution_leg_opaque`, `session_backend`, `session_backend_opaque`,
+`dispatch_attempt`, `dispatch_attempt_opaque`,
 and raw historical `machine`, `platform`, `owner`,
 `owner_ref`, `caller_worktree`, `parent_session`, `checkout_managed` fields
 (absent raw fields are null). `session_count` is null when sessions have not
@@ -107,6 +119,11 @@ the existing asserted-head fallback; an explicit null head transition clears it.
 preserving an unrecognized explicit leg as opaque data.
 An unrecognized legacy backend likewise remains visible as raw data with its
 opaque flag; a null derived leg does not prove absence of a provider binding.
+`dispatch_attempt` uses the canonical seven-field dispatch provenance parser.
+An absent attribution returns null with `dispatch_attempt_opaque: false`;
+an explicit null, incomplete or unrecognized attribution remains raw with
+`dispatch_attempt_opaque: true`. Consumers must check that capability and
+opacity before treating a record as unassigned.
 YAML timestamp scalars, including those nested in opaque bindings or provider
 blobs, are represented as ISO-8601 strings in JSON without rewriting the record.
 Other values must be JSON-compatible: mapping keys must be strings, and
@@ -764,6 +781,35 @@ metadata survives local/remote serialization and is used only for accepted
 completion of those exact children. Older bundles still support exact source
 references; an alias-only retry without either the source ledger or durable
 proof fails explicitly rather than guessing equivalence.
+
+## Resolve previews
+
+`resolve --dry-run --worktree-id <id>` is read-only, including with `--json`
+or when forwarded to another machine. It does not record a resume, assign a
+codename, reserve a random profile, stage or consume a launch prompt, refresh
+instructions, restore/reclaim a process, or append launch activity/trace logs.
+Existing record/session/seed state is inspected without creating writer lock
+sidecars. Execution-space authority, configuration preflight and seed
+revision/cold-start checks still apply; refusal does not change durable state.
+A current typed launch seed takes precedence over leftover legacy prompt text;
+a newer legacy revision still supersedes the typed seed.
+
+JSON existing-worktree previews retain the normal launch-plan shape and set
+`launch.preview` to `true`; the returned worktree retains its current resume
+count and timestamp. Base-repo JSON plans remain flat and set `preview: true`.
+Base-repo previews skip the informational dirty-file scan so Git cannot refresh
+the checkout's index as a side effect.
+Explicit profiles and existing-session profile replay remain visible. When a
+new random assignment would be needed, selection is deferred until a real
+launch: `launch.preview_warning` explains that no profile was reserved (the
+interactive preview prints the same warning). A preview's command is advisory,
+not an admitted launch; resolve again without `--dry-run` to execute.
+
+Restoring an existing worktree with `--restore --dry-run` is refused without
+restoring a session.
+`--json --new --dry-run` remains unsupported and creates nothing.
+Interactive dry-run requires an explicit worktree, `--new`, or `--base`;
+it does not open the state-maintaining picker.
 
 ## Remote launch options
 
