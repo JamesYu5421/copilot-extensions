@@ -3822,6 +3822,7 @@ function Invoke-Install {
         Write-Host ''; Write-Host '=== agent-dispatch install complete (superseded by a newer concurrent build) ===' -ForegroundColor Cyan
         return
     }
+    if (-not $NoService) { Enter-InstallPhase -Name cutover }
     Install-CoordinatorTask
     Remove-CoordinatorFirewallRule
     Install-SupervisorTask
@@ -3945,6 +3946,7 @@ function Invoke-Update {
                 Write-Skip 'Update superseded by a newer concurrent build that already activated -- skipping coordinator cutover/task refresh for this invocation'
                 return
             }
+            Enter-InstallPhase -Name cutover
             if (Test-CoordinatorHealthy) {
                 if (Test-CoordinatorRouted) {
                     # A Thread-B coordinator (routed, /drain seam) -> graceful cutover.
