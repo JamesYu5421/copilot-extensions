@@ -143,8 +143,9 @@ _(Agent-recommended prerequisite discovered while checking the requested live-da
   adopting environments; verify the selected running versions.
 
 ### Phase 3b - Entry-path-independent guest installation identity
-- [ ] Review the [#6945 guest-identity proposal](guest-execution-identity.md)
-  before introducing new registration or ownership behavior.
+- [x] Review the [#6945 guest-identity proposal](guest-execution-identity.md)
+  before introducing new registration or ownership behavior; #6993 merged
+  after exact-head approval and passing required checks.
 - [ ] Establish one authoritative guest identity across direct, SSH and
   supervised entry paths, preserving independent installation and execution
   spaces; do not derive the caller from an incumbent ownership record.
@@ -200,6 +201,57 @@ operator's all-alias/all-worktree acceptance requirement, not authorization for
 unrelated service changes or a second machine registry.
 
 ## Journal
+
+### 2026-10-16 - Guest review correction preserves comparison-only selectors
+- The first implementation review found one canonical defect, repeated across
+  its generated copies: the Python status comparison selector could supply
+  otherwise missing guest identity. Status now resolves actual identity first,
+  then compares the requested name, matching Bash and PowerShell.
+- Added pre-enrollment SSH refusal coverage for every native runner and the
+  targeted doctor, plus independent selector mismatch controls. All vendored
+  copies were regenerated from the canonical source.
+- The same review overview identified an enrollment admission race. Every
+  runner now re-resolves identity under the real enrollment lock, refusing a
+  conflicting registration published after its initial read and preserving
+  canonical case for idempotent admission. Native publication-at-lock-entry
+  fixtures cover the interleaving without mocking lock ownership or writers.
+- Hosted candidate `fc33b115bc4e204b078177e592d2b88d14f871af` passed the existing
+  installation-context smoke: 180 passed, one skip, with all three guest writer
+  parameters executed. The correction requires fresh hosted proof and review;
+  that earlier pass is not reused as current-head acceptance.
+- A later Containers CI assertion matches the retained #6791 timing failure,
+  owned by #6551. No competing lock-protocol fix or timeout change is included.
+  Actual passing required CI remains mandatory.
+
+### 2026-10-16 - Guest identity candidate prepared; POSIX proof pending
+- The shared Python, Bash and PowerShell primitive now supports explicit
+  guest enrollment and read-only status, without consulting incumbent runtime
+  ownership. Native/container detection and distribution conflicts retain
+  independent-space refusal.
+- Worktrees adds a targeted `doctor --guest-distribution` surface. Report mode
+  does not create enrollment; `--fix` enrolls only a matching named direct
+  guest entry and never repairs unrelated records or changes the OS default.
+- Native Windows core/PowerShell boundaries pass 24 cases with one POSIX-only
+  skip; targeted doctor passes 14, including real primitive enrollment,
+  repeated SSH-style no-write checks and the actual native CLI front door.
+  Existing context and vendoring coverage passes 45 with five platform skips;
+  governance/diagnostic smoke passes 127 with seven platform skips. Counts
+  describe rosters, not a cumulative test total.
+- A separate native PowerShell long-path failure was reproduced and tracked
+  in #7010. No unrelated final-path implementation was added to this slice;
+  the unchanged governance roster passes at ordinary temporary-path depth.
+- Local remote POSIX test invocation was denied before execution. That is a
+  validation-surface blocker, not a product verdict. All three POSIX writers
+  and readers remain in the existing hosted smoke selection; the candidate
+  stays draft until that native proof passes. No installed enrollment,
+  release, rollout or acceptance is claimed.
+
+### 2026-10-16 - Guest-identity proposal merged; implementation starts
+- #6993 merged as `7887dfb2c6f40e556a298f015e1d629f63a89e63`.
+  The source worktree was pulled forward through the supported sync path.
+- Phase 3b now implements the reviewed identity/registration and default
+  diagnostic boundary. The canonical effort remains Active; proposal approval
+  is not implementation, release qualification or installed acceptance.
 
 ### 2026-10-16 - Installed compatibility succeeds; guest identity follow-up proposed
 - The operator confirmed a successful real launch after the authorized
