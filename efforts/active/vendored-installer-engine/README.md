@@ -578,6 +578,43 @@ installs, no service-specific config needed for this class of plugin.
 
 ## Journal
 
+### 2026-10-16 — Container deletion also needs an atomic identity mechanism
+
+- PR #7035 review identified that Moby's removal path calls `GetContainer()`,
+  whose exact-ID miss falls back to an exact container name
+  ([removal](https://github.com/moby/moby/blob/3f38b15147b14ce0ce7b11558a1aa9e9f14db103/daemon/delete.go),
+  [lookup](https://github.com/moby/moby/blob/3f38b15147b14ce0ce7b11558a1aa9e9f14db103/daemon/container.go)).
+  A real-stream fixture with those lookup semantics reproduced deletion of a
+  colliding unrelated container after the inspected ID disappeared.
+- The source adapter now refuses automatic removal for both containers and
+  named volumes before connecting. The lower-level session accepts only reads.
+  No connection pinning, re-inspection or post-delete observation is claimed to
+  make Docker's name-fallback API atomic. Ownership is retained rather than
+  weakened to work around the unavailable cleanup primitive.
+- The scoped contract retains an explicit atomic cleanup design/proof gate.
+  Single-daemon read verification, ownership views and retained-resource
+  reporting can proceed, but this PR does not close the combined Docker item,
+  authorize live allocation/deletion or enable a producer. The parent remains
+  Active; no runtime or production resource changed.
+
+### 2026-10-16 — Diagnostic foundation and ownership/session proposal merged
+
+- PR #6625 merged to `dev` as
+  `fd07892b8f23e5f5263cac1538347922eff76c54` at 01:06 Pacific.
+  The final head `f0de56d529f3a66d5b582b3283990b294a061cec` received a
+  current Balanced approval with no open findings. The source workspace is
+  reconciled to that squash; the implementation remains diagnostic-only.
+- The merged proposal preserves one authoritative claims ledger and retained
+  named volumes, with explicit admitted-session and derived ownership-view
+  implementation gates. No separate registry, generic settlement bypass or
+  automatic name-based volume deletion was introduced.
+- **Next source slice:** implement the direct-local session adapter without
+  reconnect or subprocess ownership, then the provider and read-only ownership
+  views before integrated producer enablement. Unsupported transport/platform
+  routes remain unavailable rather than inheriting CLI snapshot authority.
+  Docker lifecycle, live authorization and the parent Plan/Validation gates
+  remain open. No resource, service or runtime rollout occurred.
+
 ### 2026-10-14 — Registry-rooted Docker ownership continuation
 
 - Operator direction, verbatim:
