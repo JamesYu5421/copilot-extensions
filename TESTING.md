@@ -25,6 +25,37 @@ real lock entry, using the native atomic writer. Every runner must revalidate
 the newly visible identity, refuse a conflicting name and retain canonical
 case for an idempotent enrollment; lock ownership and cleanup are not mocked.
 
+Remote ACP's focused contract/ledger tests and independent synthetic-process
+consumer lane run together:
+
+```text
+python tools/run-plugin-tests.py agent-bridge --test-file tests/test_remote_acp_transport.py --test-file tests/test_remote_acp_sessions.py --test-file tests/test_remote_acp_peer.py
+```
+
+The peer uses a disposable locally trusted synthetic certificate and Hypercorn:
+actual negotiated TLS HTTP/2 with connection/session SSE, and actual WSS
+upgrade. It checks explicit structured permission/form roundtrips, cancellation,
+auth refusal/refresh, cookie affinity, redirects-off, disconnect/load without
+prompt replay, capability mismatch without a write and independent server
+survival after client close. It does not contact a deployed remote agent or
+prove deployment readiness. Existing ACP/client/API tests retain local/provider
+regression coverage; the new lane is bounded rather than an exhaustive fleet
+matrix.
+
+Bridge's CI smoke job retains the full contained suite and fresh independent
+peer processes. Its bounded job budget is 12 minutes (the same native-consumer
+exception as dispatch/index): an observed complete run exceeded the former
+eight-minute job limit during cleanup despite passing test steps. Other plugin
+budgets and the required aggregate gate are unchanged.
+
+Bridge's tolerant-wire-reader guard continues to cover every discovered peer
+model. Its only explicit local-configuration classifications are the immutable
+`RemoteAuth` and `RemoteAcpTarget` settings: unknown auth/transport configuration
+fails closed instead of silently ignoring a typo. Subclasses do not inherit
+that classification. Remote replay tests also include unfinished historical
+tools, checking live tracking and telemetry after load, database restore and
+event-log rebuild.
+
 The shared `agent-procutil` daemon-broker unit suite covers authenticated frame
 bounds, WMI's JSON-stdin environment boundary, containment opt-out, partial-start
 cleanup and adoption failures. Its Windows-only native regression launches from
