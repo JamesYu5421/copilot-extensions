@@ -326,6 +326,136 @@ recorded against each open fork._
 
 ## Journal
 
+### 2026-10-15 -- Returned provider argv supports appended agent arguments
+- Review identified an actual parser defect in the returned task launch command:
+  identity options after the container name interrupted `nargs="*"` parsing.
+  Both physical/binding identity options now precede the container name.
+- A regression drives the actual CLI parser with the returned command plus
+  `-- --agent worker`, asserts the exact identities and forwarded arguments,
+  and failed with argparse exit two before this correction. Final projection
+  selection passes 63 in 6.08 seconds; touched Python lint passes. No task,
+  credential or launch authority changed.
+
+### 2026-10-15 -- Complete provider consumer acceptance remains runnable
+- Review found the original opt-in Docker scenario still invoking the old
+  builder signature. It now reserves and publishes the actual generation/nonce
+  under host session admission before building its guest command, matching the
+  production task lane rather than supplying an invented pair.
+- The complete scenario exposed repeated immutable-executable discovery pushing
+  cold worker readiness past its unchanged 30-second bound. Production now reuses
+  verified paths only within one admission operation, keyed by physical ID,
+  user, executable kind, start generation, configuration and mounts. No cache
+  survives an operation. The builder no longer repeats root lock initialization
+  already required by successful admission publication.
+- The cache-invalidation and coupled native selection passes 184. The original
+  complete Docker acceptance invocation passes one in 157.00 seconds with its
+  pre-existing 300-second item / 420-second sub-suite / 480-second aggregate
+  budgets and unchanged command/readiness limits. It exercises token privacy and
+  rotation, surviving guest publishers, cold CLI execution, duplicate refusal,
+  wrapper-only death and stop/remove/recreate deferral. No fixtures remain.
+  Touched Python lint passes.
+
+### 2026-10-15 -- Guest lifecycle closure and mixed-environment recovery
+- Current-head #6745 review found that a delayed Docker exec could outlive its
+  wrapper, resume after the final idle probe and start before destruction.
+  The final action now closes root-owned guest admission under the worker lock.
+  Each host launch/closure reserves a monotonic private generation before
+  publication; an admitted launch also receives a fresh nonce. Workers check
+  that exact pair after acquiring the guest lock. Old launches and surviving
+  helpers cannot cross closure or restore an older admission after reopening.
+- Added a cleanup-only kernel transaction for legacy admission and lifecycle
+  records. Each environment can remove only its locally verified-dead writers;
+  foreign and live writers remain protected. Normal admission does not inherit
+  this exception. A two-environment regression proves sequential cleanup restores
+  operation without treating blocked heartbeat expiry as evidence of death.
+- Coupled native projection, replacement, lease and cutover contracts: 183
+  passed. Actual offline, read-only, capability-dropped Docker guest proof:
+  one passed in 24.04 seconds. It kills only the host wrapper before the guest
+  lock, verifies the surviving guest, closes admission, then observes refusal
+  with no application execution. Reopening rejects stale helpers and launch
+  argv while a fresh admitted launch succeeds. Touched Python lint and the
+  13-plugin install contract pass.
+- The first Docker proof hit its unchanged test limit during repeated immutable
+  executable discovery. Its final fixture reuses real verified resolutions
+  only for the same physical instance, start generation, configuration and
+  mounts; no production cache or timeout widening was introduced. The timed-out
+  fixture was explicitly removed, and the final run left no fixture containers.
+  Helpers also have bounded lifetimes and automatic Docker cleanup.
+- This is provider/primitive acceptance, not real central-task delivery,
+  supervisor renewal or first fleet enrollment. Those parent-effort gates
+  remain open; promotion and authorized rollout remain automatic/external.
+
+### 2026-10-15 -- Foreign legacy cutover cannot expire its own protection
+- Current-head review of #6745 found a real migration defect: replacing the
+  legacy lock pathname blocks old heartbeat writers, so elapsed heartbeat
+  time cannot establish foreign-owner quiescence. Foreign legacy admission
+  and lifecycle records now remain blocking regardless of expiry.
+  The owning environment may proceed only after verifying its PID is dead.
+- Both admission and hold regressions exercise initial refusal, expiry after
+  blocked refresh, refused stale cleanup, unchanged record bytes and
+  same-environment live/dead-PID verification. The coupled native lease and
+  cutover selection passes 56; touched Python lint passes. Existing real
+  mixed-version process proof remains in that selection. No service rollout,
+  manual promotion or merge-gate bypass occurred.
+
+### 2026-10-14 -- Provider review: active locks and surviving guest workers
+- PR #6745's first review identified two real boundary gaps: the shared
+  lease mutex could steal an aged live lock while projection was still
+  performing Docker I/O, and host-wrapper PID admission could disappear
+  while its guest worker remained alive.
+- Admission, lifecycle and binding writers now share the existing
+  kernel-owned private file lock rather than age-based unlink/recovery.
+  Delayed concurrent preparation, native binding and rotation tests
+  age an actively held lock and prove a contender cannot enter or roll
+  back the incarnation/expiry.
+- Guest execution holds `flock` through an immutable absolute executable
+  and a stable root-owned read-only lock file. The actual Docker regression
+  kills only the host wrapper, confirms its long-running guest is still
+  alive, and observes a second explicit task launch refused with exit 75.
+  No resident daemon or new credential authority is introduced.
+- The contained lease/projection/helper selection passed 88 tests with
+  one platform/opt-in skip. The fresh Docker credential and wrapper-death
+  scenario passed; touched-code lint passed. These close the cited review
+  defects, not the parent fleet/supervisor/central-authority gates.
+
+### 2026-10-14 -- Restricted provider delivery and birth authority
+- Added an explicit `dispatch_only` creation policy for restricted
+  image-backed fleets. Provider creation pins a random, nonsecret birth
+  identity in an immutable Docker label and an exclusive private record.
+  Missing or corrupt birth records cannot be treated as a free container.
+- Preparation seals that physical identity to one task, worker, generation,
+  epoch and endpoint. The native conversation is bound once during delivery,
+  before credential publication; interrupted delivery retains that fence.
+  A different incarnation requires a newly created physical container.
+- The host sends only the task credential over Docker stdin, through an
+  immutable absolute Node helper, to an atomic root-owned `0444` file under
+  protected `/run` state. The worker receives nonsecret pinned call fields and
+  the file path. Ordinary launch/provider SSH cannot adopt the task-only
+  member, and provider admission permits only one worker at a time.
+- The native contained projection/admission/profile selection passed 220
+  tests with three opt-in/platform skips. A disposable real Docker run proved
+  two credential publications, nonroot read/no-write permissions, no token
+  in retained state or Docker configuration, refusal to rebind task/native
+  identities, and the actual fresh provider CLI launch/ordinary-peer denial.
+  The first CLI fixture used integer CPU configuration rather than the
+  loader's canonical float, correctly triggering the policy fingerprint
+  guard; its corrected canonical fixture passed.
+- The expanded ordinary CLI/fleet/provider-SSH compatibility selection passed
+  304 tests with five opt-in/platform skips. Touched-code lint and the
+  thirteen-plugin install contract passed.
+- Publication caught growth past the CLI's shrink-only ceiling and the
+  fleet module's cap. The task-only launch and exec registrar, plus the
+  birth-aware image argument/publication seam, now live in the provider
+  projection module without changing ordinary transport or monkeypatch
+  boundaries. The complete native plugin suite passed both sub-suites
+  (793 passed, 22 skipped), and the actual fresh Docker/CLI proof passed
+  again after extraction. No module baseline was widened.
+- This closes only the provider channel, not automatic supervisor scheduling,
+  credential renewal delivery, admitted fleet selection, central/local
+  projections, first-touch installation or real coordinator task execution.
+  The opt-in channel composes the existing Docker provider and admission
+  lifecycle; it introduces no new queue, credential issuer or daemon.
+
 ### 2026-10-15 -- Known supersession takes precedence over discovery outage
 - Further #6722 review reproduced an active epoch-one lease renewing during a
   discovery-only outage after independently reading floor five. The lease now

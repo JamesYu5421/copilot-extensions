@@ -1184,6 +1184,50 @@ manifest, and service restart (see "What NOT to Do" and "Deploying: one command
 > (`check-changefile-presence.py`) makes the same-version-drift case rare in
 > the first place, so `--force` stays a last resort.
 
+The explicit updater collects the engine, selected modules and other required
+registered runtime commands once after payload acquisition. Before launching
+any runtime installer, its `runtime_preflight` checks the whole selected set's
+installation ownership/root, machine gate, version/force decision, installer
+and interpreter availability, and effective deadline. Execution uses those
+collected arguments, environment snapshots and roots rather than repeating
+discovery after the engine has already changed. Required preflight failures
+name their targets and stop all runtime installation and local integration.
+Intentional exclusions and already-current runtimes do not require unused
+installers; existing module update/install fallback and cell-specific invocation
+contracts remain intact.
+
+This is a cheap configuration preflight, not dependency admission, a retained
+prepared candidate, or a readiness/activation transaction. The installers still
+own their combined construction and activation, live revalidation and recovery.
+The pull-free, cache-aware session-launch reconciler remains a separate path.
+
+Payload recovery attempts a target at most twice, with a 240-second attempt
+budget and a 120-second cap per command. A retry uses the remaining budget,
+re-inspects that target's installed payload and waits one second after an
+explicit connection/reset, temporary DNS, gateway or Windows sharing/lock
+failure. It does not revisit successfully acquired peers. A matching plugin's
+explicit "not installed" ledger error may instead select the existing
+activation-preserving install path; arbitrary failed updates no longer
+authorize an install fallback. The engine's own acquisition stays update-only.
+
+Authority, permissions, source-policy, integrity, certificate and unknown
+failures stop without automatic retry. Numeric OS errors use the same
+host-aware matchers as update outcome classification, including localized
+permission refusals. An install wrapper's OS error is terminal because it may
+be activation restoration failing, not a retryable spawn failure.
+The canonical activation-state owner first retries restoration itself once
+after one second for an explicit Windows sharing/lock error (32/33), including
+a wrapped state-read error. It reuses the original activation snapshot, not the
+post-install state, and never replays the command. Partial settings restoration
+is retained while inventory restoration is retried. Permission errors, malformed
+state and exhausted restoration still propagate as failures.
+A command timeout also stops: the
+payload subprocess path does not prove descendant cleanup, so starting another
+writer would be unsafe. Retried failures remain advisory attempt history;
+the final required outcome decides the run. This is in-run recovery, not a
+persistent acquisition checkpoint, a payload process-tree cleanup guarantee
+or permission to retry combined runtime activation.
+
 ### What the marketplace vendors (copied vs loaded)
 
 `copilot plugin update` copies the **entire git-tracked plugin folder** — the
@@ -1618,6 +1662,14 @@ watchdog (`<=0`) still leaves a finite 510-second updater safety bound. The
 worktrees self-installer retains its existing 600-second minimum, extended when
 a positive watchdog override plus cleanup grace exceeds it. Invalid deadline
 values fail explicitly before launching the installer.
+
+The shared command-lifecycle runner passes the caller's stdout and stderr
+explicitly to its native installer child, including the strict Windows Job
+containment path. On Windows, a hidden child with only implicit OS stream
+inheritance can lose both streams when the caller was launched through a
+PowerShell native-command pipeline. Explicit handles preserve installer and
+self-staged grandchild diagnostics without capturing them in memory, changing
+their destinations, or changing admission, containment, or exit-code behavior.
 
 Plugins with a watchdog default other than 480 seconds declare that positive
 integer as `installerDeadlineSeconds` in `plugin.json`; unified update reads it
@@ -2147,6 +2199,37 @@ delegate to the canonical `install.*` rather than duplicate the deploy logic.
 
 ## Shared installer-engine helpers (`libs/installer-engine/`)
 
+### Captured native human output
+
+Declaring PowerShell installers source their packaged
+`installer-human-output.ps1` after strict error setup and before installer
+output. Only an explicitly requested, redirected child initializes UTF-8;
+ordinary standalone invocation does not load the helper and retains its
+existing output encoding. Requested missing helpers fail closed. The initializer
+changes only the producer's stdout/stderr text writers, preserving native
+command decoding and pipeline stdin encoding.
+`tools/sync-installer-engine.py` vendors this helper and generates
+`install.human-output.json`, binding the declaration to both source files.
+Regenerate after changing either file. Release materialization validates all
+original declarations before any owner rewrites the tree, including when the
+source and destination are the same promotion scratch tree. It refreshes the
+entrypoint digests after all owning materializers finish (including the engine's
+own installer, which has no engine reference) and refuses conflicting helper
+assets. The helper is packaged with the installer, under the same
+native execution-policy and payload-ownership requirements.
+
+This declaration admits the existing Python updater's human-stream adapter;
+it does not replace signature/provenance checks or change `-File` arguments,
+script identity, exit handling, runtime construction or activation. Missing,
+unknown or stale declarations retain inherited native streams with a bounded
+presentation-gap notice. Such a producer is not reported as successfully
+captured or universally time-framed.
+
+The human-output adapter retains the updater's installer process-tree owner,
+deadline and deployed-version receipt judgment. Streaming output does not turn
+a zero exit with a missing target receipt, an expired deadline or a failed
+cutover into a successful operation.
+
 ### External dependency seasoning
 
 External build, runtime, development and selected optional dependencies must
@@ -2154,18 +2237,36 @@ have been released for at least **604800 seconds (seven days)** before their
 literal floors/pins are declared or their registry artifacts are installed.
 Attributable repository-owned source dependencies are exempt; their external
 dependency closure is not. Unknown or future upload timestamps never prove age.
+The declaration audit also attributes an ordinary versioned first-party
+dependency when the exact plugin test consumer explicitly installs that
+inventoried project's literal source path. Removing or redirecting that
+consumer binding revokes attribution; a package name alone is never exempt.
 Being a local path is not attribution: local wheels, archives and unattributed
 projects are refused. Source-directory admission verifies project identity,
 resolved containment and the recursive local dependency graph, including
 symlink escapes and hidden requirement-file references.
 
 The CLI authenticates its own canonical repository or materialized payload
-anchor. Other callers provide separately attested absolute roots with repeated
+anchor. In a materialized repository, transitive sibling references retain the
+roster-owned plugin's embedded `libs` namespace; only explicitly named,
+identity-matching projects enter the admitted graph, not unrelated directories
+or another payload's libraries. Other callers provide separately attested
+absolute roots with repeated
 `--trusted-source-root` options before `--`; the Python API's
 `trusted_source_roots` defaults to empty and does not infer trust from the
 requested path or working directory. Python 3.10 can use the proper TOML parser
 bundled in its standard `ensurepip` wheel without installing bootstrap packages;
 an interpreter without an available parser fails before dependency writes.
+
+Trusted registry-only tooling can select `--registry-only` before `--`.
+This skips product-root discovery and passes no trusted local project roots
+to the same canonical installer policy. It is mutually exclusive with
+`--trusted-source-root`; ordinary CLI source admission is unchanged. Local
+projects, editable sources and configured local-source mappings remain refused.
+The selected registry, resolver cutoff, dependency resolution, caller-required
+hashes and retained-input checks still apply. In particular, metadata-validator
+bootstrap must not derive unrelated product graphs merely to install its
+hash-pinned registry toolchain.
 
 `tools/check-dependency-age.py` audits canonical declarations against public
 release metadata; configured-feed availability remains an installation check.
@@ -2173,7 +2274,7 @@ Dependabot's seven-day cooldown is complementary, not a substitute for that
 guard or the resolver cutoff.
 
 `installer_dependency_policy.py` is the canonical stdlib-only installer policy,
-with private configuration-retention primitives in
+with private settings-projection and configuration-retention primitives in
 `installer_dependency_config.py`; both ship beside each versioned runtime helper
 and the shared engine. The native
 UV configuration probe is bounded, captured without printing credential-bearing
@@ -2185,6 +2286,16 @@ without upload timestamps; flat indexes are unsupported because they bypass
 timestamp filtering. UV's exclusive millisecond-resolution cutoff may
 conservatively reject an artifact exactly on the seven-day boundary. The
 installer does not add an epsilon that could admit younger bytes.
+Supported UV cutoff projections include legacy absolute/relative values and
+structured timestamps with an optional relative span. The structured form
+uses the earlier captured timestamp or relative boundary for the enforced
+global cutoff. Each effective package cutoff must be at least as strict as that
+global boundary. Every admitted package override, including environment and
+configuration-file values, is frozen to an absolute CLI cutoff before execution;
+span metadata never excuses a younger executed override. Retained
+comparison accounts for that intentional span-to-absolute conversion, preserving
+the admitted timestamp and every other resolver setting even as probe and
+execution clocks advance.
 `--reinstall` forces actual resolution rather than
 trusting a previously installed, potentially newer package. Skipping dependency
 or isolated-build resolution is not an age-enforcement fallback.
@@ -2206,9 +2317,22 @@ Editable source retention supports static `setuptools.build_meta` projects
 using the repository's `src` layout. Retained metadata selects compatibility
 editable mode and references the original live `src` through a same-volume
 relative package directory; installed imports survive snapshot cleanup and
-observe subsequent source edits. Dynamic metadata, other editable backends or
+observe subsequent source edits. On Windows the private snapshot is a sibling
+of a shallowest admitted project or build-resource root on the editable source
+volume, outside every copied input. A volume-root input with no outside
+temporary location fails explicitly. This avoids long parent-relative paths from an unrelated
+temporary directory; setuptools requires relative package directories.
+Dynamic metadata, other editable backends or
 layouts, competing editable-mode settings and mixed source volumes on Windows
 fail explicitly rather than installing references to disposable source trees.
+On Windows, editable metadata is staged beside the common source ancestry so
+setuptools' relative metadata renames stay short. Retained filesystem copies,
+TOML I/O and cleanup use native extended paths where needed; UV arguments and
+file URLs retain ordinary canonical spelling. This preserves the configured
+resolver and attribution boundary rather than bypassing retention for long
+snapshot paths. Parent-relative config selections are normalized lexically
+before extended prefixing, preserving explicit `--config-file` and
+`UV_CONFIG_FILE` behavior.
 
 The policy does not replace the adopter's configured feed, disable TLS
 verification, or retry against a public index. A selected extra's dependency

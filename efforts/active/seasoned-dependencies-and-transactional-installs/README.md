@@ -783,3 +783,155 @@ This is a proposal, not a claim that those mechanisms are already deployed.
   and repeated package-refresh options and the mandatory full reinstall.
   The fix is synchronized across all thirteen runtime payloads; it still owes
   its own review/CI and a successful native instrumented release run.
+- #6825 merged as `080963723459da1f754c0b42a77ad2c835a8cb73`
+  after genuine current-head Copilot approval and successful required CI.
+  The documentation-assessment finding was addressed and resolved without
+  changing source or weakening any gate. Post-merge CI run `38707494139`
+  now owns the next release trigger. Successful instrumented SSH baseline
+  collection, exact promotion and authorized runtime rollout remain open.
+- Refocused validation on the operator's primary completion criterion: local
+  managed worktree creation and conversation resumption, not merely CI.
+  The installed Windows runtime successfully created a fresh harness worktree
+  and paired knowledge worktree. Its exact normalized launch plan started
+  Copilot headlessly, which returned the requested startup marker with exit
+  zero and no file changes. A subsequent ordinary managed resume selected the
+  same native session and returned a second marker conditional on remembering
+  the previous response, again with exit zero and no file changes.
+  Both unchanged probe worktrees were finalized through their managed lifecycle
+  after explicitly concluding the exited test session. Local creation and
+  actual conversation resumption are therefore working; the independently
+  tracked release and rollout obligations are not implied complete.
+- The existing SSH incident owner independently completed the remaining
+  snapshot repair in #6831, merged as
+  `e493fac14e3fc8d815a0cdc92bdb99995485c7ef` after genuine approval and
+  successful required CI. Root and transitive UV source declarations now
+  point into the copied snapshot and consistently use non-editable sources.
+  Its native Linux coverage collector exercised both real fresh-runtime
+  first-use paths after removing the original sources, earning 506 test
+  records and 11 covered source files under unchanged deadlines. No competing
+  implementation was opened. The containing promotion must still earn its
+  own enrolled baseline; local evidence does not replace that gate.
+- The containing release `38716225239` earned the actual SSH baseline and
+  passed every full plugin suite, artifact build, attestation and publication.
+  Release #6842 merged to `8abb234719a922e5a8e280f2bb0b6864adfae474`.
+  Verified 231 changed implementation files against the validated development
+  snapshot, allowing only the sixteen declared installer-engine reference
+  localizations, plus all 42 released engine/support copies against canonical
+  bytes. The final immutable-main verifier nevertheless failed because
+  exact-main CI `38722150186` exposed materialized consumer failures (#6844).
+  Source/artifact integrity is proved, not functional release qualification;
+  authorized local rollout remains held.
+- Reserved only the newly exposed canonical source-attribution defect under
+  #6844; existing #6237 owners retain standalone preparation, Manager collection,
+  fixture/corpus repairs and pre-publication validation. The policy traversal
+  admitted the first embedded library but discarded its roster-owned namespace
+  for sibling transitive references. Three regression failures reproduced the
+  exact refusal before the correction. Traversal now retains the originating
+  library namespace while admitting only explicitly named, identity-matching
+  projects; unowned directories and foreign payloads remain refused.
+- A real native CLI regression uses the production release materializer for
+  root and transitive libraries, deletes the canonical sources, then installs
+  from the self-contained graph. Source, canonical-helper, vendored-helper and
+  payload-only controls also pass. All 240 policy and synchronization cases,
+  touched-code lint, thirteen installer contracts and fan-out checks passed.
+  Thirteen runtime change entries carry the synchronized correction. Fresh
+  review/CI, containing release qualification and configured-feed rollout
+  remain required; no production or installed copy was patched.
+- Genuine review of #6849 found that the initial native fixture installed its
+  three projects separately, so it proved graph attribution but not actual
+  transitive installation from the payload. The synthetic backend now emits
+  the declared dependency metadata, the fixture installs only the payload,
+  and its fresh target interpreter verifies all three installed distribution
+  versions. All 160 policy cases passed with that stronger consumer assertion.
+  The production correction is unchanged; fresh current-head review and CI
+  remain necessary before merge.
+- #6849 merged as `29cae581e4a38f4c9190a2d33c49d051b36425d8`
+  after actual current-head Copilot approval with zero open findings and
+  successful required CI `38729343792`. The corrected transitive-installation
+  finding was explicitly resolved before merge. Post-merge CI `38732312682`
+  owns the next normal release trigger. The other materialized-consumer owners
+  retain their repairs; this source fix alone does not qualify the full release
+  or authorize skipping a failed consumer gate.
+- Post-merge development CI `38732312682` passed, but the next natural
+  promotion `38733426857` failed before artifact construction in job
+  `116427340554`: trusted validator tooling still checks out the older
+  materialized main and hits the already-fixed attribution refusal (#6848).
+  The existing incident owner independently identified this bootstrap
+  deadlock: the development fix cannot promote itself while the old trusted
+  control copy is broken. No unchanged retry, direct main change, gate waiver
+  or local rollout was attempted. A narrowly scoped main bootstrap requires
+  explicit operator authorization under the documented pipeline exception;
+  other materialized-consumer repairs remain with their existing owners.
+- The operator explicitly authorized a narrow reviewed main-bootstrap PR,
+  preserving required checks and dependency policy. Fresh discovery found the
+  already-owned #6867 recovery and its active execution-custody messages;
+  no competing PR or branch mutation was attempted. Its source-copy head is
+  correctly refused by the main source-shape gate. Relayed a compliant
+  registry-only approach using the existing trusted policy API with no
+  local-source roots, and retained the containing-release and local-rollout
+  acceptance here. The existing writer must publish a workflow-only recovery
+  and pass genuine current-head review and required checks before merge.
+- The retained bootstrap writer published workflow-only #6867 at
+  `0292be0a33d8009ebad08d40b637d9df146a8c2f`. Its main source gate and
+  fresh hosted production-block proof `38813975248` passed: incorrect helper
+  identity refuses before provisioning, injected UV failure restores the
+  trusted checkout with nonzero status, and actual fresh hash-pinned seasoned
+  provisioning succeeds. The helper is pinned to the reviewed #6849 commit
+  and exact blob; current-head review and the owner's merge remain open.
+  No competing writer or installed edit was introduced.
+- The independent materialized-consumer prevention #6851 and standalone
+  source-selection #6854 are merged, not yet naturally qualified. Latest
+  normal promotion `38810806057` still failed two Worktrees launch-modifier
+  contracts before artifact construction. The existing #5689 owner already
+  has the exact failure report; no deadline, assertion or release gate was
+  waived. The containing release, immutable-main proof and authorized local
+  rollout remain outstanding despite the separately proven local creation
+  and native-session resumption.
+- Confirmed the separately reported UV 0.11.7 compatibility failure against its
+  official source and actual native executable: both absolute and relative
+  configuration probes refused its structured `ExcludeNewerValue` projection.
+  Nine new positive/boundary assertions also failed before the correction.
+  The parser now admits only the exact supported structure, conservatively
+  retaining the earlier captured timestamp or relative boundary. Malformed,
+  unknown and weaker package settings still refuse.
+- The complete native UV 0.11.7 portfolio then exposed a second real boundary:
+  relative package projections embed a fresh timestamp in each probe, making
+  unchanged retained configuration appear different. One admission clock now
+  governs both probes and their package-cutoff comparison, preserving the
+  relative span itself and any stricter captured timestamp. Moved cohesive
+  settings parsing into the existing private configuration helper to keep
+  every shipped module under its unchanged 1,000-line cap.
+- Final native policy coverage passed 201 cases with actual UV 0.11.7;
+  legacy UV 0.12.5 policy and synchronization coverage passed 288 cases.
+  The originally failing governed Worktrees test-runner preparation also
+  succeeded with UV 0.11.7 through the configured feed and seven-day policy.
+  All thirteen runtime copies and release entries are synchronized; real
+  review, required CI, containing promotion and rollout remain open.
+- Before merge, an additional actual UV 0.11.7 counterexample proved that a
+  package table can project a younger timestamp alongside an older span.
+  Both its native and unit regressions failed first. Package admission now
+  independently checks the actual timestamp that remains in UV's input;
+  global clamping and comparison normalization cannot justify a weaker
+  package override. The native precedence fixture also gives UV the same
+  fixed test clock as the policy rather than comparing captured wall-clock
+  timestamps against a different injected date. The final complete portfolios
+  and governed preparation above include these corrections.
+- The first independent review of #6886 identified the remaining execution
+  boundary: a relative override can advance after admission even when its
+  normalized comparison passes. A native controlled-index replay against that
+  exact preceding source actually installed the excluded `2.0` artifact
+  instead of `1.0`. The correction freezes every admitted effective package
+  cutoff to an absolute CLI value, covering separate/inline CLI arguments,
+  environment and configuration files. Retained comparison explicitly accounts
+  for this intentional conversion; it does not discard unrelated settings.
+  The four real consumer cases advance UV's clock between admission, retained
+  probing and actual installation and require the excluded artifact to remain
+  undownloaded. Fresh final validation and current-head review remain required.
+- Final freeze validation passed 207 policy cases with real UV 0.11.7 and
+  294 legacy UV 0.12.5 policy/synchronization cases. The final governed
+  Worktrees preparation also succeeds. Freezing the derived absolute boundary
+  supersedes the interim timestamp-only refusal: equal relative boundaries
+  remain usable, while a newer captured timestamp cannot become a younger
+  executed override. All four advancing-clock cases execute real resolution
+  from fresh targets; malformed, weaker absolute and unknown settings remain
+  refused. The correction still owes fresh-head review/CI and release.

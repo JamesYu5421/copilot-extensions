@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import io
+import json
+import os
 import shutil
+import subprocess
 import sys
+import threading
+import zipfile
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from subprocess import CompletedProcess
 
@@ -131,9 +139,87 @@ def test_stricter_relative_is_honored():
     )[1] == "2026-10-03T00:00:00Z"
 
 
+def projected_cutoff(timestamp, span="None"):
+    return f"ExcludeNewerValue {{ timestamp: {timestamp}, span: {span}, }}"
+
+
+@pytest.mark.parametrize("timestamp,span,expected", [
+    ("2026-10-03T00:00:00Z", "None", "2026-10-03T00:00:00Z"),
+    ("2026-10-13T00:00:00Z", "None", "2026-10-06T00:00:00Z"),
+    ("2026-10-06T00:00:00.123456789Z", "None", "2026-10-06T00:00:00Z"),
+    ("2026-10-03T00:00:01Z", "Some(ExcludeNewerSpan(10d,),)", "2026-10-03T00:00:00Z"),
+    ("2026-10-02T23:59:59Z", "Some(ExcludeNewerSpan(10d,),)", "2026-10-02T23:59:59Z"),
+    ("2026-10-12T00:00:00Z", "Some(ExcludeNewerSpan(1d,),)", "2026-10-06T00:00:00Z"),
+])
+def test_structured_uv_cutoff_preserves_the_strongest_boundary(timestamp, span, expected):
+    value = projected_cutoff(timestamp, span)
+    assert policy.cutoff_arguments(settings(f"Some({value},)"), now=NOW)[1] == expected
+
+
+@pytest.mark.parametrize("timestamp,span,accepted", [
+    ("2026-10-06T00:00:00Z", "None", True),
+    ("2026-10-06T00:00:00Z", "Some(ExcludeNewerSpan(7d))", True),
+    ("2026-10-06T00:00:01Z", "Some(ExcludeNewerSpan(7d))", True),
+    ("2026-10-06T00:00:01Z", "None", False),
+    ("2026-10-03T00:00:01Z", "Some(ExcludeNewerSpan(10d,),)", True),
+    ("2026-10-12T00:00:00Z", "Some(ExcludeNewerSpan(10d,),)", True),
+])
+def test_structured_uv_package_cutoff_cannot_weaken_seasoning(timestamp, span, accepted):
+    projection = settings(packages=package("demo", projected_cutoff(timestamp, span)))
+    if accepted:
+        assert policy.cutoff_arguments(projection, now=NOW)[1] == "2026-10-06T00:00:00Z"
+    else:
+        with pytest.raises(policy.DependencyPolicyError, match="weakens seasoning"):
+            policy.cutoff_arguments(projection, now=NOW)
+
+
+@pytest.mark.parametrize("value", [
+    "ExcludeNewerValue { timestamp: 2026-10-03T00:00:00Z }",
+    "ExcludeNewerValue { timestamp: 2026-10-03T00:00:00Z, span: None, extra: None }",
+    projected_cutoff("invalid"),
+    projected_cutoff("2026-10-03T00:00:00"),
+    projected_cutoff("2026-10-03T00:00:00Z", "Some(Unknown(10d))"),
+    projected_cutoff("2026-10-03T00:00:00Z", "Some(ExcludeNewerSpan(1month))"),
+])
+def test_structured_uv_cutoff_unknown_or_malformed_fields_refuse(value):
+    with pytest.raises(policy.DependencyPolicyError):
+        policy.cutoff_arguments(settings(f"Some({value},)"), now=NOW)
+
+
+@pytest.mark.parametrize("timestamp,span,equivalent", [
+    ("2026-10-02T00:00:01Z", "Some(ExcludeNewerSpan(11d))", True),
+    ("2026-10-02T00:00:01Z", "Some(ExcludeNewerSpan(10d))", False),
+    ("2026-10-02T00:00:00Z", "Some(ExcludeNewerSpan(10d))", False),
+    ("2026-10-01T23:59:59Z", "Some(ExcludeNewerSpan(11d))", False),
+    ("2026-10-02T00:00:01Z", "None", False),
+])
+def test_structured_package_comparison_preserves_stricter_timestamps(timestamp, span, equivalent):
+    original = settings(packages=package("demo", projected_cutoff(
+        "2026-10-02T00:00:00Z", "Some(ExcludeNewerSpan(11d))",
+    )))
+    retained = settings(packages=package("demo", projected_cutoff(timestamp, span)))
+    assert (
+        policy._resolver_configuration(original, now=NOW)
+        == policy._resolver_configuration(retained, now=NOW)
+    ) is equivalent
+
+
 def test_stricter_package_is_preserved():
     date = NOW - timedelta(days=10)
     assert policy.cutoff_arguments(settings(packages=package("demo", absolute(date))), now=NOW)[1] == "2026-10-06T00:00:00Z"
+
+
+def test_every_effective_package_override_is_frozen_to_its_admitted_absolute_cutoff():
+    packages = (
+        package("first", absolute(NOW - timedelta(days=10)))
+        + package("second", "Relative(ExcludeNewerSpan(11d))")
+    )
+    assert policy.cutoff_arguments(settings(packages=packages), now=NOW) == [
+        "--exclude-newer", "2026-10-06T00:00:00Z",
+        "--exclude-newer-package", "first=2026-10-03T00:00:00Z",
+        "--exclude-newer-package", "second=2026-10-02T00:00:00Z",
+        "--reinstall",
+    ]
 
 
 @pytest.mark.parametrize("packages", [
@@ -321,7 +407,41 @@ def test_real_uv_settings_consumer_preserves_stricter_cutoff(tmp_path):
     ]
     result = policy.prepare_uv_install(uv, arguments, cwd=tmp_path, now=NOW)
     assert result.count("--exclude-newer") == 1
-    assert result[-3:] == ["--exclude-newer", "2020-01-01T00:00:00Z", "--reinstall"]
+    assert result[result.index("--exclude-newer") + 1] == "2020-01-01T00:00:00Z"
+    assert result.count("--exclude-newer-package") == 1
+    assert result[result.index("--exclude-newer-package") + 1] == "demo=2019-01-01T00:00:00Z"
+    assert result[-1] == "--reinstall"
+
+
+def test_real_uv_settings_consumer_preserves_relative_cutoffs(tmp_path):
+    uv = shutil.which("uv")
+    assert uv, "native UV is required for relative cutoff coverage"
+    now = datetime.now(timezone.utc)
+    arguments = [
+        "--no-config", "--python", sys.executable,
+        "--exclude-newer", "10 days", "--exclude-newer-package", "demo=11 days", "demo",
+    ]
+    result = policy.prepare_uv_install(uv, arguments, cwd=tmp_path, now=now)
+    expected = (now - timedelta(days=10)).isoformat().replace("+00:00", "Z")
+    assert result[result.index("--exclude-newer") + 1] == expected
+    expected_package = (now - timedelta(days=11)).isoformat().replace("+00:00", "Z")
+    assert result[result.index("--exclude-newer-package") + 1] == f"demo={expected_package}"
+    assert result[-1] == "--reinstall"
+
+
+def test_real_uv_package_span_is_enforced_on_the_executed_override(tmp_path):
+    uv = shutil.which("uv")
+    assert uv, "native UV is required for structured package cutoff coverage"
+    (tmp_path / "uv.toml").write_text(
+        'exclude-newer-package={demo={timestamp="2099-01-01T00:00:00Z",span="11 days"}}\n',
+        encoding="utf-8",
+    )
+    arguments = ["--python", sys.executable, "demo"]
+    environment = offline_environment(tmp_path)
+    admitted = policy.prepare_uv_install(uv, arguments, cwd=tmp_path, env=environment, now=NOW)
+    assert admitted[admitted.index("--exclude-newer") + 1] == "2026-10-06T00:00:00Z"
+    assert admitted[admitted.index("--exclude-newer-package") + 1] == "demo=2026-10-02T00:00:00Z"
+    assert admitted[-1] == "--reinstall"
 
 
 @pytest.mark.parametrize("missing_timestamp,url_dependency,exact_boundary", [
@@ -330,7 +450,7 @@ def test_real_uv_settings_consumer_preserves_stricter_cutoff(tmp_path):
 @pytest.mark.parametrize("first_party_source", [False, True])
 def test_real_uv_registry_transitive_and_isolated_build_age(
     tmp_path, missing_timestamp, url_dependency, exact_boundary, first_party_source,
-    mutation=None, monkeypatch=None,
+    mutation=None, monkeypatch=None, clock_source=None,
 ):
     import hashlib
     import io
@@ -370,6 +490,8 @@ def test_real_uv_registry_transitive_and_isolated_build_age(
         }
         if not (missing_timestamp and name == "fixture-transitive"):
             record["upload-time"] = "2020-01-01T00:00:00Z" if old else datetime.now(timezone.utc).isoformat()
+            if clock_source and name == "fixture-transitive" and not old:
+                record["upload-time"] = (NOW - timedelta(days=7) + timedelta(seconds=1)).isoformat()
             if old and name == "fixture-transitive":
                 adjustment = timedelta() if exact_boundary else timedelta(milliseconds=1)
                 record["upload-time"] = (NOW - timedelta(seconds=604800) - adjustment).isoformat()
@@ -450,6 +572,14 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
                       encoding="utf-8")
     environment["UV_CONFIG_FILE"] = str(config)
     environment["UV_CACHE_DIR"] = str(tmp_path / "cache")
+    if clock_source == "config":
+        config.write_text(
+            'exclude-newer-package={fixture-transitive="7 days"}\n'
+            + config.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+    elif clock_source == "environment":
+        environment["UV_EXCLUDE_NEWER_PACKAGE"] = "fixture-transitive=7 days"
     venv = tmp_path / "venv"
     flags = {"creationflags": policy._HEADLESS}
     try:
@@ -479,6 +609,10 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
                 assert downloads == []
                 return
         arguments = ["--python", str(python), requirement]
+        if clock_source == "cli":
+            arguments.extend(["--exclude-newer-package", "fixture-transitive=7 days"])
+        elif clock_source == "cli-inline":
+            arguments.append("--exclude-newer-package=fixture-transitive=7 days")
         included = tmp_path / "included.txt"
         requirements = tmp_path / "requirements.txt"
         if mutation == "requirements":
@@ -487,8 +621,15 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
             arguments = ["--python", str(python), "-r", str(requirements)]
         actual_run = subprocess.run
         mutations = []
+        clock_steps = []
 
         def run(command, **kwargs):
+            if clock_source and command[1:3] == ["pip", "install"]:
+                clock = NOW + (timedelta(seconds=2) if clock_steps else timedelta())
+                kwargs["env"] = dict(
+                    kwargs["env"], UV_TEST_CURRENT_TIMESTAMP=clock.isoformat().replace("+00:00", "Z"),
+                )
+                clock_steps.append(clock)
             if mutation and "--show-settings" not in command and command[1:3] == ["pip", "install"]:
                 mutations.append(mutation)
                 remote = f"fixture-transitive @ http://127.0.0.1:{server.server_port}/files/fixture_transitive-2.0-py3-none-any.whl"
@@ -509,7 +650,7 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
                 assert Path(kwargs["cwd"]) != tmp_path
             return actual_run(command, **kwargs)
 
-        if mutation:
+        if mutation or clock_source:
             monkeypatch.setattr(policy.subprocess, "run", run)
         installed = policy.run_uv_install(
             uv, arguments, env=environment, cwd=tmp_path, now=NOW, trusted_source_roots=roots,
@@ -530,6 +671,9 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
                 env=environment, check=True, capture_output=True, text=True, timeout=10, **flags,
             )
             assert versions.stdout.splitlines() == ["1.0", "backend-1.0"]
+            if clock_source:
+                assert clock_steps == [NOW, NOW + timedelta(seconds=2), NOW + timedelta(seconds=2)]
+                assert "fixture_transitive-2.0-py3-none-any.whl" not in downloads
             if mutation:
                 assert mutations == [mutation]
                 assert "fixture_transitive-2.0-py3-none-any.whl" not in downloads
@@ -546,12 +690,21 @@ def test_native_install_never_reopens_admitted_mutable_inputs(tmp_path, monkeypa
     )
 
 
-@pytest.mark.parametrize("selection", ["explicit", "implicit", "env-relative", "project-env", "directory"])
+@pytest.mark.parametrize("source", ["cli", "cli-inline", "environment", "config"])
+def test_native_package_cutoffs_stay_frozen_across_probe_and_execution_clocks(tmp_path, monkeypatch, source):
+    test_real_uv_registry_transitive_and_isolated_build_age(
+        tmp_path, False, False, False, False, monkeypatch=monkeypatch, clock_source=source,
+    )
+
+
+@pytest.mark.parametrize("selection", [
+    "explicit", "implicit", "env-relative", "project-env", "directory", "resource-parent",
+])
 def test_native_editable_retains_metadata_but_imports_live_source_after_cleanup(tmp_path, monkeypatch, selection):
     import os
     import subprocess
 
-    source = tmp_path / "source"
+    source = tmp_path / "resources" / "source" if selection == "resource-parent" else tmp_path / "source"
     backend = source / "backend" / "setuptools"
     backend.mkdir(parents=True)
     (backend / "__init__.py").write_text("", encoding="utf-8")
@@ -617,9 +770,18 @@ def build_editable(wheel_directory, config_settings=None, metadata_directory=Non
         return actual(command, **kwargs)
 
     monkeypatch.setattr(policy.subprocess, "run", run)
+    copytree = policy.shutil.copytree
+
+    def copy_outside(source, destination, *args, **kwargs):
+        assert not Path(destination).resolve().is_relative_to(Path(source).resolve())
+        return copytree(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(policy.shutil, "copytree", copy_outside)
     installed = policy.run_uv_install(
         uv, arguments,
-        env=environment, cwd=cwd, trusted_source_roots=(source,),
+        env=environment, cwd=cwd,
+        trusted_source_roots=(source.parent,) if selection == "resource-parent" else (source,),
+        retained_resource_roots=(source.parent,) if selection == "resource-parent" else (),
         capture_output=True, text=True, timeout=30,
     )
     assert installed.returncode == 0, installed.stderr
@@ -666,6 +828,7 @@ def test_native_retained_configuration_preserves_all_three_precedence_tiers(tmp_
     import subprocess
 
     environment = offline_environment(tmp_path)
+    environment["UV_TEST_CURRENT_TIMESTAMP"] = NOW.isoformat().replace("+00:00", "Z")
     if os.name == "nt":
         environment["APPDATA"] = str(tmp_path / "user")
         environment["SYSTEMDRIVE"] = str(tmp_path / "system")
@@ -711,6 +874,88 @@ def test_native_retained_configuration_preserves_all_three_precedence_tiers(tmp_
     )
     assert result.returncode == 0
     assert len(calls) == 1 and not calls[0].exists()
+
+
+def test_native_retained_editable_build_uses_real_setuptools(tmp_path, monkeypatch):
+    import subprocess
+    import zipfile
+
+    source = tmp_path / ("checkout-" + "x" * 35) / "project"
+    live = source / "src" / "fixture_editable"
+    live.mkdir(parents=True)
+    (live / "__init__.py").write_text("value = 'original'\n", encoding="utf-8")
+    manifest = source / "pyproject.toml"
+    manifest.write_text(
+        '[build-system]\nrequires=["setuptools>=83.0.0"]\nbuild-backend="setuptools.build_meta"\n'
+        '[project]\nname="fixture-editable"\nversion="1.0"\ndependencies=[]\n'
+        '[tool.setuptools.packages.find]\nwhere=["src"]\n',
+        encoding="utf-8",
+    )
+    actual = subprocess.run
+    retained = []
+
+    def run(command, **kwargs):
+        if "--show-settings" in command:
+            return actual(command, **kwargs)
+        retained.append(Path(command[command.index("-e") + 1]))
+        result = actual(
+            [sys.executable, "-I", "-c",
+             "from setuptools.build_meta import build_editable,get_requires_for_build_editable;"
+             "get_requires_for_build_editable({'editable_mode': 'compat'});"
+             "build_editable('.', config_settings={'editable_mode': 'compat'})"],
+            cwd=retained[-1], env=kwargs["env"], capture_output=True, text=True,
+            timeout=30, creationflags=policy._HEADLESS,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        wheels = list(retained[-1].glob("*.whl"))
+        assert len(wheels) == 1, result.stdout + result.stderr
+        with zipfile.ZipFile(wheels[0]) as wheel:
+            paths = [name for name in wheel.namelist() if name.endswith(".pth")]
+            assert len(paths) == 1
+            assert Path(wheel.read(paths[0]).decode().strip()).resolve() == live.parent.resolve()
+        return result
+
+    monkeypatch.setattr(policy.subprocess, "run", run)
+    built = policy.run_uv_install(
+        shutil.which("uv"), ["--no-config", "--no-index", "--python", sys.executable, "-e", str(source)],
+        env=offline_environment(tmp_path), cwd=source.parent, trusted_source_roots=(source,),
+    )
+    assert built.returncode == 0, built.stdout + built.stderr
+    assert len(retained) == 1 and not retained[0].exists()
+
+
+def test_retained_snapshot_inside_source_refuses_before_copy(tmp_path, monkeypatch):
+    source = source_project(tmp_path / "source")
+    temporary_directory = policy.tempfile.TemporaryDirectory
+    monkeypatch.setattr(
+        policy.tempfile, "TemporaryDirectory",
+        lambda **kwargs: temporary_directory(prefix=kwargs["prefix"], dir=source),
+    )
+    monkeypatch.setattr(
+        policy.subprocess, "run", lambda command, **kwargs: CompletedProcess(command, 0, settings(), ""),
+    )
+    with pytest.raises(policy.DependencyPolicyError, match="outside copied inputs"):
+        policy.run_uv_install(
+            "uv", ["--no-config", str(source)], env=offline_environment(tmp_path),
+            cwd=tmp_path, trusted_source_roots=(source,),
+        )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows editable snapshot placement")
+def test_windows_volume_root_input_has_no_outside_retention_location(tmp_path, monkeypatch):
+    anchor = Path(tmp_path.anchor)
+    source = anchor / "fixture"
+    monkeypatch.setattr(
+        policy, "_source_inputs", lambda *args: (tmp_path, {anchor, source}, set(), {source}),
+    )
+
+    def prepare(*args, _projection, **kwargs):
+        _projection.append(settings())
+        return []
+
+    monkeypatch.setattr(policy, "prepare_uv_install", prepare)
+    with pytest.raises(policy.DependencyPolicyError, match="outside copied inputs"):
+        policy.run_uv_install("uv", [], env=offline_environment(tmp_path), cwd=tmp_path)
 
 
 @pytest.mark.parametrize("field,value", [
@@ -827,6 +1072,8 @@ def test_relative_certificate_directory_list_retains_original_cwd(tmp_path, monk
 
 
 def source_project(path, name="fixture-source", sources="", dependencies=""):
+    import ast
+
     path.mkdir(parents=True, exist_ok=True)
     (path / "pyproject.toml").write_text(
         '[build-system]\nrequires=[]\nbuild-backend="fixture_backend"\nbackend-path=["."]\n'
@@ -834,13 +1081,16 @@ def source_project(path, name="fixture-source", sources="", dependencies=""):
         + (f"[tool.uv.sources]\n{sources}\n" if sources else ""),
         encoding="utf-8",
     )
+    metadata = f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n" + "".join(
+        f"Requires-Dist: {requirement}\n" for requirement in ast.literal_eval(f"[{dependencies}]")
+    )
     (path / "fixture_backend.py").write_text(
         "import pathlib, zipfile\n"
         "def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):\n"
         f"    name = '{name.replace('-', '_')}-1.0-py3-none-any.whl'\n"
         "    with zipfile.ZipFile(pathlib.Path(wheel_directory) / name, 'w') as wheel:\n"
         f"        prefix = '{name.replace('-', '_')}-1.0.dist-info/'\n"
-        f"        wheel.writestr(prefix + 'METADATA', 'Metadata-Version: 2.1\\nName: {name}\\nVersion: 1.0\\n')\n"
+        f"        wheel.writestr(prefix + 'METADATA', {metadata!r})\n"
         "        wheel.writestr(prefix + 'WHEEL', 'Wheel-Version: 1.0\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n')\n"
         "        wheel.writestr(prefix + 'RECORD', '')\n"
         "    return name\n",
@@ -1071,20 +1321,25 @@ def test_explicit_project_context_does_not_trust_an_escaping_source_graph(tmp_pa
         )
 
 
-@pytest.mark.parametrize("anchor", ["canonical", "canonical-vendored", "payload"])
+@pytest.mark.parametrize("anchor", ["canonical", "canonical-vendored", "canonical-materialized", "payload"])
 def test_native_cli_uses_its_own_roster_or_payload_anchor_not_cwd(tmp_path, anchor):
     import json
 
     repository = tmp_path / "repository"
+    canonical_libraries = anchor.startswith("canonical")
+    editable = ", editable=true" if anchor == "canonical-materialized" else ""
     payload = source_project(
         repository / "plugins" / "fixture-plugin", "fixture-plugin",
-        sources='fixture-lib={path="../../libs/fixture-lib"}' if anchor.startswith("canonical")
+        sources=f'fixture-lib={{path="../../libs/fixture-lib"{editable}}}' if canonical_libraries
         else 'fixture-lib={path="libs/fixture-lib"}',
+        dependencies='"fixture-lib>=1"',
     )
     lib = source_project(
-        repository / "libs" / "fixture-lib" if anchor.startswith("canonical") else payload / "libs" / "fixture-lib",
-        "fixture-lib",
+        repository / "libs" / "fixture-lib" if canonical_libraries else payload / "libs" / "fixture-lib",
+        "fixture-lib", sources=f'fixture-leaf={{path="../fixture-leaf"{editable}}}',
+        dependencies='"fixture-leaf>=1"',
     )
+    leaf = source_project(lib.parent / "fixture-leaf", "fixture-leaf")
     manifest = {
         "name": "fixture-plugin", "version": "1.0",
         "repository": "https://github.com/ThomasMichon/copilot-extensions",
@@ -1101,6 +1356,20 @@ def test_native_cli_uses_its_own_roster_or_payload_anchor_not_cwd(tmp_path, anch
             "name": "copilot-extensions",
             "plugins": [{"name": "fixture-plugin", "version": "1.0", "source": "plugins/fixture-plugin"}],
         }), encoding="utf-8")
+        if anchor == "canonical-materialized":
+            import materialize_main
+
+            for project in (lib, leaf):
+                (project / "src").mkdir()
+            log = materialize_main.materialize_uv_editable_ref_into(
+                source_consumer_dir=payload, dest_consumer_dir=payload,
+                canonical_root=repository, dest_root=repository,
+            )
+            assert log and not any(entry.startswith("SKIP") for entry in log), log
+            lib = payload / "libs" / "fixture-lib"
+            leaf = payload / "libs" / "fixture-leaf"
+            assert (lib / "pyproject.toml").is_file() and (leaf / "pyproject.toml").is_file()
+            shutil.rmtree(repository / "libs")
     else:
         helper = payload / "scripts" / PATH.name
     helper.parent.mkdir(parents=True, exist_ok=True)
@@ -1120,14 +1389,25 @@ def test_native_cli_uses_its_own_roster_or_payload_anchor_not_cwd(tmp_path, anch
     import os
 
     python = target / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    for source in (payload, lib):
-        result = subprocess.run(
-            [sys.executable, "-I", str(helper), "--uv", uv, "--",
-             "--no-config", "--no-index", "--python", str(python), str(source)],
-            cwd=tmp_path, env=environment, capture_output=True, text=True,
-            timeout=30, creationflags=policy._HEADLESS,
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
+    result = subprocess.run(
+        [sys.executable, "-I", str(helper), "--uv", uv, "--",
+         "--no-config", "--no-index", "--python", str(python), str(payload)],
+        cwd=tmp_path, env=environment, capture_output=True, text=True,
+        timeout=30, creationflags=policy._HEADLESS,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    installed = subprocess.run(
+        [str(python), "-I", "-c",
+         "import importlib.metadata as m, json; "
+         "print(json.dumps({name: m.version(name) for name in "
+         "('fixture-plugin', 'fixture-lib', 'fixture-leaf')}))"],
+        cwd=tmp_path, env=environment, capture_output=True, text=True,
+        timeout=30, creationflags=policy._HEADLESS,
+    )
+    assert installed.returncode == 0, installed.stdout + installed.stderr
+    assert json.loads(installed.stdout) == {
+        "fixture-plugin": "1.0", "fixture-lib": "1.0", "fixture-leaf": "1.0",
+    }
     unowned = source_project(repository / "unowned", "agent-lookalike")
     rejected = subprocess.run(
         [sys.executable, "-I", str(helper), "--uv", uv, "--", str(unowned)],
@@ -1136,6 +1416,53 @@ def test_native_cli_uses_its_own_roster_or_payload_anchor_not_cwd(tmp_path, anch
     )
     assert rejected.returncode != 0
     assert "trusted source roots" in rejected.stderr
+
+
+@pytest.mark.parametrize("helper_owner", ["canonical", "payload"])
+@pytest.mark.parametrize("target", ["sibling", "unowned", "foreign-payload", "wrong-identity"])
+def test_canonical_materialized_graph_retains_only_its_owned_library_namespace(
+    tmp_path, monkeypatch, helper_owner, target,
+):
+    import json
+
+    repository = tmp_path / "repository"
+    payload = source_project(
+        repository / "plugins" / "fixture-plugin", "fixture-plugin",
+        sources='fixture-lib={path="libs/fixture-lib"}',
+    )
+    library = source_project(payload / "libs" / "fixture-lib", "fixture-lib")
+    target_path = {
+        "sibling": payload / "libs" / "fixture-leaf",
+        "unowned": payload / "unowned" / "fixture-leaf",
+        "foreign-payload": repository / "plugins" / "unlisted" / "libs" / "fixture-leaf",
+        "wrong-identity": payload / "libs" / "fixture-leaf",
+    }[target]
+    import os
+
+    reference = os.path.relpath(target_path, library).replace("\\", "/")
+    with (library / "pyproject.toml").open("a", encoding="utf-8") as stream:
+        stream.write(f'[tool.uv.sources]\nfixture-leaf={{path="{reference}"}}\n')
+    leaf = source_project(target_path, "different-name" if target == "wrong-identity" else "fixture-leaf")
+    (payload / "plugin.json").write_text(json.dumps({
+        "name": "fixture-plugin", "version": "1.0",
+        "repository": "https://github.com/ThomasMichon/copilot-extensions",
+    }), encoding="utf-8")
+    roster = repository / ".github" / "plugin" / "marketplace.json"
+    roster.parent.mkdir(parents=True)
+    roster.write_text(json.dumps({
+        "name": "copilot-extensions",
+        "plugins": [{"name": "fixture-plugin", "version": "1.0", "source": "plugins/fixture-plugin"}],
+    }), encoding="utf-8")
+    helper = (
+        repository / "libs" / "installer-engine" / PATH.name if helper_owner == "canonical"
+        else payload / "scripts" / PATH.name
+    )
+    monkeypatch.setattr(policy, "__file__", str(helper))
+    if target == "sibling":
+        assert set(policy._anchor_roots()) == {payload, library, leaf}
+    else:
+        with pytest.raises(policy.DependencyPolicyError, match="library (attribution|identity)"):
+            policy._anchor_roots()
 
 
 def test_payload_metadata_alone_without_owner_provenance_grants_no_roots(tmp_path, monkeypatch):
@@ -1277,3 +1604,257 @@ def test_new_private_snapshot_paths_are_canonicalized_without_trusting_source_al
         "uv", ["--no-config", str(source)], cwd=source, trusted_source_roots=(source,),
     )
     assert result.returncode == 0 and roots and not roots[0].exists()
+
+
+def test_registry_only_cli_does_not_discover_product_roots(monkeypatch):
+    def forbidden():
+        pytest.fail("registry bootstrap attempted product-graph discovery")
+
+    calls = []
+    monkeypatch.setattr(policy, "_anchor_roots", forbidden)
+    monkeypatch.setattr(
+        policy, "run_uv_install",
+        lambda uv, arguments, **kwargs: (
+            calls.append((uv, arguments, kwargs)) or CompletedProcess([], 0)
+        ),
+    )
+    arguments = [
+        "--no-config", "--require-hashes", "--index-url", "https://registry.example/simple",
+        "packaging==25.0",
+    ]
+    assert policy.main(["--uv", "selected-uv", "--registry-only", "--", *arguments]) == 0
+    assert len(calls) == 1
+    assert calls[0][:2] == ("selected-uv", arguments)
+    assert calls[0][2]["trusted_source_roots"] == ()
+
+
+def test_default_cli_retains_product_attribution(monkeypatch, tmp_path):
+    discovered, calls = [], []
+    monkeypatch.setattr(
+        policy, "_anchor_roots", lambda: (discovered.append(True) or (tmp_path,)),
+    )
+    monkeypatch.setattr(
+        policy, "run_uv_install",
+        lambda uv, arguments, **kwargs: (
+            calls.append(kwargs["trusted_source_roots"]) or CompletedProcess([], 0)
+        ),
+    )
+    assert policy.main(["--uv", "selected-uv", "--", "fixture-package"]) == 0
+    assert discovered == [True] and calls == [(tmp_path,)]
+
+
+def test_registry_only_cannot_grant_explicit_source_roots(tmp_path, capsys):
+    with pytest.raises(SystemExit) as error:
+        policy.main([
+            "--uv", "selected-uv", "--registry-only", "--trusted-source-root", str(tmp_path),
+            "--", "fixture-package",
+        ])
+    assert error.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "reference", ["direct", "editable", "requirements", "nested-requirements", "project", "configured"],
+)
+def test_registry_only_refuses_local_sources_before_uv(monkeypatch, tmp_path, capsys, reference):
+    source = source_project(tmp_path / "source")
+    for name in tuple(os.environ):
+        if name.startswith(("UV_", "PIP_")):
+            monkeypatch.delenv(name)
+    for name in ("HOME", "USERPROFILE", "APPDATA", "XDG_CONFIG_HOME"):
+        monkeypatch.setenv(name, str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    arguments = [str(source)]
+    if reference == "editable":
+        arguments.insert(0, "-e")
+    elif reference in {"requirements", "nested-requirements"}:
+        requirement = tmp_path / "requirements.txt"
+        requirement.write_text(str(source) + "\n", encoding="utf-8")
+        if reference == "nested-requirements":
+            outer = tmp_path / "outer.txt"
+            outer.write_text("-r requirements.txt\n", encoding="utf-8")
+            requirement = outer
+        arguments = ["-r", str(requirement)]
+    elif reference == "project":
+        arguments = ["--project", str(source), "fixture-package"]
+    elif reference == "configured":
+        config = tmp_path / "configured.toml"
+        config.write_text(
+            '[sources]\nfixture-source={path="source"}\n', encoding="utf-8",
+        )
+        monkeypatch.setenv("UV_CONFIG_FILE", str(config))
+        arguments = ["fixture-package"]
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("refused local-source input reached UV or dependency writes")
+
+    monkeypatch.setattr(policy, "_anchor_roots", forbidden)
+    monkeypatch.setattr(policy.subprocess, "run", forbidden)
+    assert policy.main(["--uv", "selected-uv", "--registry-only", "--", *arguments]) == 1
+    assert "dependency-seasoning:" in capsys.readouterr().err
+
+
+def materialized_broken_helper(root):
+    import materialize_main
+
+    repository = root / "repository"
+    payload = source_project(
+        repository / "plugins" / "fixture-plugin", "fixture-plugin",
+        sources='fixture-lib={path="../../libs/fixture-lib",editable=true}',
+        dependencies='"fixture-lib>=1"',
+    )
+    library = source_project(
+        repository / "libs" / "fixture-lib", "fixture-lib",
+        sources='fixture-leaf={path="../fixture-leaf",editable=true}',
+        dependencies='"fixture-leaf>=1"',
+    )
+    leaf = source_project(repository / "libs" / "fixture-leaf", "fixture-leaf")
+    for project in (library, leaf):
+        (project / "src").mkdir()
+    (payload / "plugin.json").write_text(json.dumps({
+        "name": "fixture-plugin", "version": "1.0",
+        "repository": "https://github.com/ThomasMichon/copilot-extensions",
+    }), encoding="utf-8")
+    roster = repository / ".github" / "plugin" / "marketplace.json"
+    roster.parent.mkdir(parents=True)
+    roster.write_text(json.dumps({
+        "name": "copilot-extensions",
+        "plugins": [{"name": "fixture-plugin", "version": "1.0", "source": "plugins/fixture-plugin"}],
+    }), encoding="utf-8")
+    changes = materialize_main.materialize_uv_editable_ref_into(
+        source_consumer_dir=payload, dest_consumer_dir=payload,
+        canonical_root=repository, dest_root=repository,
+    )
+    assert changes and not any(change.startswith("SKIP") for change in changes)
+    shutil.rmtree(repository / "libs")
+    manifest = payload / "libs" / "fixture-leaf" / "pyproject.toml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace(
+            'name="fixture-leaf"', 'name="wrong-identity"',
+        ),
+        encoding="utf-8",
+    )
+    helper = repository / "libs" / "installer-engine" / PATH.name
+    helper.parent.mkdir(parents=True)
+    shutil.copyfile(PATH, helper)
+    shutil.copyfile(
+        PATH.with_name("installer_dependency_config.py"),
+        helper.with_name("installer_dependency_config.py"),
+    )
+    wrapper = repository / "tools" / "seasoned_uv.py"
+    wrapper.parent.mkdir()
+    shutil.copyfile(PATH.parents[2] / "tools" / wrapper.name, wrapper)
+    assert not (repository / "libs" / "fixture-lib").exists()
+    assert not (repository / "libs" / "fixture-leaf").exists()
+    return wrapper
+
+
+@pytest.mark.parametrize("case", ["accepted", "stricter-cutoff", "wrong-hash", "unseasoned"])
+def test_native_registry_bootstrap_is_independent_of_materialized_product_graph(tmp_path, case):
+    uv = shutil.which("uv")
+    assert uv, "native UV is required for validator-bootstrap coverage"
+    helper = materialized_broken_helper(tmp_path)
+    content = io.BytesIO()
+    with zipfile.ZipFile(content, "w") as wheel:
+        wheel.writestr("fixture_validator.py", "MARKER = 'installed-from-registry'\n")
+        prefix = "fixture_validator-1.0.dist-info/"
+        wheel.writestr(
+            prefix + "METADATA", "Metadata-Version: 2.1\nName: fixture-validator\nVersion: 1.0\n",
+        )
+        wheel.writestr(
+            prefix + "WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        )
+        wheel.writestr(prefix + "RECORD", "")
+    artifact = content.getvalue()
+    filename = "fixture_validator-1.0-py3-none-any.whl"
+    digest = hashlib.sha256(artifact).hexdigest()
+    requirement = tmp_path / "validator-requirements.txt"
+    requirement.write_text(
+        f"fixture-validator==1.0 --hash=sha256:{'0' * 64 if case == 'wrong-hash' else digest}\n",
+        encoding="utf-8",
+    )
+    downloads = []
+
+    class Index(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            self.respond(head=False)
+
+        def do_HEAD(self):
+            self.respond(head=True)
+
+        def respond(self, *, head):
+            if self.path == "/simple/fixture-validator/":
+                body = json.dumps({
+                    "meta": {"api-version": "1.2"}, "name": "fixture-validator",
+                    "files": [{
+                        "filename": filename, "url": "/files/" + filename,
+                        "hashes": {"sha256": digest},
+                        "upload-time": "2099-01-01T00:00:00Z" if case == "unseasoned"
+                        else "2020-01-01T00:00:00Z",
+                    }],
+                }).encode()
+                kind = "application/vnd.pypi.simple.v1+json"
+            elif self.path == "/files/" + filename:
+                if not head:
+                    downloads.append(filename)
+                body, kind = artifact, "application/octet-stream"
+            else:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if not head:
+                self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Index)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    environment = offline_environment(tmp_path)
+    environment.pop("UV_OFFLINE", None)
+    target = tmp_path / "fresh-venv"
+    options = dict(
+        cwd=tmp_path, env=environment, capture_output=True, text=True,
+        timeout=30, creationflags=policy._HEADLESS,
+    )
+    try:
+        created = subprocess.run(
+            [uv, "venv", "--offline", "--python", sys._base_executable, str(target)], **options,
+        )
+        assert created.returncode == 0, created.stdout + created.stderr
+        python = target / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        arguments = [
+            "--python", str(python), "--no-config", "--only-binary", ":all:", "--require-hashes",
+            "--index-url", f"http://127.0.0.1:{server.server_port}/simple", "-r", str(requirement),
+        ]
+        if case == "stricter-cutoff":
+            arguments.extend(["--exclude-newer", "2019-01-01T00:00:00Z"])
+        command = [sys.executable, "-I", str(helper), "--uv", uv]
+        default = subprocess.run([*command, "--", *arguments], **options)
+        assert default.returncode != 0 and "library identity" in default.stderr
+        assert downloads == []
+        result = subprocess.run([*command, "--registry-only", "--", *arguments], **options)
+        assert "unrecognized arguments" not in result.stderr
+        if case == "accepted":
+            assert result.returncode == 0, result.stdout + result.stderr
+            installed = subprocess.run(
+                [str(python), "-I", "-c", "import fixture_validator; print(fixture_validator.MARKER)"],
+                **options,
+            )
+            assert installed.returncode == 0
+            assert installed.stdout.strip() == "installed-from-registry"
+            assert downloads
+        else:
+            assert result.returncode != 0, result.stdout + result.stderr
+            if case == "wrong-hash":
+                assert "hash" in result.stderr.lower(), result.stdout + result.stderr
+            else:
+                assert downloads == []
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)

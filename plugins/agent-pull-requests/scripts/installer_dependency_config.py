@@ -1,10 +1,70 @@
-"""Private configuration-retention primitives for the UV dependency policy."""
+"""Private UV settings-projection and configuration-retention primitives."""
 from __future__ import annotations
 
 import json
 import os
 import re
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta, timezone
+
+_STRUCTURED_CUTOFF = re.compile(
+    r"ExcludeNewerValue\s*\{\s*timestamp:\s*([^,\s]+),\s*span:\s*"
+    r"(?:None|Some\(\s*ExcludeNewerSpan\(\s*([^,\s]+),?\s*\),?\s*\)),?\s*\}"
+)
+
+
+def cutoff_value(value: str, now: datetime, *, error_type) -> datetime:
+    value = value.strip().removesuffix(",").strip()
+    structured = _STRUCTURED_CUTOFF.fullmatch(value)
+    if structured:
+        cutoff = cutoff_value(f"Absolute({structured[1]})", now, error_type=error_type)
+        if structured[2] is not None:
+            relative = cutoff_value(
+                f"Relative(ExcludeNewerSpan({structured[2]}))", now, error_type=error_type,
+            )
+            cutoff = min(cutoff, relative)
+        return cutoff
+    absolute = re.fullmatch(r"Absolute\(\s*([^,\s]+),?\s*\)", value)
+    if absolute:
+        timestamp = re.sub(
+            r"\.(\d{1,9})(?=Z$|[+-]\d{2}:\d{2}$)",
+            lambda match: "." + match[1][:6].ljust(6, "0"), absolute[1],
+        )
+        try:
+            result = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise error_type("UV returned an invalid cutoff timestamp") from exc
+        if result.tzinfo is None:
+            raise error_type("UV returned a cutoff without a timezone")
+        return result.astimezone(timezone.utc)
+    relative = re.fullmatch(
+        r"Relative\(\s*ExcludeNewerSpan\(\s*([^,\s]+),?\s*\),?\s*\)",
+        value,
+    )
+    if relative:
+        span = relative[1]
+        parts = re.findall(r"(\d+)(w|d|h|m|s)", span)
+        if not parts or "".join(number + unit for number, unit in parts) != span:
+            raise error_type("unsupported UV relative cutoff; use an RFC3339 timestamp")
+        seconds = sum(int(number) * {"w": 604800, "d": 86400, "h": 3600, "m": 60, "s": 1}[unit]
+                      for number, unit in parts)
+        try:
+            return now - timedelta(seconds=seconds)
+        except OverflowError as exc:
+            raise error_type("UV relative cutoff exceeds the supported range") from exc
+    raise error_type("unsupported UV cutoff representation")
+
+
+def package_cutoffs(entries, *, balanced, error_type):
+    result = []
+    entries = entries.strip()
+    while entries:
+        entry = re.match(r'PackageName\(\s*"([a-z0-9._-]+)",?\s*\):\s*Enabled\(', entries)
+        if entry is None:
+            raise error_type("disabled or unsupported package-specific seasoning")
+        value, stop = balanced(entries, entry.end() - 1, "(", ")")
+        result.append((entry[1], value))
+        entries = entries[stop:].lstrip(", \r\n\t")
+    return result
 
 
 def _toml_value(value, error_type):
@@ -87,7 +147,10 @@ def merge_config(high, low):
     return result
 
 
-def resolver_configuration(projection, remapper=None, *, balanced, error_type):
+def resolver_configuration(
+    projection, remapper=None, *, balanced, error_type, now=None, freeze_package_cutoffs=False,
+):
+    now = datetime.now(timezone.utc) if now is None else now
     match = re.search(r"\bsettings: PipSettings \{", projection)
     if match is None:
         raise error_type("UV resolver configuration cannot be compared")
@@ -100,7 +163,15 @@ def resolver_configuration(projection, remapper=None, *, balanced, error_type):
     if package is None:
         raise error_type("UV package cutoffs cannot be compared")
     package_body, _ = balanced(cutoff_body, package.end() - 1, "(", ")")
-    body = body[:cutoff.start()] + "package_cutoffs:" + package_body + "\n" + body[end:]
+    package_entries = re.fullmatch(r"\s*\{(.*)\},?\s*", package_body, re.DOTALL)
+    if package_entries is None:
+        raise error_type("UV package cutoff settings are unsupported")
+    keys = []
+    for name, value in package_cutoffs(package_entries[1], balanced=balanced, error_type=error_type):
+        timestamp = cutoff_value(value, now, error_type=error_type)
+        span = re.search(r"\bExcludeNewerSpan\(\s*([^,\s]+)", value)
+        keys.append((name, timestamp.isoformat(), span[1] if span and not freeze_package_cutoffs else None))
+    body = body[:cutoff.start()] + "package_cutoffs:" + repr(sorted(keys)) + "\n" + body[end:]
     if remapper is not None:
         for field in ("dependency_metadata", "extra_build_dependencies", "sources"):
             match = re.search(r"(?m)^\s*" + field + r":\s*[^\n({\[]*([({\[])", body)

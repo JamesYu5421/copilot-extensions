@@ -46,6 +46,13 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+
+if ($env:COPILOT_EXTENSIONS_HUMAN_UTF8 -eq '1') {
+    if (-not [IO.File]::Exists((Join-Path $PSScriptRoot 'installer-human-output.ps1'))) {
+        throw 'Required installer human-output initializer is unavailable.'
+    }
+    . (Join-Path $PSScriptRoot 'installer-human-output.ps1')
+}
 . (Join-Path $PSScriptRoot 'installer-engine.ps1')
 
 if ($InstallDir) {
@@ -1908,19 +1915,36 @@ function Remove-LogonAutostart {
     }
 }
 
-function Start-LauncherDetached {
+function Invoke-WithEnvFile {
+    # Run $Body with $Extra defaults overlaid by the KEY=VALUE lines of $Path
+    # (parsed, and taking precedence, exactly as in the logon launchers) in this
+    # process's environment, then restore the previous values. The user-mode
+    # ensure path then starts a daemon with the same settings its logon launcher
+    # would.
     param(
-        [Parameter(Mandatory)][string]$LauncherPath,
-        [Parameter(Mandatory)][string]$Kind
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][scriptblock]$Body,
+        [hashtable]$Extra = @{}
     )
-    $taskArgs = "--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$LauncherPath`""
-    try {
-        Start-Process -FilePath 'conhost.exe' -ArgumentList $taskArgs -WindowStyle Hidden | Out-Null
-        Write-Ok "$Kind launched as a detached background process"
-    } catch {
-        Write-Warn "Could not start $Kind process: $($_.Exception.Message)"
+    $values = [ordered]@{}
+    foreach ($k in $Extra.Keys) { $values[$k] = $Extra[$k] }
+    if (Test-Path -LiteralPath $Path) {
+        foreach ($raw in Get-Content -LiteralPath $Path) {
+            $line = $raw.Trim()
+            if (-not $line -or $line.StartsWith('#') -or -not $line.Contains('=')) { continue }
+            $k, $v = $line.Split('=', 2)
+            $values[$k.Trim()] = $v.Trim()
+        }
     }
-    return $taskArgs
+    $saved = @{}
+    foreach ($k in $values.Keys) {
+        $saved[$k] = [Environment]::GetEnvironmentVariable($k, 'Process')
+        [Environment]::SetEnvironmentVariable($k, $values[$k], 'Process')
+    }
+    try { & $Body }
+    finally {
+        foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k], 'Process') }
+    }
 }
 
 function Install-LogonAutostartEntry {
@@ -1929,6 +1953,7 @@ function Install-LogonAutostartEntry {
         [Parameter(Mandatory)][string]$LauncherPath,
         [Parameter(Mandatory)][string]$Kind,
         [Parameter(Mandatory)][scriptblock]$IsHealthy,
+        [Parameter(Mandatory)][scriptblock]$Ensure,
         [Parameter(Mandatory)][string]$ScheduledTaskName
     )
     if (Get-ScheduledTask -TaskName $ScheduledTaskName -ErrorAction SilentlyContinue) {
@@ -1936,8 +1961,13 @@ function Install-LogonAutostartEntry {
         Write-Skip "$Kind logon auto-start skipped -- scheduled task '$ScheduledTaskName' is the explicit machine-local supervisor"
         return
     }
+    # Start now through the user-mode ensure path (agent_procutil.spawn_daemon:
+    # Job breakaway, durable cwd, its own log), never a PowerShell process
+    # launch, which would leave the daemon inside the installer's Job. A failed
+    # start-now must not cost the logon registration below.
     if (-not (& $IsHealthy)) {
-        [void](Start-LauncherDetached -LauncherPath $LauncherPath -Kind $Kind)
+        try { & $Ensure }
+        catch { Write-Warn "Could not start $Kind now: $($_.Exception.Message) -- it starts at the next logon" }
     } else {
         Write-Skip "$Kind already running -- not starting a second instance"
     }
@@ -1963,7 +1993,7 @@ function Install-LogonAutostart {
     }
     Write-ServiceFiles
     Install-LogonAutostartEntry -Name $TaskName -LauncherPath $Launcher -Kind 'Service' `
-        -IsHealthy { Test-ServiceHealthy } -ScheduledTaskName $TaskName
+        -IsHealthy { Test-ServiceHealthy } -Ensure { Ensure-ServiceRunning } -ScheduledTaskName $TaskName
     if (-not (Test-Path $EngineVenvPython)) {
         Remove-LogonAutostart -Name $EngineTaskName
         Write-Skip 'Engine logon auto-start skipped -- durable engine runtime not provisioned'
@@ -1971,7 +2001,7 @@ function Install-LogonAutostart {
     }
     Write-EngineFiles
     Install-LogonAutostartEntry -Name $EngineTaskName -LauncherPath $EngineLauncher -Kind 'Engine daemon' `
-        -IsHealthy { Test-EnginePort } -ScheduledTaskName $EngineTaskName
+        -IsHealthy { Test-EnginePort } -Ensure { Ensure-EngineRunning } -ScheduledTaskName $EngineTaskName
 }
 
 # ── Scheduled-task registration: OPT-IN ADVANCED TIER ONLY (never the default) ─
@@ -2269,9 +2299,16 @@ function Ensure-ServiceRunning {
     if (-not (Test-Path $activePy)) { Write-Skip 'Runtime not installed -- service not ensured'; return }
     Write-ServiceFiles
     if (Test-ServiceHealthy) { Write-Skip 'Service already healthy (user-mode daemon serving)'; return }
-    & $activePy -I -X utf8 -m agent_index deploy 2>&1 | Out-Host
+    # The body runs in its own scope: 'Continue' there keeps Windows PowerShell
+    # 5.1 from turning the command's stderr (progress, warnings) into a
+    # terminating error under this script's 'Stop', and ends with the body.
+    $code = Invoke-WithEnvFile -Path $EnvFile -Body {
+        $ErrorActionPreference = 'Continue'
+        & $activePy -I -X utf8 -m agent_index deploy 2>&1 | Out-Host
+        $LASTEXITCODE
+    }
     if (Test-ServiceHealthy) { Write-Ok 'Service ensured (user-mode daemon)' }
-    else { Write-Warn 'Service ensure attempted -- endpoint not yet healthy (it may still be starting)' }
+    else { Write-Warn "Service ensure attempted (deploy exit $code) -- endpoint not yet healthy (it may still be starting)" }
 }
 
 function Ensure-EngineRunning {
@@ -2279,10 +2316,23 @@ function Ensure-EngineRunning {
     # if already serving; else started detached from the durable venv.
     if ($NoService) { Write-Skip 'Engine ensure skipped (-NoService)'; return }
     if (-not (Test-Path $EngineVenvPython)) { Write-Skip 'Engine runtime not provisioned -- engine not ensured'; return }
+    # Manage the engine from the active (updated) index runtime: the durable
+    # engine runtime is preserved across updates, so its own CLI may predate
+    # options this installer relies on. The management code still launches the
+    # engine with the preserved engine interpreter (resolved from the home).
+    $managePy = Get-ActiveSlotPython
+    if (-not (Test-Path $managePy)) { Write-Warn 'Index runtime not installed -- the engine is not started'; return }
     Write-EngineFiles
-    if (Test-EnginePort) { Write-Skip 'Engine already serving -- leaving the warm engine untouched'; return }
-    & $EngineVenvPython -I -X utf8 -m agent_index engine start 2>&1 | Out-Host
-    Write-Ok 'Engine ensured (user-mode durable daemon)'
+    # As in Ensure-ServiceRunning, 'Continue' is scoped to the body.
+    $code = Invoke-WithEnvFile -Path $EngineEnvFile -Extra @{ AGENT_INDEX_ENGINE_HOME = $EngineHome } -Body {
+        if (Test-EnginePort) { return 'serving' }
+        $ErrorActionPreference = 'Continue'
+        & $managePy -I -X utf8 -m agent_index engine start --strict 2>&1 | Out-Host
+        $LASTEXITCODE
+    }
+    if ($code -eq 'serving') { Write-Skip 'Engine already serving -- leaving the warm engine untouched' }
+    elseif ($code -eq 0) { Write-Ok 'Engine ensured (user-mode durable daemon)' }
+    else { Write-Warn "Engine start exited $code -- the durable engine is not serving" }
 }
 
 function Ensure-Running {

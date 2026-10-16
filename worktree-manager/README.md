@@ -68,6 +68,54 @@ treated as confirmed drift.
 
 ## Launch preparation
 
+Normal shell launch maintenance reports each synchronous marketplace installer,
+bootstrap update and reconciliation action's start, process exit code and
+completed duration. Failures (including commands that
+cannot start) are explicitly reported as continuing: maintenance remains
+best-effort, not a launch-wide abort policy. PowerShell uses a Stopwatch and
+native UTC formatting. Bash, including Bash 3.2, uses one launch-owned
+`update_telemetry.shell` renderer during maintenance, not the wall-derived
+`SECONDS` variable. It acknowledges each action scope before its
+command starts, providing the shared formatter's UTC and monotonic clocks
+without a Python or `date` process per line. These durations measure the
+containing action, not individual child lines or a verified serving-state
+postcondition. An in-process clock reader observes native completion records
+independently of the presentation sink, so draining queued diagnostics does
+not inflate a completed action's duration. Child output
+continues streaming to the setup log; interactive action summaries use the
+existing launch-status gate, leaving quiet/protocol stdout unchanged.
+Each pass still obtains a fresh plan and re-resolves the runtime afterward;
+an exit of zero does not replace the second reconciliation pass.
+Bootstrap updates likewise retain runtime re-resolution and their fresh
+staleness check. Child stdout and stderr go through the same setup-log sink,
+including an unterminated final line; a nested canonical frame is not prefixed
+with another installer label. PowerShell restores the action's environment and
+native-error preferences even when spawning fails. Bash obtains the installer's
+exit code from the command, not its output consumer, and decodes staged metadata
+with NUL-delimited fields so an empty optional value cannot shift the installer
+path or runtime root.
+
+The native maintenance sinks share one physical-line envelope with the
+Python updater: `[HH:mm:ss.fffZ] scope state message [elapsed Ns]` or a
+completed action's `[duration Ns]`. Canonical nested envelopes are retained,
+not wrapped in another timestamp. The Bash renderer reads a private temporary
+spool using shell-built-in record writes; it has no update, service or process
+retirement authority. Normal completion drains and waits for it, then removes
+the spool before Copilot starts. Startup and shutdown waits are bounded;
+parent loss ends the renderer. A missing/failed renderer warns explicitly and
+uses unavailable timing labels rather than invented durations. Failure
+diagnostics remain in the named private spool instead of being discarded.
+Parent-loss termination is independent of terminal writes and admission
+waits; the dedicated CLI exits nonzero and retains a `ready.failure` reason.
+Shutdown resolves the renderer's still-owned Bash job and command before
+signalling; a cached PID alone never authorizes termination. A final receipt
+is written after output closes and the clock thread joins. Cleanup requires
+both that receipt and the absence of a live owned job, even if Bash already
+reaped its exit status. Job-table checks run only at lifecycle boundaries.
+Early/late Bash launcher diagnostics outside maintenance and detached or
+standalone installer output retain their existing behavior;
+these are not evidence of standalone installer presentation convergence.
+
 New and Resume wait for the engine to finish repository synchronization,
 prompt staging and instruction projection rather than imposing a fixed
 aggregate plan timeout. Preparation stages and elapsed-time heartbeats stream
@@ -96,6 +144,17 @@ The initial loading tab is labelled `Local` with its environment until the
 machine roster resolves its canonical name. It does not present the OS hostname
 as a configured machine or add roster/configuration I/O to first paint.
 
+Windows and WSL tabs for `<host>` and `<host>-wsl` share one physical-host
+heading. An explicit `physical_host` association takes precedence over suffix
+inference. Grouping changes presentation only: environment selection, source
+identities, SSH aliases and worktree routing remain distinct.
+Physical siblings are presented together even when the roster separates them;
+keyboard traversal uses that same stable first-host-appearance order.
+The configured local key or alias need not match the OS hostname: source
+construction and per-row locality checks resolve it in the running execution
+environment. Its current tab loads in-process; sibling environments keep their
+own SSH targets, and returned rows retain the selected source's logical identity.
+
 Ordinary Worktrees loads require the engine's resident current-roster
 publication, including its observed git/session/mux facts and bounded claim
 aggregates. The local and machine-SSH loaders hold the CLI's
@@ -106,6 +165,15 @@ abrupt disconnects are distinct; reconnect retains explicitly stale last-good
 rows until the replacement generation completes. Unsupported authority is an
 actionable engine-upgrade error. Explicit `AGENT_WORKTREES_PICKER_STREAM=0`
 selects current one-shot reads, not a direct computation fallback.
+
+Held-feed startup uses the source's existing bounded process/SSH budget
+(20 seconds by default). Once an initial snapshot or update starts, the
+two-second atomic-publication deadline applies; committed feeds retain the
+five-second heartbeat deadline. A transient transport watchdog expiry
+reconnects through the existing cancellable backoff, showing failure or stale
+last-good rows until a complete replacement arrives. Explicit peer timeout,
+authentication, malformed-protocol and incompatible-capability refusals remain
+terminal; none authorizes a polling fallback or a daemon restart.
 
 Sessionless workspaces retained by another controller appear separately under
 **Owned**, not as ordinary resumable conversations. Use **Go to controller**
@@ -290,9 +358,8 @@ their identity must be classified before automated retirement.
 
 ## Manage the harness (state views)
 
-Once set up, the Worktree Manager is also the ongoing **Manager** — a read-only
-window (today) onto the real config state, read from the files the harness
-already writes:
+Once set up, the Worktree Manager provides state views read from the harness's
+own files, plus explicit local integration commands:
 
 ```bash
 uv run python -m worktree_manager projects        # harness repos (binstubs + profiles)
@@ -303,7 +370,49 @@ uv run python -m worktree_manager worktrees       # live worktree counts per pro
 uv run python -m worktree_manager worktrees <name> # one project's worktrees: state, sync tags, titles
 uv run python -m worktree_manager plugins --status  # known plugins vs. what is enabled user-global
 uv run python -m worktree_manager contracts --project <name> # contributed pivots/actions/cards/config
+uv run python -m worktree_manager refresh-profiles <name> # Windows: reconcile local profiles + shortcuts
 ```
+
+`refresh-profiles` is the narrow, JSON-producing local integration command.
+It collects saved project selections once, applies the existing fragment and
+Terminal state/settings reconciliation, and refreshes native/WSL shortcuts.
+Unchanged fragment content and shortcut properties are not rewritten. It does
+not stage a plugin payload, build a venv, or probe a remote host. A missing
+destination, invalid selection or failed shortcut operation returns a blocked
+result and nonzero exit rather than claiming synchronized profiles.
+Publishing also refuses malformed or unreadable registries and resolved machine
+rosters, invalid registry entries and dangling configuration links before
+touching fragment/state/settings outputs. Actual publishing collection uses
+strict registry reads too; preliminary validation never authorizes a later
+tolerant reload. Genuinely absent optional files remain supported. Read-only
+state views and previews retain their tolerant behavior.
+Present registries require their explicit `projects`/`repos` mapping; an empty,
+null or missing-key document is not permission to retire profiles. Shortcut
+display names are validated before fragment publication, not after it. Engine
+callers pass their resolved `--machine` key so global configuration and machine
+detection do not depend on a project-local machine setting.
+For a selected installation cell, the engine additionally sends
+`--input-roots-stdin`: a version-1
+`copilot-extensions.terminal-profile-input-roots` JSON object with `context`,
+`payloadRoot`, `registryRoot`, and a `projectRoots` name-to-directory mapping.
+The engine resolves project identities; Manager validates the owning
+agent-worktrees installation receipt and cell containment, then uses those
+same explicit roots for preflight and publishing collection. Missing project
+mappings or invalid cell inputs block instead of reading legacy selections.
+This does not redirect Manager discovery, Terminal output or shortcut paths:
+those remain machine-global. Direct legacy invocations need no extra argument.
+Publication also validates existing Terminal fragments, state and settings
+before writing, retaining the input bytes through reconciliation and refusing
+observed drift. Missing optional documents remain valid; malformed or denied
+reads never become empty profile inventories. Terminal settings support JSONC
+comments and trailing commas. When settings need cleanup, their original bytes
+are backed up; unchanged settings are not rewritten.
+Strict YAML publishing rejects duplicate mapping keys before migration or
+defaulting. Fragment-directory enumeration errors are failures, never evidence
+of an empty inventory.
+Publishing rejects blank/non-string selection identifiers and unknown kinds,
+including when inputs change during collection; it never silently converts a
+shell typo into an agent launch.
 
 The **worktrees** views are the first slice of the extracted Picker: they read
 **live** worktrees by shelling out to the `agent-worktrees` engine
@@ -482,8 +591,18 @@ behaves exactly the same.
 cd worktree-manager
 uv run python -m worktree_manager          # run the app
 uv run python -m worktree_manager --version
-uv run pytest                          # tests
+uv run --extra dev pytest -q              # tests
 ```
+
+Default pytest collection owns `tests/`, including `tests/production_picker/`,
+in both development and materialized release layouts. Releases embed complete
+shared libraries under `libs/`, including their test sources; those suites
+remain owned by their canonical library lanes, not by Manager's default run.
+`tools/test_worktree_manager_collection.py` checks real materialization with a
+bounded selection of actual Manager test modules, preserves their collected
+IDs, and verifies that embedded library code and tests remain intact. It
+reconstructs development references from either checkout layout and compares
+canonical bytes using the materializer's exclusions for generated build metadata.
 
 Python + [uv](https://docs.astral.sh/uv/); the Phase 4 visual worktree-manager uses
 [Textual](https://textual.textualize.io/).

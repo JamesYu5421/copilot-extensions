@@ -273,6 +273,35 @@ input and retained diagnostics.
 
 ## Existing output contracts
 
+### Native maintenance renderer cost (isolated source fixture)
+
+The native presentation slice compares the old `setup_log` from the
+pre-slice source with its bounded shared-renderer replacement. Each trial
+logs the same 256 synthetic messages from Bash into an isolated local log,
+on the same checkout and environment. There is no installer, network,
+package reconstruction or service activity in this fixture. Three
+alternating before/after trials include renderer startup and shutdown:
+
+| Measurement | Before | After |
+|---|---:|---:|
+| Diagnostic messages preserved | 256 | 256 |
+| Added phase-boundary lines | 0 | 2 |
+| Per-message `date` processes | 256 | 0 |
+| Phase formatter processes | 0 | 1 |
+| Median fixture duration | 3.724 s | 2.154 s |
+
+The final lifecycle-repaired before durations were 3.849, 3.724 and
+3.626 seconds; after durations were 2.494, 2.154 and 1.934 seconds,
+including the independent clock reader, parent-loss handling, explicit
+completion receipt and job-owned shutdown. These supersede the earlier
+pre-review and intermediate clock-repair figures. This proves removal
+of repeated formatting subprocesses and a lower cost in this fixture,
+not an end-to-end updater speedup. The remaining phase startup, clock-start
+acknowledgments, private spool and shutdown have a real cost; do not
+extrapolate these measurements to a quiet or network-bound update.
+Runtime rebuild/cutover operation counts and promoted installed behavior
+still need their separate scenario proofs.
+
 - `libs/update-telemetry/src/update_telemetry/run.py` already separates UTC
   event timestamps and monotonic run durations, redacts sensitive fields and
   owns the update event lifecycle. Its event/status JSON is not a terminal
@@ -332,3 +361,15 @@ Prioritize:
    evidence still bind.
 5. Measure equivalent healthy, changed-version and first-touch runs after
    implementation. Report work avoided, not merely shorter output.
+
+### Later source alignment
+
+The ledger above remains evidence for its named historical source and run,
+not an assertion that every old repetition persists. In addition to #6598's
+construction reuse, merged #6836 now defers installer-local finishing and
+performs one required final project-command/profile integration pass against
+the selected payload. Merged #6862 stops runtime and local mutation after
+required payload acquisition fails. Preserve and verify those owners' work;
+do not duplicate it or count it as a newly implemented optimization here.
+Neither a source merge nor a passing formatter fixture measures the installed
+flow's execution count or duration.

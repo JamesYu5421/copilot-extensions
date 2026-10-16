@@ -77,6 +77,13 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+if ($env:COPILOT_EXTENSIONS_HUMAN_UTF8 -eq '1') {
+    if (-not [IO.File]::Exists((Join-Path $PSScriptRoot 'installer-human-output.ps1'))) {
+        throw 'Required installer human-output initializer is unavailable.'
+    }
+    . (Join-Path $PSScriptRoot 'installer-human-output.ps1')
+}
+
 # Raise the shared self-stage watchdog's deadline for THIS plugin specifically,
 # via the exact per-plugin override hook the byte-identical
 # install-contract:v4 self-stage block already reads
@@ -2229,7 +2236,7 @@ function Retire-SupervisorProcesses {
     }
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    $raw = & $py -m agent_dispatch _retire-supervisors --install-dir $InstallDir 2>&1 | Out-String
+    $raw = @(& $py -m agent_dispatch _retire-supervisors --install-dir $InstallDir 2>&1)
     $rc = $LASTEXITCODE
     Invoke-SupervisorAudit -Event retire -Reason windows-generation-inventory -Outcome $(if ($rc -eq 0) { 'ok' } else { 'fail' }) -ExitCode $rc
     $ErrorActionPreference = $prevEAP
@@ -2246,7 +2253,9 @@ function Retire-SupervisorProcesses {
         # Python helper. Do not run a second, broader classifier over a changed
         # process inventory; report the errors and keep its retired count.
         if ($rc -eq 0 -or -not $enumerationFailed) { return $retired }
-    } catch { }
+    } catch {
+        Write-Warn "Supervisor retirement result rejected: $($_.Exception.Message)"
+    }
     Write-Warn 'Full supervisor generation inventory failed; using native CIM supervisor-tree retirement'
     return (Retire-SupervisorProcessesFallback)
 }
