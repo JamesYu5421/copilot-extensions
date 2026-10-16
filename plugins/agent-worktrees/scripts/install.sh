@@ -2197,8 +2197,7 @@ deploy_binstub() {
         warn "Refusing to deploy project binstub for reserved runtime name 'agent-worktrees' (global command owned by deploy_tool_binstub)"
         return 0
     fi
-    # Generate a project entry point pinned to this payload. The payload owns
-    # runtime/context selection for both interactive and subcommand paths.
+    # Leave runtime resolution to the installed user-side command.
     local tmp
     tmp="$(mktemp "$LOCAL_BIN/$PROJECT_NAME.XXXXXX")"
     cat > "$tmp" <<'BINSTUB_HEAD'
@@ -2208,7 +2207,7 @@ BINSTUB_HEAD
     cat >> "$tmp" <<BINSTUB_BODY
 export PYTHONUTF8=1
 export AGENT_WORKTREES_LAUNCH_ID="$PROJECT_NAME-\$\$-\$RANDOM-\$(date +%s)"
-exec "$PLUGIN_DIR/bin/payload/agent-worktrees" --project "$PROJECT_NAME" "\$@"
+exec "$LOCAL_BIN/agent-worktrees" --project "$PROJECT_NAME" "\$@"
 BINSTUB_BODY
     chmod +x "$tmp"
     mv -f "$tmp" "$LOCAL_BIN/$PROJECT_NAME"
@@ -2986,9 +2985,9 @@ case "$ACTION" in
             ok "Context runtime installed at $INSTALL_DIR"
             exit 0
         fi
+        write_deploy_manifest
         remove_legacy_scripts
         remove_legacy_binstubs
-        reconcile_binstubs
         # Deploy the self-provisioning `agent-worktrees` TOOL binstub
         # unconditionally (project or not). A bare / runtime-only `install`
         # (no --project-name, e.g. the Worktree Manager core-install path) must
@@ -2996,6 +2995,7 @@ case "$ACTION" in
         # deploy_binstub below only runs under $HAS_PROJECT, so relying on it
         # left a project-less install with no tool binstub at all.
         deploy_tool_binstub
+        reconcile_binstubs
         deploy_copilot_plugin
         ensure_copilot_experimental
         assert_path
@@ -3020,8 +3020,6 @@ case "$ACTION" in
         # upgrades ~/.agent-worktrees/{config,repos,projects}.yaml. Non-fatal.
         PYTHONUTF8=1 "$VENV_PYTHON" -m agent_worktrees config-migrate 2>&1 \
             | sed 's/^/  /' || warn "Config migration skipped"
-
-        write_deploy_manifest
 
         echo ""
         ok "Installation complete"
@@ -3257,12 +3255,13 @@ case "$ACTION" in
         _deploy_venv_and_package
         deploy_wrappers || exit 1
         _versioned_activate || exit 1
+        write_deploy_manifest
         remove_legacy_scripts
         remove_legacy_binstubs
-        reconcile_binstubs
         # Deploy the tool binstub unconditionally (see the install action) so a
         # project-less `update` also keeps `agent-worktrees` on PATH.
         deploy_tool_binstub
+        reconcile_binstubs
         deploy_copilot_plugin
         ensure_copilot_experimental
 
@@ -3286,8 +3285,6 @@ case "$ACTION" in
         # upgrades ~/.agent-worktrees/{config,repos,projects}.yaml. Non-fatal.
         PYTHONUTF8=1 "$VENV_PYTHON" -m agent_worktrees config-migrate 2>&1 \
             | sed 's/^/  /' || warn "Config migration skipped"
-
-        write_deploy_manifest
 
         ok "Update complete"
         ;;
