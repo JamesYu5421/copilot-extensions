@@ -115,10 +115,19 @@ def _cmd_start(args: argparse.Namespace) -> None:
     from .winjob import setup_kill_on_close_job
 
     core = _core()
+    launch_id = getattr(args, "serving_launch_id", None)
+    passive = bool(getattr(args, "passive", False))
+    if launch_id and not passive:
+        raise ValueError("a serving launch identity requires passive startup")
     cfg = load_config()
     cfg = migrate_config(cfg)
     write_default_config(cfg)
-    token = load_or_create_auth_token()
+    if launch_id:
+        from .serving_reconcile import existing_auth_token
+
+        token = existing_auth_token(config_dir())
+    else:
+        token = load_or_create_auth_token()
 
     try:
         neutral = config_dir()
@@ -138,7 +147,6 @@ def _cmd_start(args: argparse.Namespace) -> None:
     if idle is not None:
         cfg.idle_shutdown_seconds = idle
 
-    passive = bool(getattr(args, "passive", False))
     if passive:
         cfg.enable_credential_relay = False
     elif core._active_endpoint_is_forward():
@@ -175,6 +183,10 @@ def _cmd_start(args: argparse.Namespace) -> None:
     # (False) means "run the normal startup reattach scan" -- the safe
     # default for anything that isn't this CLI's own --passive cutover spawn.
     app.state.passive = passive
+    if launch_id:
+        from .serving_candidate import record_worker
+
+        record_worker(config_dir(), launch_id)
 
     dynamic_port = _dynamic_bind_requested(cfg.port, explicit_port)
     requested_port = 0 if dynamic_port else (cfg.port if cfg.port > 0 else default_port())
@@ -596,6 +608,7 @@ def register_service_start_commands(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Start as a passive cutover instance: do NOT self-publish the routing table (the deploy orchestrator flips it after a health check) and do NOT bind the credential relay (the active daemon owns it until cutover completes).",
     )
+    start_p.add_argument("--serving-launch-id", help=argparse.SUPPRESS)
     start_p.set_defaults(func=_cmd_start)
 
     acp_connect_p = sub.add_parser(

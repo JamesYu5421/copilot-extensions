@@ -99,8 +99,8 @@ def _extract_sh(name: str, text: str, *, optional: bool = False) -> str:
     return text[start : text.index("\n}\n", start) + 3]
 
 
-def _fake_plugin(tmp_path: Path) -> Path:
-    """A plugin inside a fake checkout, with the shared libraries it installs.
+def _fake_plugin(tmp_path: Path, *, libraries: bool = True) -> Path:
+    """A plugin inside a fake checkout, optionally with shared libraries.
 
     ``ssh-manager`` is installed explicitly (via the vendored-lib resolver),
     ``plugin-resolve`` only through the plugin's ``[tool.uv.sources]``, and
@@ -111,13 +111,18 @@ def _fake_plugin(tmp_path: Path) -> Path:
     (plugin / "src" / "pkg").mkdir(parents=True)
     (plugin / "pyproject.toml").write_text(
         f'[project]\nname = "pkg"\nversion = "{_VERSION}"\n\n'
-        "[tool.uv.sources]\n"
-        'agent-ssh-manager = { path = "../../libs/ssh-manager", editable = true }\n'
-        'agent-plugin-resolve = { path = "../../libs/plugin-resolve", editable = true }\n',
+        + (
+            "[tool.uv.sources]\n"
+            'agent-ssh-manager = { path = "../../libs/ssh-manager", editable = true }\n'
+            'agent-plugin-resolve = { path = "../../libs/plugin-resolve", editable = true }\n'
+            if libraries else ""
+        ),
         encoding="utf-8",
     )
     (plugin / "src" / "pkg" / "__init__.py").write_text("VALUE = 1\n", encoding="utf-8")
     (plugin / "README.md").write_text("# pkg\n", encoding="utf-8")
+    if not libraries:
+        return plugin
     for lib, sources in (
         ("ssh-manager", 'agent-procutil = { path = "../agent-procutil", editable = true }\n'),
         ("plugin-resolve", ""),
@@ -190,6 +195,9 @@ def _assert_outcome(
         assert result.returncode == 0, detail
         assert "PROCEEDED" not in events and "DRAINED" not in events, detail
         assert "MANIFEST" in events, detail
+        assert _tree(tmp_path / "install" / "versions" / _VERSION) == _tree(
+            tmp_path / "before-slot"
+        ), "same-content reconcile changed the completed slot"
     elif expected == _REUSED:
         # The activation stub exits 50: the slot was health-checked and
         # activated, but never rebuilt, reinstalled, or pruned.
@@ -231,6 +239,7 @@ _PS_FUNCTIONS = (
     ("Invoke-InstallSlotBuild", True),
     ("Invoke-UpdateSlotBuild", True),
     ("Invoke-Install", False),
+    ("Invoke-ServingRuntimeReconcile", False),
     ("Invoke-Update", False),
 )
 
@@ -246,7 +255,10 @@ _PS_SETUP = {
 }
 
 
-def _ps_harness(tmp_path: Path, scenario: str, action: str, extra: tuple[str, ...] = ()) -> Path:
+def _ps_harness(
+    tmp_path: Path, scenario: str, action: str, extra: tuple[str, ...] = (),
+    *, libraries: bool = True,
+) -> Path:
     text = _INSTALL_PS1.read_text(encoding="utf-8")
     functions = "\n\n".join(
         _extract_ps(name, text, optional=optional)
@@ -255,7 +267,7 @@ def _ps_harness(tmp_path: Path, scenario: str, action: str, extra: tuple[str, ..
     body = f"""Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 $ScriptDir = {_ps_quote(_SCRIPTS)}
-$PluginDir = {_ps_quote(_fake_plugin(tmp_path))}
+$PluginDir = {_ps_quote(_fake_plugin(tmp_path, libraries=libraries))}
 $InstallDir = {_ps_quote(tmp_path / "install")}
 $LinkDir = Join-Path $InstallDir 'venv'
 $SrcVersion = '{_VERSION}'
@@ -281,6 +293,17 @@ function Enter-InstallLock {{ return $true }}
 function Exit-InstallLock {{ }}
 function Get-BootstrapPython {{ return $RealPython }}
 function FakeSlotPython {{
+    if ($args -contains '--reconcile-serving') {{
+        if ($args -contains '--probe-serving') {{
+            Rec 'PROBE'
+            $global:LASTEXITCODE = if ($env:SERVING_PROBE_EXIT_CODE) {{ [int]$env:SERVING_PROBE_EXIT_CODE }} else {{ 0 }}
+            return
+        }}
+        Rec 'SERVING'
+        if (-not (Test-Path (Join-Path $InstallDir 'update-in-progress'))) {{ throw 'Serving transition has no update marker' }}
+        $global:LASTEXITCODE = if ($env:SERVING_EXIT_CODE) {{ [int]$env:SERVING_EXIT_CODE }} else {{ 0 }}
+        return
+    }}
     if ($args -contains 'agent_bridge') {{ Rec 'CONFIG'; $global:LASTEXITCODE = 0; return }}
     & $RealPython @args
 }}
@@ -293,11 +316,14 @@ function Resolve-VendoredLib {{
     if (Test-Path -LiteralPath (Join-Path $c 'pyproject.toml')) {{ return (Resolve-Path -LiteralPath $c).Path }}
     return $null
 }}
-function Write-UpdateMarker {{ Rec 'MARKER' }}
+function Write-UpdateMarker {{ Rec 'MARKER'; Set-Content -LiteralPath (Join-Path $InstallDir 'update-in-progress') -Value 'held' }}
 function Invoke-UpdateDrainStop {{ Rec 'DRAINED'; exit 43 }}
 function Test-ActiveIsForward {{ return $false }}
 function Get-ActiveSignature {{ return '' }}
-function Clear-UpdateMarker {{ }}
+function Clear-UpdateMarker {{
+    $path = Join-Path $InstallDir 'update-in-progress'
+    if (Test-Path $path) {{ Remove-Item -LiteralPath $path; Rec 'CLEARED' }}
+}}
 function Remove-VenvBackup {{ }}
 function Get-VersionedCurrent {{ return '' }}
 function Install-SiblingPlugins {{ Rec 'PRUNED' }}
@@ -354,8 +380,49 @@ def _run_ps(harness: Path) -> subprocess.CompletedProcess:
 def test_ps1_completed_slot_admission(
     tmp_path: Path, action: str, scenario: str, expected: str
 ) -> None:
-    result = _run_ps(_ps_harness(tmp_path, scenario, action))
+    result = _run_ps(_ps_harness(tmp_path, scenario, action, libraries=False))
     _assert_outcome(tmp_path, result, expected, failure_code=1)
+    assert ("PROBE" in _events(tmp_path)) is (
+        action == "Invoke-Update" and scenario == "match-active"
+    )
+    if expected == _NOOP:
+        assert "MARKER" not in _events(tmp_path)
+
+
+@pytest.mark.skipif(_PWSH is None, reason="pwsh is not available")
+@pytest.mark.parametrize("after_wait", [False, True], ids=["selected", "selected-during-lock"])
+def test_ps1_serving_reconcile_failure_never_publishes_or_rebuilds(tmp_path, after_wait):
+    action = "$env:SERVING_PROBE_EXIT_CODE = '10'\n$env:SERVING_EXIT_CODE = '17'\n"
+    if after_wait:
+        action += "function Enter-InstallLock { Activate; return $true }\n"
+    action += "Invoke-Update"
+    result = _run_ps(_ps_harness(
+        tmp_path, "match-inactive" if after_wait else "match-active", action,
+        libraries=False,
+    ))
+    events = _events(tmp_path)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "SERVING" in events
+    assert events.count("MARKER") == events.count("CLEARED") == 1
+    assert events.index("MARKER") < events.index("SERVING") < events.index("CLEARED")
+    assert not set(events) & {"MANIFEST", "DRAINED", "PROCEEDED", "BUILT", "PRUNED"}
+    assert _tree(tmp_path / "install" / "versions" / _VERSION) == _tree(
+        tmp_path / "before-slot"
+    )
+    assert "Serving runtime reconcile failed" in result.stdout + result.stderr
+
+
+@pytest.mark.skipif(_PWSH is None, reason="pwsh is not available")
+def test_ps1_serving_transition_marker_is_cleared_after_success(tmp_path):
+    result = _run_ps(_ps_harness(
+        tmp_path, "match-active", "$env:SERVING_PROBE_EXIT_CODE = '10'\nInvoke-Update",
+        libraries=False,
+    ))
+    _assert_outcome(tmp_path, result, _NOOP)
+    events = _events(tmp_path)
+    assert events.count("MARKER") == events.count("CLEARED") == 1
+    assert events.index("MARKER") < events.index("SERVING") < events.index("CLEARED")
+    assert not (tmp_path / "install" / "update-in-progress").exists()
 
 
 # An unavailable payload hash must never let a same-content shortcut accept a
@@ -623,6 +690,7 @@ _SH_FUNCTIONS = (
     ("_require_install_lock", True),
     ("_update_core", False),
     ("do_install", False),
+    ("_reconcile_serving_runtime", False),
     ("do_update", False),
 )
 
@@ -674,7 +742,10 @@ def _sh_runtime_scripts(tmp_path: Path) -> Path:
     return scripts
 
 
-def _sh_harness(tmp_path: Path, scenario: str, action: str, extra: tuple[str, ...] = ()) -> Path:
+def _sh_harness(
+    tmp_path: Path, scenario: str, action: str, extra: tuple[str, ...] = (),
+    *, libraries: bool = True,
+) -> Path:
     text = _INSTALL_SH.read_text(encoding="utf-8")
     functions = "".join(
         _extract_sh(name, text, optional=optional)
@@ -686,6 +757,13 @@ def _sh_harness(tmp_path: Path, scenario: str, action: str, extra: tuple[str, ..
     # the real machine config; everything else is the real interpreter.
     shim = (
         "#!/bin/sh\n"
+        'case "$*" in *--probe-serving*) '
+        f"echo PROBE >> {_sh_quote(_posix(tmp_path / 'events.txt'))}; "
+        'exit "${SERVING_PROBE_EXIT_CODE:-0}" ;; esac\n'
+        'case "$*" in *--reconcile-serving*) '
+        f"echo SERVING >> {_sh_quote(_posix(tmp_path / 'events.txt'))}; "
+        f"test -f {_sh_quote(_posix(tmp_path / 'install' / 'update-in-progress'))} || exit 18; "
+        'exit "${SERVING_EXIT_CODE:-0}" ;; esac\n'
         'case "$*" in *agent_bridge*) '
         f"echo CONFIG >> {_sh_quote(_posix(tmp_path / 'events.txt'))}; exit 0 ;; esac\n"
         f"exec {_sh_quote(_posix(sys.executable))} \"$@\"\n"
@@ -694,9 +772,10 @@ def _sh_harness(tmp_path: Path, scenario: str, action: str, extra: tuple[str, ..
         path = shim_dir / name
         path.write_text(shim, encoding="utf-8", newline="\n")
         path.chmod(0o755)
+    plugin = _fake_plugin(tmp_path, libraries=libraries)
     script = f"""set -euo pipefail
 SCRIPT_DIR={_sh_quote(_posix(_sh_runtime_scripts(tmp_path)))}
-PLUGIN_DIR={_sh_quote(_posix(_fake_plugin(tmp_path)))}
+PLUGIN_DIR={_sh_quote(_posix(plugin))}
 INSTALL_DIR={_sh_quote(_posix(tmp_path / "install"))}
 LINK_DIR="$INSTALL_DIR/venv"
 SRC_VERSION={_VERSION}
@@ -719,8 +798,12 @@ _downgrade_guard() {{ :; }}
 _migration_check() {{ :; }}
 _enter_install_lock() {{ return 0; }}
 _write_deploy_manifest() {{ rec MANIFEST; }}
-_write_update_marker() {{ rec MARKER; }}
-_clear_update_marker() {{ :; }}
+_write_update_marker() {{ rec MARKER; echo held > "$INSTALL_DIR/update-in-progress"; }}
+_clear_update_marker() {{
+    if [[ -f "$INSTALL_DIR/update-in-progress" ]]; then
+        rm "$INSTALL_DIR/update-in-progress"; rec CLEARED
+    fi
+}}
 _update_lifecycle_drain_stop() {{ rec DRAINED; exit 43; }}
 _active_is_forward() {{ return 1; }}
 _active_signature() {{ :; }}
@@ -772,8 +855,50 @@ def _run_sh(harness: Path) -> subprocess.CompletedProcess:
 def test_sh_completed_slot_admission(
     tmp_path: Path, action: str, scenario: str, expected: str
 ) -> None:
-    result = _run_sh(_sh_harness(tmp_path, scenario, action))
+    # Transitive library hashing has dedicated native cases below.
+    result = _run_sh(_sh_harness(tmp_path, scenario, action, libraries=False))
     _assert_outcome(tmp_path, result, expected)
+    assert ("PROBE" in _events(tmp_path)) is (
+        action == "do_update" and scenario == "match-active"
+    )
+    if expected == _NOOP:
+        assert "MARKER" not in _events(tmp_path)
+
+
+@pytest.mark.skipif(_bash() is None, reason="a conformant bash is not available")
+@pytest.mark.parametrize("after_wait", [False, True], ids=["selected", "selected-during-lock"])
+def test_sh_serving_reconcile_failure_never_publishes_or_rebuilds(tmp_path, after_wait):
+    action = "export SERVING_PROBE_EXIT_CODE=10 SERVING_EXIT_CODE=17\n"
+    if after_wait:
+        action += "_enter_install_lock() { activate; return 0; }\n"
+    action += "do_update"
+    result = _run_sh(_sh_harness(
+        tmp_path, "match-inactive" if after_wait else "match-active", action,
+        libraries=False,
+    ))
+    events = _events(tmp_path)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "SERVING" in events
+    assert events.count("MARKER") == events.count("CLEARED") == 1
+    assert events.index("MARKER") < events.index("SERVING") < events.index("CLEARED")
+    assert not set(events) & {"MANIFEST", "DRAINED", "PROCEEDED", "BUILT", "PRUNED"}
+    assert _tree(tmp_path / "install" / "versions" / _VERSION) == _tree(
+        tmp_path / "before-slot"
+    )
+    assert "Serving runtime reconcile failed" in result.stdout + result.stderr
+
+
+@pytest.mark.skipif(_bash() is None, reason="a conformant bash is not available")
+def test_sh_serving_transition_marker_is_cleared_after_success(tmp_path):
+    result = _run_sh(_sh_harness(
+        tmp_path, "match-active", "export SERVING_PROBE_EXIT_CODE=10\ndo_update",
+        libraries=False,
+    ))
+    _assert_outcome(tmp_path, result, _NOOP)
+    events = _events(tmp_path)
+    assert events.count("MARKER") == events.count("CLEARED") == 1
+    assert events.index("MARKER") < events.index("SERVING") < events.index("CLEARED")
+    assert not (tmp_path / "install" / "update-in-progress").exists()
 
 
 _SH_NO_HASH = "_payload_hash() { :; }\n"
