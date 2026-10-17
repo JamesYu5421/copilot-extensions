@@ -932,6 +932,7 @@ class WorktreeRecord:
     # explicit, per-record operator edit ever promotes it). Emitted only
     # when set, so a legacy/pre-Phase-1 YAML stays byte-identical.
     codename_source: str | None = None
+    _loaded_machine: str | None = field(default=None, repr=False, compare=False)
 
     @property
     def owner_claim_ref(self) -> ClaimRef | None:
@@ -1529,11 +1530,17 @@ def _yaml_safe_load(raw: str) -> object:
 
 
 def load_record(path: Path, *, copy_result: bool = True) -> WorktreeRecord:
-    """Load a worktree tracking record from a YAML file. Routed through
-    :mod:`record_cache`; self-invalidating on ``(mtime_ns, size)``. ``copy_result=False`` is read-only."""
+    """Load using the record cache's ``(mtime_ns, size)`` invalidation.
+
+    Copies carry transient machine CAS evidence, never serialized. A non-copy
+    result is shared/read-only; clone it before making an intentional update.
+    """
     from .pr_publication_state import loaded
     record = record_cache.cached_load(path, _load_record_uncached, copy_result=copy_result)
-    return loaded(record) if copy_result else record
+    if copy_result:
+        record = loaded(record)
+        record._loaded_machine = record.machine  # Read-time CAS evidence, never serialized.
+    return record
 
 
 def parse_record_data(data: dict, *, path: Path) -> WorktreeRecord:
@@ -2164,7 +2171,7 @@ def parse_record_data(data: dict, *, path: Path) -> WorktreeRecord:
         codename_source=(str(data["codename_source"])
                          if data.get("codename_source") else None),
     )
-    record._loaded_from = path
+    record._loaded_from, record._loaded_machine = path, record.machine
     return record
 
 

@@ -144,6 +144,11 @@ sharing project registrations, settings or ownership ledgers. Physical-host
 grouping never makes distinct registered spaces local to one another. See
 [Execution-space identity](docs/config-reference.md#execution-space-identity)
 for explicit selection, compatibility and lifecycle fences.
+For deliberate historical label normalization, see
+[native machine-record repair](docs/machine-record-repair.md). The canonical
+report-first doctor scope preserves same-machine alias relationships and requires
+independent registration/namespace proof for removed checkouts. Ordinary doctor
+fixes never rebind ownership.
 
 ## Captured child ownership
 

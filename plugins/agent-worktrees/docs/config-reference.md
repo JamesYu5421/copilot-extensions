@@ -92,6 +92,13 @@ refused; review their provenance before any separate migration. Cross-space
 owned creation is still unsupported before allocation. This feature does not
 add reservation/receipt authority.
 
+Explicit [native machine-record repair](machine-record-repair.md) is available
+through `doctor --repair-machine-record <exact-id> --from-machine <old>`.
+`--to-machine <key>` optionally asserts the configured local target. Existing
+checkouts retain linked-Git proof; removed ones require canonical native
+registration and exact receiving-namespace evidence. Only the label changes:
+same-machine alias relationships remain intact, without automatic rebinding.
+
 Claim and handoff transactions recheck each freshly loaded source, consumer,
 and child record while holding its sidecar lock. Authority comes from the
 receiving execution user's registered project configuration, never a caller's

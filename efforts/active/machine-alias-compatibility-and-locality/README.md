@@ -7,7 +7,7 @@
 - **Status:** Active
 - **Vision:** `visions/plugins/agent-worktrees/README.md` (durable repository/worktree identity); `visions/agent-fabric/README.md` (shared identity authority)
 - **Umbrella issue:** #5674
-- **Related issues:** #5972 · #6170 · #6692 · #6739 · #6945 · #7057
+- **Related issues:** #5972 · #6170 · #6692 · #6739 · #6945 · #7057 · #7097
 
 ## Guiding Intent
 
@@ -31,7 +31,7 @@ example, a source commit, or a merged individual pull request.
 | WSL validation | Guest configuration, historical records and installed launch/resume proof | Adopting host's configured guest transport |
 | Runtime readiness owner | Empty-mux current-roster and liveness prerequisite | Managed source `grimy-cylinder` |
 | Guest installation identity repair | Bounded #6945 proposal, shared identity repair and entry-path acceptance | Managed source `tinkling-toolbox` |
-| Explicit owner migration | Bounded #7057 report-first local ownership repair; owns its plan and implementation PRs only | Managed source `chugging-ratchet` |
+| Canonical native label history | Bounded #7057 convergence on the canonical native repair; owns source PRs, not live application | Managed source `chugging-ratchet` |
 
 ## Coordination
 
@@ -109,6 +109,19 @@ Private topology, host labels, checkout paths and downstream context are
 redacted, not implementation inputs. One-time local application is explicitly
 authorized but separately coordinator-owned, not a release promotion or rollout.
 
+**Canonical integration decision (public-safe verbatim excerpts):**
+> "converge"
+>
+> "use merged command locally and converge remaining upstream work on it."
+>
+> "Avoid gratuitous conservative refusals that make known-local paired/controlled records impossible: assess whether preserved old references remain semantically valid same-machine aliases, and only refuse when you can show unsafe/incoherent authority"
+>
+> "The actual user gate remains all this machine's worktrees show canonical owner, not merely landing a feature."
+
+Private operational evidence and identifiers remain redacted. The settled
+direction is one canonical command, preserving valid same-machine alias
+relationships; misplaced-record integrity is a distinct capability.
+
 ## Plan
 
 ### Phase 0 - Empty-mux readiness prerequisite
@@ -179,28 +192,38 @@ _(Agent-recommended prerequisite discovered while checking the requested live-da
   cross-runner validation, then land, qualify, release and perform only
   authorized installation/default-selection changes.
 
-### Phase 3c - Explicit provenance-checked local owner migration
-_(Agent-recommended integration details for the requested #7057 capability.)_
-- [ ] Review and merge this plan before implementation.
-- [ ] Add a dedicated public report-first CLI with exact old/new labels and
-  explicit apply, separate from ordinary `doctor --fix`. Require the new label
-  to be the receiving configured canonical execution-space key and platform;
-  reject alias/key ambiguity and arbitrary foreign takeovers.
-- [ ] Prove each selected record belongs to its registered receiving project,
-  platform and checkout namespace. Historical absent checkouts are eligible
-  only with sufficient independent provenance; never rename IDs or paths.
-- [ ] Scan canonical local project/repository relationships, including paired
-  knowledge repositories. Deliberately fence cross-project dependent references,
-  misplaced/duplicate records, claims, controller and resource references:
-  migrate coherently through the owning authority or refuse explicitly.
-- [ ] Reuse authoritative mutation/publication and tracking locks, validate
+### Phase 3c - Canonical native label repair and historical records
+_(Operator-selected convergence; detailed mechanism is agent-recommended.)_
+- [x] Review and merge this plan before implementation; #7059 merged with
+  exact-head approval and passing required CI.
+- [x] Converge on the merged #7048 `doctor --repair-machine-record` surface;
+  remove the competing migration API. Keep report-first JSON and explicit apply;
+  optional exact target assertion cannot select another execution space.
+- [x] Preserve native observed-host and existing linked-Git proof. For removed
+  checkouts require an explicit canonical native key, canonical receiving
+  worktree/knowledge registration, readable Git anchor and exact ID/platform/
+  checkout namespace. Existing non-Git directories never borrow history proof.
+- [x] Preserve relationship bytes, rather than transfer ownership. Prove that
+  old qualified aliases still resolve to the same receiving record before and
+  after normalization, including known-local paired/controlled records.
+- [x] Reuse authoritative mutation/publication and tracking locks, validate
   unchanged input under lock, retain original-byte backups and an audit report;
   report partial/error outcomes honestly and make repeated apply idempotent.
-- [ ] Pass focused regressions, lint, install-contract and metadata/documentation
-  gates; add the agent-worktrees changefile and land through reviewed dev PR.
-- [ ] Transfer explicit one-time local application to the coordinator with the
-  retained clean source and public CLI commands. No runtime deployment, service
-  change, real-record repair or release promotion by this participant.
+- [x] Pass the converged focused regressions, lint, install-contract and
+  metadata/documentation gates; retain the agent-worktrees changefile.
+  Native/history repair, legacy handoff, authority/doctor/registry/locality,
+  cache/serialization and exact CI producer-clone regressions have bounded
+  contained coverage without increasing the normal test deadlines.
+- [ ] Land the source candidate through final-head review and required dev CI.
+- [x] Blocked; transferred to `#7097`: targeted authoritative handling of
+  misplaced duplicates/orphans without lifecycle destruction or a weakened
+  receiving-project fence.
+- [ ] Coordinator verifies all native records and resident roster show canonical
+  ownership, with wrong-store blockers resolved or explicitly transferred. A
+  direct exact-record write alone is not a resident projection refresh.
+- [ ] Transfer the retained clean source and canonical CLI commands to the
+  coordinator. No runtime deployment, service change, real-record repair or
+  release promotion by this participant; the containing user gate remains open.
 
 ### Phase 4 - Installed acceptance and closure
 - [ ] Enumerate all registered projects and existing Windows/WSL worktrees;
@@ -233,13 +256,15 @@ _(Agent-recommended integration details for the requested #7057 capability.)_
   queued prompts, live sessions, historical strings and unrelated records.
 - [ ] Satisfy the [guest-identity validation matrix](guest-execution-identity.md#validation-plan)
   before declaring the #6945 containing rollout gap closed.
-- [ ] For Phase 3c, prove read-only dry-run, exact selection and JSON, local
+- [x] For Phase 3c, prove read-only dry-run, exact selection and JSON, local
   existing/missing checkouts, unchanged non-owner fields, repeated apply,
   changed-record/lock failures and original-byte backup/audit recovery.
-- [ ] For Phase 3c, reject foreign project/platform/namespace, alias/key
-  ambiguity, ambiguous provenance and unsupported dependent references; verify
-  paired repository discovery and no incoherent cross-project edge or
-  success-shaped partial result. Ordinary doctor fix never migrates ownership.
+- [x] For converged Phase 3c, retain foreign project/platform/namespace and
+  ambiguous identity refusals while preserving valid same-machine alias links.
+  Prove existing linked-Git and removed-record receiving-registration paths,
+  including knowledge-only repositories, with no competing public API.
+- [x] For Phase 3c, distinguish exact-record truth from stale resident/list
+  projections; no source-only invocation claims to upgrade or patch the daemon.
 
 ## Proposal
 
@@ -247,13 +272,40 @@ Derive consumer behavior from the existing shared identity and registry owners.
 Separate physical-host grouping, logical execution identity and SSH transport.
 Use execution context and verified receiving-side records where historical
 labels are insufficient; do not repair a naming mismatch by self-targeted SSH,
-record relabeling, or weakening ownership fences.
+automatic record relabeling, or weakening ownership fences. Explicit native
+label repair is a separately reviewed, operator-selected record scope, not
+transport routing or a foreign ownership transfer.
 
 The additional regression matrix is implementation detail derived from the
 operator's all-alias/all-worktree acceptance requirement, not authorization for
 unrelated service changes or a second machine registry.
 
 ## Journal
+
+### 2026-10-16 - Operator selected canonical convergence
+- The operator selected convergence on the already merged #7048 command.
+  The competing migration surface and blanket linked-record refusals are
+  removed. Existing linked checkouts retain their observed-host and Git-common-
+  directory proof; removed native records gain independent receiving
+  registration/namespace proof behind that same command.
+- Relationship bytes and configured caller identity do not change. Regression
+  coverage proves that preserved old aliases still resolve the same local
+  records and retain handoff/owner/pair authority before and after normalization.
+  Existing broken relationships are not reported as repaired by label changes.
+- #7097 owns targeted misplaced-record integrity, including duplicate and
+  orphaned records. This source slice retains its project fence and never
+  silently relocates, deletes or finalizes such records.
+- Exact-record mutation and resident roster freshness are distinct facts.
+  Coordinator-owned live verification remains required; no installed runtime,
+  service or real record is changed by the source participant.
+- The read-time machine CAS token is a private non-serialized dataclass field,
+  so ordinary `dataclasses.replace` and copies derived from read-only cache
+  models preserve current-snapshot intent. A genuinely stale writer still
+  refuses after an explicit label repair.
+- Native/Git proof is repeated under publication authority before the short
+  record-lock phase. The final exact-byte CAS catches intervening record writes;
+  no Git I/O occurs under a record lock. Only material receiving bindings are
+  compared, not incidental profile/preferences configuration.
 
 ### 2026-10-16 - Explicit owner-migration slice proposed
 - #7057 reserves the bounded capability; `chugging-ratchet` owns its source
@@ -266,6 +318,38 @@ unrelated service changes or a second machine registry.
 - Plan captures the requested report-first migration and preserves surrounding
   authorization constraints. All algorithm/CLI integration details above are
   visibly agent-recommended and require the implementation's own review/tests.
+
+### 2026-10-16 - Owner-migration plan reviewed; bounded implementation
+- #7059 merged as `71104231fa60aa316728978f77377e9d2a4ca948` after
+  exact-head Copilot approval and passing required CI; execution synced onto
+  that reviewed intent through the supported Git flow.
+- The agent-recommended first integration is one exact record in its receiving
+  project, with a canonical cross-project/knowledge inventory for dependency
+  checks. Linked/provider-owned records are explicitly refused rather than
+  partially migrated. This does not claim multi-record graph transfer.
+- Real-record recovery and rollout remain coordinator-owned and unexecuted by
+  the source participant. The existing wider effort remains Active.
+
+### 2026-10-16 - Independent relationship authorities fenced
+- Bare caller, controller, owner, pair and typed resource references are durable
+  relationships, not passive strings. Their peer ledgers now fence matching
+  identities without requiring a machine qualifier; passive notes stay inert.
+- Claim reservations use `handoff_bundle`, and claim-handoff endpoints also live
+  outside worktree records. The repair inspects that registry, refuses retained
+  endpoints and producer-owned claims, and holds its native lock through commit.
+- Canonical repository registration now publishes through the existing
+  installation authority, excluding newly visible knowledge ledgers during the
+  final inspection/write boundary. A real concurrent-writer regression proves
+  registration waits until the record commit.
+- The fresh-home native CLI fixture uses the same platform detector as its
+  child, including WSL. Expanded affected validation passes 384 tests.
+- Itemized follow-up references and retained release snapshots participate in
+  publication fencing too, including a new-peer save attempted after the final
+  inventory check. Passive titles, notes and summaries are not ownership edges.
+- The transaction retains a constant-size lock set: publication authority,
+  claim-handoff registry and selected record. Peer claim/controller metadata
+  changes are authority-fenced rather than locking every historical ledger.
+  Busy unrelated peers remain available; duplicate checkout pointers refuse.
 
 ### 2026-10-16 - Guest source repair merged; release containment remains
 - #7009 merged as `6fe63b78740cc0adbf49fad4cd8970dca656ce83`, from exact head

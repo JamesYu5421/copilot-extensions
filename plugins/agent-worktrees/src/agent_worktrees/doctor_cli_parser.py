@@ -64,6 +64,11 @@ def add_parser(sub) -> None:
         help="Exact previous local machine label; requires --repair-machine-record.",
     )
     sp.add_argument(
+        "--to-machine", metavar="KEY",
+        help="With --repair-machine-record: assert the exact configured local target; "
+        "never selects a different execution space.",
+    )
+    sp.add_argument(
         "--repair-creation", metavar="WORKTREE_ID",
         help="Inspect only a cold worktree's retained New setup; --fix completes it.",
     )
