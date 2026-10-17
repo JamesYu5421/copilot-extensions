@@ -25,6 +25,7 @@ from agent_logger.sync.log_archive_cli import run_compact_logs, snapshot_process
 from agent_logger.sync.meta import (
     MAX_DEFERRED_FILE_SAMPLES,
     MAX_DEFERRED_PATH_CHARS,
+    status_text as _status_text,
 )
 from agent_logger.sync.notify import post_notify
 from agent_logger.sync.origin import classify_for_sync, effective_harness, mark_all
@@ -34,13 +35,6 @@ from agent_logger.sync.worktree_binding import mark_all_worktrees
 
 def _machine(cfg: Config) -> str:
     return cfg.machine_name or detect_machine()
-
-
-def _status_text(value, default: str = "(unknown)", limit: int = 512) -> str:
-    if not isinstance(value, (str, int, float, bool)):
-        return default
-    cleaned = "".join(char for char in str(value) if char.isprintable())
-    return cleaned[:limit] or default
 
 
 def _included_sessions(source, allowlist: list[str],
@@ -327,11 +321,15 @@ def run_sync(
             print("session-sync: another sync holds the lock; skipping", file=sys.stderr)
             return 0
 
+        from agent_logger.usage_capture import capture_for_sync
+
+        accounting_complete, accounting_failed = capture_for_sync(cfg, include, verbose=verbose)
+
         # On-device compaction (before the push): archive cold, in-scope,
         # untracked local sessions into the compressed store and reclaim their
         # live dirs, so the scheduled service performs the whole compaction
         # lifecycle from config -- no separate `compact` invocation needed.
-        if cfg.sync_compact["enabled"]:
+        if cfg.sync_compact["enabled"] and accounting_complete:
             from agent_logger.sync.compact import compact_local
 
             cres = compact_local(cfg, verbose=verbose)
@@ -424,6 +422,7 @@ def run_sync(
             elif not arc.ok:
                 print(f"session-sync: archive push failed: {arc.detail}", file=sys.stderr)
 
+        if cfg.sync_compact["enabled"] and accounting_complete:
             opts = cfg.sync_compact
             from agent_logger.sync.compact import resolve_hub_tracked_paths
 
@@ -459,7 +458,7 @@ def run_sync(
             )
             if verbose:
                 print(f"session-sync: notify {'sent' if sent else 'failed (ignored)'}")
-        if process_logs_failed:
+        if process_logs_failed or accounting_failed:
             return 1
     return 0
 
