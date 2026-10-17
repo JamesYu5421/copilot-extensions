@@ -107,7 +107,7 @@ implementation and validation choices remain proposed means.
 - [ ] Inventory built-in template mappings, provider declarations, setup
   examples and contributed catalogs; classify reusable templates separately
   from concrete desired registrations.
-- [ ] Review a bounded specification for template discovery, instantiation and
+- [x] Review a bounded specification for template discovery, instantiation and
   consumer injection points against the existing catalog and instance lifecycle.
 - [x] Record operator execution authorization and the Planning coordinator's
   integration ownership; no production activation is implied.
@@ -523,3 +523,188 @@ venue limitations explicitly; source merge is not promotion or installed proof.
   missing optional repository integration and unchanged unrelated controls.
   No provider format, source registration, service or installed payload changed.
 - Both the parent effort and its remaining validation/rollout gates stay open.
+
+### 2026-10-17 - Template contract reviewed; read-only discovery next
+
+- #7143 merged at 15:05Z as
+  `ce2a8dabaca37b21c28d924a551716fc6e415b22`. The exact reviewed head
+  had a Copilot approving verdict with no open issues and successful complete
+  normal CI, including `PR gate (required check)`. The parent issue stays open.
+- Re-read the Plan and Validation Plan after merge. Marked only the bounded
+  specification-review item complete; its proposed interfaces are not runtime
+  capabilities yet. Next is isolated read-only provider discovery, with scoped
+  completeness/findings and no new external-template mutation affordances.
+- Existing builtin instantiation and registrar controls remain the
+  compatibility floor. Instantiation, client parity, mapped production,
+  promotion and authorized installed proof remain open.
+
+### 2026-10-17 - Read-only provider discovery implemented for review
+
+- Added explicit inert JSON index discovery for verified plugin live roots,
+  existing repository layers and installation-local templates. Qualified
+  identity/revision, applicability, declared requirements and unsupported-action
+  reasons are projected without executable values or new registrations.
+- Template completeness/findings remain separate from registrar mutation
+  refusals. Error rows reuse the existing Discovery errors group so clients
+  retain them while filtering; their scope is explicitly templates.
+- Kept activation acquisition lazy and shared across registrar/template reads.
+  An indeterminate template-only activation scan cannot introduce a new
+  registrar error when there are no plugin registrar candidates.
+- The contained catalog, instance, registrar and recipe selection passed
+  279 tests. The final 108-test catalog/instance selection includes actual
+  first-touch CLI output and the Manager manifest's action-capability contract,
+  unchanged source/state bytes and builtin save/publication compatibility.
+  Changed Python lint and the 13-plugin install contract passed.
+- This implements discovery only. External fragments remain non-instantiable;
+  no source activation, provider command, queue access or installed update was
+  used. Native CI, normal promotion and authorized installed proof are
+  independent gates; the earlier #7020 timeout remains tracked, not waived.
+
+### 2026-10-17 - Discovery refusal and inventory authority corrections
+
+- A regular-file check now precedes index/declaration opening: a FIFO cannot
+  block catalog discovery before the byte limit applies. Native POSIX index
+  and declaration FIFO cases exercise the real CLI; Windows retains a direct
+  non-regular-file refusal case.
+- Reuse repository-resource name validation instead of imposing a template
+  ID's 80-character limit on repository names. Inert fragments still keep
+  their own bounded local IDs.
+- A tolerant repository listing cannot attest inventory completeness because
+  its reader may omit malformed state. Add an explicit strict read-only
+  inventory contract to the repository owner, preserving the default listing.
+  Older inventory output leaves template discovery partial while individually
+  registered-only roots remain usable. Corrupt/duplicate/non-regular strict
+  inventory must fail before emitting an authority marker.
+- Required CI caught a forbidden plugin-to-Manager import in the integration
+  test. Move the consumer parser/action checks to the Manager-owned suite and
+  keep the real dispatch CLI proof in dispatch's suite. The boundary guard is
+  unchanged; independent installability does not depend on test imports.
+- Both owners' relevant changefiles and operating docs are included. These
+  corrections retain scoped findings and all existing activation controls.
+- The final contained dispatch selection passed 284 tests with two explicit
+  POSIX-only FIFO cases skipped on Windows. Strict inventory and existing
+  repository operations passed 161 tests, including actual native CLI output;
+  Manager's own compatibility/dependency selection passed three tests.
+  Native POSIX FIFO execution and updated-head review/complete CI remain
+  prerequisites rather than inferred Windows coverage.
+- Strict inventory distinguishes a missing directory entry from a dangling
+  registry symlink: only the former is authoritative absence. Entry `lstat`
+  precedes target resolution, so an unavailable target produces an explicit
+  error without an authority marker. Focused strict-inventory and native CLI
+  checks join the existing path-gated guard lane.
+
+### 2026-10-17 - Unavailable template layers remain visible
+
+- Current-head review identified another authoritative-absence distinction:
+  the existing repository-layer helper filters broken directory links before
+  the template reader can inspect them. Add an explicit audit-only option
+  that retains present unavailable entries without changing default registrar
+  selection or hiding healthy canonical/fallback/marketplace layers.
+- Template discovery now reports scoped invalid-index findings for those
+  entries. A shadowed legacy layer remains shadowed, and genuinely missing
+  optional layers remain healthy absence. Installation-local root, directory
+  and index links use the same missing-versus-unavailable distinction.
+- The contained template/instance/registrar/recipe selection passed 293 tests,
+  with only the two native POSIX FIFO cases skipped on Windows. Nine new
+  native filesystem cases cover broken repository/local entries, healthy
+  peers, shadowed fallback selection and first-touch absence. No source bytes,
+  registration, queue, service or deployed runtime changed.
+- Updated-head review and complete required CI remain merge prerequisites;
+  native POSIX execution, promotion and authorized installed proof are not
+  inferred from the Windows result.
+
+### 2026-10-17 - Missing children do not hide unavailable ancestors
+
+- The next review found the same absence error one directory higher in both
+  owners. A child `lstat` can report missing when an ancestor is a dangling
+  link. Audit template candidates through their nearest existing ancestor;
+  retain every affected layer as a scoped finding and healthy fallback rows.
+  An unavailable shared ancestor may correctly affect both base and overlay.
+- The strict repository reader independently verifies the nearest existing
+  ancestor before reporting an absent registry. Broken links, link loops and
+  non-directory ancestors refuse inventory authority; genuinely missing
+  first-touch parents remain a complete empty inventory.
+- Native Windows coverage passed 301 coupled dispatch tests and 31 registered
+  repository tests. The latter includes actual strict CLI processes for absent,
+  dangling, non-directory and loop ancestors. The two POSIX-only FIFO tests
+  remain explicit Windows skips. Changed Python lint passed. The initial
+  template expectation incorrectly anticipated one finding for a shared
+  unavailable ancestor; corrected it to require both affected layers.
+- Updated-head review and the full normal aggregate gate remain required.
+  No retry, timeout increase, guard widening, installed update or live source
+  effect is used to claim completion.
+
+### 2026-10-17 - Filesystem probe failures are layer-scoped
+
+- A further current-head review identified readable fallback loss when the
+  default selector's canonical probe raises PermissionError before audit
+  isolation runs. Audit mode now acquires each candidate independently;
+  a verified existing canonical layer still shadows legacy, while an
+  unavailable canonical layer remains a finding beside readable fallback
+  evidence. Default registrar/execution selection is unchanged.
+- Isolate each layer's directory probe as well as its index reader. Neither
+  an unreadable base nor an unreadable overlay suppresses healthy peer rows.
+  Browsable inert fragments do not establish effective registration precedence.
+- Four fault-injected PermissionError cases retain real healthy filesystem
+  reads, scoped findings and source bytes across configuration ancestors,
+  canonical, legacy and marketplace probes. The coupled contained dispatch
+  selection passed 305 tests with the two POSIX FIFO Windows skips explicit.
+- Current-head review, complete native CI, promotion and authorized installed
+  proof remain separate gates. No service or deployed runtime changed.
+
+### 2026-10-17 - Approved source; complete-suite deadline correction
+
+- Current head `b9157488775c237a4cfedbd85fdbf9e571beaabe` received a Copilot
+  approving verdict with no unresolved issues. CI run 39052822914 then ran all
+  nine contained dispatch groups successfully: 5,933 passing tests and 35
+  explicit skips. The test step reported PASS at 17:26:17Z, but the job that
+  began at 17:14:17Z hit its unchanged 12-minute limit during final reporting
+  and cleanup. The required aggregate correctly refused that cancelled job.
+- Reconciled the recurrence with existing issue #6052; no competing open
+  correction exists. Distribute the same complete file inventory's existing
+  25-file process groups across three independent required CI jobs. Retain
+  every test, existing containment and all item/sub-suite/plugin/job budgets.
+  Local unfiltered invocation and other plugins remain unchanged.
+- Partition/runner contracts passed 69 tests with two native-platform skips,
+  including exhaustive disjoint coverage, preserved actual runner groups,
+  real helper CLI refusal/output and matrix/aggregate wiring. Native CI must
+  still exercise the new jobs before merge. This is not a forced retry,
+  accepted-flake exception, larger deadline or bypass.
+- Unit and lightweight consumer-boundary evidence are isolated. A separate
+  deployment clean room is inapplicable to CI-only scheduling; the next real
+  required workflow run is the available external venue. No installed runtime,
+  source activation or rollout changed.
+
+### 2026-10-17 - Partition-aware promotion qualification
+
+- Native CI run 39054907434 exercised all three dispatch partitions, but both
+  platform promotion-contract lanes caught a coupled consumer still expecting
+  the former single-plugin matrix. The same two inventory tests failed;
+  this is caused by the scheduling change, not an accepted pre-existing failure.
+- Qualification now statically reads the helper's literal partition map, requires
+  every partition's actual job name and binds normalized workflow plus helper
+  bytes into the qualification receipt. Candidate Python is never imported or
+  executed to discover this inventory. Unknown matrix shapes, malformed or
+  duplicated declarations, missing rows and failed/cancelled partitions refuse.
+- Both platform selectors now include helper-only changes. Unit/consumer tests
+  compare the real helper matrix with qualification's exact row names, exercise
+  each partition's omission/failure/cancellation, and check source identity,
+  LF/CRLF equivalence and non-execution. Fresh current-head review and complete
+  native CI remain required; no deadline or coverage guard is weakened.
+- Isolated qualification/partition/runner/materialization/workflow and receipt
+  consumers passed 331 tests and 75 subtests, with eleven explicit native/Bash
+  skips. The final matrix/selector contract passed fifteen tests; changed
+  Python lint and the thirteen-plugin install contract passed. A separate
+  deployment clean room remains inapplicable to CI-only scheduling; the fresh
+  normal workflow is the required external proof.
+- Current-head CI exposed the path-selector test reader's assumption of a
+  single grep expression. It now reads both literal `-e` expressions and
+  retains all existing positive/negative scope assertions, adding helper/test
+  paths and rejecting their backup-file siblings on both platforms.
+- Current-head review then identified scheduling-only changes could omit the
+  smoke matrix entirely, skipping the focused completeness/runner contract.
+  Move that suite into both existing required native runner lanes, extending
+  their selectors for helper/test-only changes. Reuse existing dependency
+  preparation, job budgets and aggregate dependencies; do not add a new job,
+  dependency or advisory check. The workflow contract proves that independent
+  route for helper, test, runner and workflow changes.

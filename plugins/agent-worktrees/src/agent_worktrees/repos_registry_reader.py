@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import stat
 from typing import TYPE_CHECKING
 
 import yaml
@@ -38,9 +39,27 @@ def read_registry(path: Path, *, strict: bool = False) -> ReposRegistry:
         normalize_class, normalize_visibility,
     )
 
-    if not path.exists():
-        return ReposRegistry()
     try:
+        if strict:
+            try:
+                path.lstat()
+            except FileNotFoundError:
+                for parent in path.parents:
+                    try:
+                        parent.lstat()
+                    except FileNotFoundError:
+                        continue
+                    if not parent.is_dir():
+                        raise RepositoryResolutionError(
+                            f"repository registry ancestor is unavailable: {parent}"
+                        )
+                    break
+                return ReposRegistry()
+            mode = path.stat().st_mode
+            if not stat.S_ISREG(mode):
+                raise RepositoryResolutionError("repository registry must be a regular file")
+        elif not path.exists():
+            return ReposRegistry()
         text = path.read_text(encoding="utf-8")
         data = yaml.load(text, Loader=_UniqueRegistryLoader) if strict else yaml.safe_load(text)
         if not isinstance(data, dict):
