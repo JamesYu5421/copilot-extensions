@@ -384,6 +384,89 @@ and retains timestamped Bridge diagnostics and operation-label-only stage
 timing, without writing provider stdin or task credentials into the stage log.
 All diagnostics remain inside the unchanged test and subprocess deadlines.
 
+### Native Agent Machines lifecycle boundaries
+
+`plugins/agent-machines/tests/test_payload_installer_lifecycle_powershell.py`
+likewise gives each cleanup outcome, staging/watchdog outcome and output
+encoding its own function-scoped sandbox and pytest item. The default remains
+an 18-second subprocess bound and the runner's 30-second item budget; combining
+those native scenarios into serial loops exceeds the composed budget. The two
+Windows PowerShell 5 staging items alone use a 45-second subprocess bound and
+a 60-second item budget: measured cold nested hosts/probes consumed roughly
+five CPU seconds apiece before reaching the smoke seam. Their fixture watchdog
+uses 20 seconds and a 30-second simulated sleeper so it can observe the started
+child before proving exit 124. PowerShell 7 staging uses a 30-second subprocess
+bound and 45-second item budget, with an eight-second fixture watchdog: its
+three-second watchdog demonstrably killed a cold staged child before its smoke
+record existed. Other native cases, production deadlines and every
+readiness/output/cleanup assertion are unchanged. Run the
+native lifecycle file without `--guards`, which excludes these integration
+items. An individual subprocess timeout still fails and requires diagnosis;
+parameterization does not excuse it.
+
+This lifecycle fixture preserves the upstream in-process governance stub and
+its phase diagnostics; it is not an end-to-end governance invocation. Actual
+owner admission and native installed first-touch repair are exercised separately
+by `test_installation_repair.py`.
+
+The native plan/apply/retry, multi-apply restart-confirmation and independent
+restart-batch items in that file have a 60-second native Windows item budget,
+retaining 30 seconds elsewhere.
+Their several real PowerShell calls exceeded the former 30-second item cap;
+an isolated unchanged-bound run took 24 seconds. Production readiness/installer
+deadlines and all restart, dependency and confirmation assertions are unchanged.
+The plan/apply/retry case also exceeded 30 seconds after adding mandatory
+executable admission and re-admission of initially-ready outcomes; its real
+process calls and repeated-apply assertions remain intact.
+Native CMD path/argument preservation and POSIX conductor-termination tests live
+in `test_installation_repair_boundaries.py`; the latter proves descendant cleanup
+before lock release for SIGINT and SIGTERM during action execution, spawn
+ownership handoff and normal-exit cleanup, plus preservation of caller handlers
+and ignored child dispositions. The same file covers executable
+admission failure without execution and binding drift during an initially-ready
+probe and required-dependent blocker propagation after optional prerequisite
+binding refusal; source-content admission is shared by planning and actual invocation.
+The admitted executable is passed as an absolute argv path. A native POSIX
+relative-PATH case separates the conductor and payload working directories and
+places a different executable at the payload-relative path; real plan/apply
+must still invoke the admitted interpreter.
+POSIX payload commands bind supported `sh`/`bash` shebang interpreters, bypassing
+`env` lookup after the working-directory change and refusing unsupported forms.
+Both command and script relative-PATH cases exercise real plan/apply. Native
+Windows Job teardown confirms zero active members, including an exited
+installer's redirected descendant, before releasing the repair lock.
+POSIX cleanup likewise waits for transient group members to exit (ignoring
+resource-free Linux zombies); an exited-parent regression verifies a redirected
+descendant's exclusive file lock is released before repair unlocks. Interpreter
+admission preserves the declared absolute path's basename semantics while
+binding its resolved executable content, including `sh` symlinked to Bash.
+Declared action content is bound independently of payload cache exclusions.
+Post-install probes also require fresh owner admission before readiness is
+accepted, including the final selected module. Binding drift or cancellation
+retains the completed installer result but rejects stale readiness and blocks
+dependents. The eight cancellation-boundary and three post-install drift cases
+use a 60-second native Windows item budget after a real PowerShell probe exceeded
+30 seconds; POSIX item limits and production deadlines remain unchanged.
+
+The first-use items in
+`plugins/agent-machines/tests/test_payload_provisioning_powershell.py` separate
+stamp refusal from the real failed-provision-then-retry-then-warm sequences.
+PS5's retry flows use at most 60 seconds per invocation within a shared
+120-second workflow deadline and a 150-second item budget. Measured native
+failure/retry/warm chains took 50-80 seconds; a 45-second invocation bound still
+expired before the first installer entered in the namespaced cold-host chain.
+The single stamp refusal instead uses a 45-second workflow and 60-second item
+budget. PowerShell 7's retry/warm cases use a 30-second invocation within a
+shared 60-second workflow and a 90-second item budget: a measured cold
+legacy invocation exceeded 20 seconds after stamp but before provision.
+Its single stamp-refusal case retains the 20-second invocation and
+30-second item limits, with a 25-second workflow bound leaving cleanup time.
+These are aggregate deadlines, not independent retries that each reset the
+workflow budget. Both hosts still verify live progress, complete split
+stdout/stderr capture, exact exit codes, actual retry, warm dispatch and cleanup.
+Transient processes use the canonical caller-owned Windows Job: a deadline must
+close the whole tree before joining readers or closing their streams.
+
 The standalone runner accepts the legacy `agent-index-service` and
 `agent-dispatch-service` component names as aliases for `services/index` and
 `services/dispatch`, respectively. It normalizes aliases before environment
