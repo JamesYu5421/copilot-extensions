@@ -64,6 +64,13 @@ mode when exercising the builder locally.
 
 ### Materialized candidate consumer gate
 
+Ordinary guard CI also exercises installer human-output declarations with
+explicit canonical and already-materialized source fixtures. Both use the real
+producer, materializer and runtime admission checker, including complete local
+engine/support assets, byte-stable reapplication and tamper refusal. A
+materialized installer correctly needs no second reference rewrite; a canonical
+installer must still demonstrate that rewrite and declaration rebinding.
+
 Before the checkout-free merger can advance `main`, the exact pushed candidate
 has a separate consumer gate. `materialized-candidate-plan` validates its
 immutable candidate/dev/main identities and builds the consumer matrix from
@@ -742,6 +749,16 @@ main-to-dev retarget immediately creates the required contribution checks.
 GitHub cannot filter this activity to base edits alone at workflow admission,
 so other PR edits also run CI; excluding main still prevents its redundant
 release-candidate invocation.
+
+Within each PR ref, a new head's `synchronize` event supersedes the older head's
+executing CI. Metadata-only edits still trigger CI, but do not cancel and
+restart an in-progress run. Standalone Index predicates deliberately preserve
+their prior non-PR `always()` semantics; the cancellation exclusion is PR-only.
+Cancelled PRs do not continue standalone Index jobs or allocate the final PR
+aggregate; an uncancelled dependency failure still reaches that required
+aggregate and reports failure. Dev pushes and manual qualification keep rolling
+queue semantics, so frequent contributions do not restart an executing release
+validation. This policy changes no required inventory for the current head.
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|

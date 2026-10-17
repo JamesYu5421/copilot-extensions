@@ -115,6 +115,18 @@ rewrite)._
 > https://github.com/ThomasMichon/copilot-extensions/pull/6938
 > I expect that to mean "release succeeded". If we have a failure, don't allow this merge through.
 
+**2026-10-16 CI capacity clarification (verbatim):**
+
+> CI for PRs should be under 10 minutes; CI for validate-and-promote should be more like 30, but 1 hour is okay nce we have the parallel "use dev locally" effort through
+
+> Focus on getting current promotion flow unblocked before disrupting it; once it runs against, focus on shortening the time
+
+> We've accumulated over 50 actrive PRs in copilot-extensions; we desperately need main promotion and to make the CI pipeline shorter so we're not jammed in the queue. We don't have enough resources to sustain this test load
+
+The quoted wording and original spelling are preserved verbatim. Phase 9's
+operative plan below interprets the timing and recovery-first requirements;
+the quotations are not edited into implementation instructions.
+
 Phase 9 is the agent-recommended decomposition of this clarification. It does
 not grant a new main-path exception, relax byte integrity or silently change
 the separately owned main-control preservation policy. The original pipeline
@@ -751,7 +763,18 @@ _(Agent-recommended implementation and validation decomposition of the
       main control requires its existing explicit review/authorization path.
 - [ ] Measure actual qualified source advancement, queue time and blocking
       stages against hourly-or-faster delivery while changes are pending;
-      retain the original faster 10-30-minute validation intent.
+      ordinary PR event-to-required-gate time must be below ten minutes,
+      including queueing. Target thirty minutes for validate-and-promote;
+      the one-hour allowance requires actual local-Dev workflow acceptance.
+- [ ] _(Agent-recommended sequencing.)_ Contain superseded PR CI without
+      interrupting the executing Main qualification. Retain rolling Dev/manual
+      validation and every current-head gate. While Main is canonically paused,
+      the reviewed Dev-only policy may land without changing that pinned
+      qualification. The failed candidate has now been retired unmerged.
+      Activate matching CI policy through the existing reviewed Main-control
+      path after that retirement and before any fresh qualification or resume
+      containing source that asserts it. Recheck the pause before the Dev merge;
+      governed Main controls are never replaced silently.
 - [ ] Prove normal release and client compatibility, journal the result and
       retain responsibility for unresolved acceptance. A contract PR, source
       merge, tag, or green wrapper alone does not complete this phase.
@@ -937,6 +960,79 @@ The separately governed control-preservation policy is not changed by this
 proposal.
 
 ## Journal
+
+### 2026-10-16 (PDT) - Retire failed candidate; repair release-layout qualification
+
+The paused replacement's full materialized-candidate CI failed the installer
+human-output guard before Main merge. Its fixture copied canonical wrappers
+without their local engine assets and required another rewrite even when the
+tested release wrapper was already materialized. Real materializer no-op
+behavior for a local reference was correct; no product hash waiver is needed.
+The operator authorized retiring only candidate PR #7113 and its parent/child
+validation runs. Both runs are terminal cancelled, the candidate is closed
+unmerged, and Main remains paused and unchanged. Published inputs and evidence
+are retained. The temporary noncritical CI intake request ended with that
+failure; it is not an ongoing hold or cancellation permission.
+
+The existing PR-only containment contribution now includes explicit canonical
+and materialized installer fixtures built from real consumer bodies and
+canonical assets. Both prove actual declaration admission, complete local
+engine/support bytes, byte-stable reapplication and tamper refusal; the
+whole-payload cases retain both build and in-place owner ordering. The focused
+fixture/policy modules pass 129 cases. The repaired fixture also passes all 45
+cases against an isolated archive of the exact failed candidate, without
+editing or republishing that candidate.
+
+Review found unsafe expression evaluation in the new policy test helper. All
+three such call sites in the module now share an explicit primitive-only AST
+evaluator, with unsupported syntax and unknown names rejected even in inactive
+branches. The request quotations remain verbatim, with an outside-quote
+explanation rather than rewritten operator wording.
+
+Follow-up review added full operand-type validation followed by short-circuit
+interpretation, with lookup-count cases proving the distinction, and nested
+support-asset copying in the fixture. The coherent source portfolio now passes
+222 cases plus 75 subtests, with nine existing opt-in skips; the exact failed
+candidate archive passes all 46 installer cases. No production parser,
+materializer or byte-admission policy changed.
+
+The former sequencing assumption below is superseded: the old candidate can no
+longer finish. Retire that attempt (done), land the reviewed Dev repair while
+the canonical pause remains set, activate matching reviewed Main CI controls,
+then qualify a fresh source through every normal gate. Neither this fixture
+fix nor a Dev merge proves release, latency or installed acceptance.
+
+### 2026-10-17 - Retire obsolete CI and prepare PR-only cancellation containment
+
+Read-only inventory confirmed 55 open PRs and 100 queued workflow records in
+the current listing. Twelve ordinary CI runs referenced superseded PR heads.
+The operator approved cancelling only those exact obsolete runs after live
+head, workflow, repository and base checks. Eleven are now provider-confirmed
+cancelled; the twelfth had already completed and was left untouched.
+Normal cancellation could not terminate `always()` jobs, so force cancellation
+was separately approved only for the ten remaining obsolete runs. Current-head
+checks, Dev CI, promotion and review runs were excluded.
+
+The proposed prevention cancels superseded PR runs only on head synchronization,
+not on metadata edits that would restart the same head, and prevents cancelled PRs
+from continuing standalone Index jobs or allocating the final required
+aggregate. Uncancelled dependency failures still reach that aggregate and
+report failure. Dev/manual rolling behavior and the promotion aggregate remain
+unchanged; no current-head coverage, timeout, permission or release gate is
+removed. Before implementation, seven regressions failed against the old
+policy. The focused policy/trusted-policy/publication portfolio now passes
+87 tests with 75 subtests and nine existing opt-in skips.
+
+This source policy is not yet landed or active. The current promotion remains
+on its immutable Main controls and pinned source. A fresh canonical pause permits
+landing the reviewed Dev correction first: automatic promotions remain stopped,
+and the executing older candidate does not acquire the new source assertions.
+Main-control preservation still requires the matching reviewed control change
+after the current qualification and before resuming or qualifying newer source;
+otherwise the next candidate would correctly expose the old controlled CI
+behavior. This pause interlock avoids disturbing the active promotion while
+containing new PR waste. It does not complete the ten-minute CI budget or
+release qualification.
 
 ### 2026-10-16 - Required baseline collection blocks paused replacement before publication
 
