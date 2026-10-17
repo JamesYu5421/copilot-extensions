@@ -737,3 +737,64 @@ venue limitations explicitly; source merge is not promotion or installed proof.
   semantics through existing owner/client boundaries. Preserve #6379, #4959
   and #6283 ownership; provenance-safe external-template instantiation remains
   open rather than silently materializing unresolved relative resources.
+
+### 2026-10-17 - Atomic steering acceptance implemented for review
+
+- #7141 now has a bounded owner implementation. A card/ownership revision is
+  projected through the existing task reads; its comparison runs inside the
+  answer's `BEGIN IMMEDIATE` transaction before any steer, draft, status or
+  wake mutation. Each card post has a fresh owner nonce, including identical
+  replacements at the same timestamp. Heartbeats and drafts do not stale it.
+- Bind retry identity to the complete canonical answer, sender, expected
+  status/revision and wake intent/message. Exact committed replay precedes
+  the stale-card check; changed or unverifiable legacy requests conflict.
+  Store immutable acceptance and original wake identity on the existing
+  steer row. Consumption and original wake delivery remain separate
+  observations, not evidence inferred from a later task wake.
+- Guarded HTTP and SDK calls fail explicitly against an older owner, including
+  a downgrade after the capability probe; there is no legacy-write fallback.
+  Native CLI exposes the precondition, caller request ID and receipt reads.
+  Both Tasks and Maintenance forms forward the owner revision. Ordinary
+  manual guidance stays compatible; no workflow states, authentication store,
+  producer or second input registry were added.
+- This realizes the Tasks-pane vision's immediate-acceptance/visible-delivery
+  intent and follows the existing independent-installation, fail-loud and
+  proportionate-cooperation patterns. No vision expansion or new service.
+- Complete directly coupled owner/card/wake, HTTP/SDK and CLI suites passed
+  492 tests with one explicit platform skip. Real concurrent writers prove
+  one answer/audit/wake, and native ephemeral HTTP plus actual CLI processes
+  prove first-touch read/submit/exact replay/receipt with reserved request-ID
+  characters. Existing SQLite rows migrate without invented receipts.
+  Changed Python lint, module ceilings and the thirteen-plugin install
+  contract passed without widening checks.
+- The final forty-test acceptance selection also proves an exact retry retains
+  its original no-session/no-wake receipt after an owner session is bound;
+  it cannot silently acquire a later wake or rewrite that acknowledgement.
+- A separate fresh-machine installer clean room was not run: no installer,
+  bootstrap or deployment path changed. Fresh queue/CLI and legacy-schema
+  adoption were exercised in isolated state. Current-head review and complete
+  native CI remain required external proof; normal release and authorized
+  installed proof remain separate gates. Independent graphical adoption and
+  the broader parity/production journeys remain open.
+
+### 2026-10-17 - Acceptance-time assertions and historical native fixtures
+
+- Current-head review identified four existing asynchronous HTTP assertions
+  reading live wake status as though it were immutable acceptance. Assert the
+  stored acceptance-time pending value instead, retaining every independent
+  delivered/failed/nonblocking check. A controlled interleaving finishes the
+  real queued wake before the route reads its receipt: acceptance stays pending,
+  current delivery is delivered, and the answer remains unconsumed.
+- Required CI run 39064748697 exposed a native consumer fixture deriving a
+  historical schema-v1 template from today's canonical argv. The new revision
+  argument changed those reconstructed bytes and correctly tripped its exact
+  historical checksum. Freeze the historical steering argv; do not change the
+  trusted checksum or production legacy-ownership guard.
+- The actual Manager registry now also proves both attributed task forms expand
+  the owner-revision argument, including fresh, historical and already-owned
+  registry cases. Keep the tests in their owning distribution, not a forbidden
+  dispatch-to-Manager import; include the Manager changefile.
+- Targeted dispatch receipt/card coverage passed 94 tests. Native Windows
+  Manager discovery, historical migration, ownership/refusal and form-expansion
+  coverage passed twenty tests; the broader Manager portfolio remains selected
+  by normal required CI. Updated-head review and full CI remain merge gates.
