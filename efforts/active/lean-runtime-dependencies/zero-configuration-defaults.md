@@ -19,8 +19,8 @@ Runtime enabling and production rollout retain their existing gates.
 
 ## Ordered implementation
 
-- [ ] Land the adopting harness's reviewed default intent, then the generic
-  Runtime Assembly/engine amendments and this plan, before external realization.
+- [x] Land this repository's Runtime Assembly and Index vision amendments and
+  this sub-plan before implementation (#7066).
 - [ ] Extend the existing authority seam with an authenticated adopting-policy
   input. Its default requires no private approval file, invented provider or
   extra controller. Establish the actual existing release/configuration
@@ -47,6 +47,11 @@ Runtime enabling and production rollout retain their existing gates.
   with generic policy in the harness, optional private overrides outside it and
   no baked-in feed identities or credentials. Source behavior may not wait for
   optional artifact publication. Roll out only under separate authorization.
+
+The adopter's reviewed default intent preceded #7066. Its own repository
+maintains that policy-review evidence; its private identity and links do not
+belong in this public effort. The checked item above records this repository's
+review gate only. Neither review gate enables a runtime.
 
 ## Validation and completion
 
