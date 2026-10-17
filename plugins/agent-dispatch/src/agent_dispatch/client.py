@@ -425,6 +425,14 @@ class DispatchClient(CategoryClientMixin, ScheduleClientMixin, RegistrationClien
             self._http.post(f"/tasks/{task_id}/heartbeat", json={"worker_id": worker_id})
         )
 
+    def scoped_heartbeat(self, task_id: str, worker_id: str, task_token: str) -> dict:
+        from .task_scope import TASK_SCOPE_HEADER
+
+        return self._unwrap(self._http.post(
+            f"/tasks/{task_id}/heartbeat", json={"worker_id": worker_id},
+            headers={TASK_SCOPE_HEADER: task_token},
+        ))
+
     def set_activity(
         self, task_id: str, activity: str | None, *, reservation_key: str,
         observed_at: float | None = None,
@@ -600,6 +608,12 @@ class DispatchClient(CategoryClientMixin, ScheduleClientMixin, RegistrationClien
 
     # -- spawn reservations --------------------------------------------------
 
+    def record_restricted_delivery(self, key: str, info: dict) -> dict:
+        return self._unwrap(self._http.post(
+            f"/spawn-reservations/{key}/restricted-delivery",
+            json=info, headers=self._control_headers(),
+        ))
+
     def reserve_spawn(
         self, task_id: str, *, reserved_by: str | None = None,
         allow_suspended_reembodiment: bool = False,
@@ -747,11 +761,6 @@ class DispatchClient(CategoryClientMixin, ScheduleClientMixin, RegistrationClien
                     "worktree_path": worktree_path,
                 },
             )
-        )
-
-    def defer_spawn(self, key: str, *, detail: str | None = None) -> dict:
-        return self._unwrap(
-            self._http.post(f"/spawn-reservations/{key}/defer", json={"detail": detail})
         )
 
     def request_spawn_release(

@@ -91,6 +91,10 @@ class FailSpawnBody(ReservationDetailBody):
     confirmed_absent: bool = False
 
 
+class DeferSpawnBody(ReservationDetailBody):
+    expected_generation: int | None = Field(default=None, ge=0, le=2**63 - 1, strict=True)
+
+
 class RecordColdBody(BaseModel):
     release_exclusive: bool = False
 
@@ -135,6 +139,8 @@ def register_spawn_routes(
     queue: TaskQueue,
     bus: EventBus,
     control_token: str | None = None,
+    *,
+    restricted_ingress_authenticated: bool = False,
 ) -> None:
     from .coordinator_auth import _make_control_auth
 
@@ -356,6 +362,10 @@ def register_spawn_routes(
 
     from .ordinary_bridge import register_routes
     register_routes(app, queue, bus)
+    from .restricted_delivery import register_routes as register_restricted_routes
+    register_restricted_routes(
+        app, queue, bus, control_token, authenticated_ingress=restricted_ingress_authenticated,
+    )
     @app.post("/spawn-reservations/{key}/allocation")
     def record_spawn_allocation(key: str, body: RecordSpawnAllocationBody) -> dict:
         result = _reservation_guard(lambda: queue.record_spawn_allocation(key, body.project))
@@ -418,8 +428,12 @@ def register_spawn_routes(
         return result
 
     @app.post("/spawn-reservations/{key}/defer")
-    def defer_spawn(key: str, body: ReservationDetailBody) -> dict:
-        result = _reservation_guard(lambda: queue.defer_spawn(key, detail=body.detail))
+    def defer_spawn(key: str, body: DeferSpawnBody) -> dict:
+        result = _reservation_guard(lambda: queue.defer_spawn(
+            key, detail=body.detail,
+            **({"expected_generation": body.expected_generation}
+               if body.expected_generation is not None else {}),
+        ))
         bus.publish({"type": "spawn.deferred", "reservation": result})
         return result
 

@@ -30,6 +30,9 @@ ordinary top-level names -- no circular import, and
 :class:`SpawnReservationMixin` is composed into
 :class:`agent_dispatch.queue.TaskQueue`; it relies on ``self._connect()``
 and ``self._now()`` from that class and is not usable standalone.
+Deferral lives in :mod:`agent_dispatch.queue_spawn_deferral`, inherited
+here so the historical ``SpawnReservationMixin.defer_spawn`` surface stays
+available.
 """
 
 from __future__ import annotations
@@ -42,6 +45,7 @@ from collections.abc import Callable
 
 from .queue_allocation_revisions import revision_disposed
 from .queue_records import ExclusiveKeyBusyError, SpawnReservation, SpawnState, Status, TaskError
+from .queue_spawn_deferral import SpawnDeferralMixin
 
 log = logging.getLogger("agent-dispatch.queue")
 
@@ -100,7 +104,7 @@ def _newer_worktree_reservation(
     ).fetchone()
 
 
-class SpawnReservationMixin:
+class SpawnReservationMixin(SpawnDeferralMixin):
     """Spawn-reservation lifecycle methods for :class:`TaskQueue`."""
 
     # -- spawn reservations --------------------------------------------------
@@ -800,22 +804,6 @@ class SpawnReservationMixin:
             claim_token=claim_token,
             release_requested=release_requested,
             guard=guard,
-            now=now,
-        )
-
-    def defer_spawn(
-        self, key: str, *, detail: str | None = None, now: float | None = None
-    ) -> SpawnReservation:
-        """Mark a reservation ``deferred``: the spawn declined, not failed,
-        because a carried session (same exclusive key) was confirmed still
-        live/busy. Releases the task so a fresh attempt may be reserved
-        immediately, but -- unlike :meth:`fail_spawn` -- never counts toward
-        dead-lettering, since no attempt actually failed."""
-        return self._update_reservation(
-            key,
-            to_state=SpawnState.DEFERRED,
-            allowed_from=(SpawnState.ACTIVE - frozenset({SpawnState.RELEASING})),
-            detail=detail,
             now=now,
         )
 
