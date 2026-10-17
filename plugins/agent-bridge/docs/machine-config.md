@@ -159,17 +159,51 @@ Each space owns its project/worktree registrations and settings independently.
 space key, not that group or the transport alias. Derived agent names preserve
 the registered keys, including the native Windows entry.
 
-For a topology using explicit spaces, set the daemon's own independent
-selection in its local `~/.agent-bridge/config.yaml`:
+For a topology using explicit spaces, start or adopt bridge from the registered
+source worktree. Bridge derives the daemon's key from that project's existing
+machine configuration through Worktrees' versioned `get execution-identity`
+read, using the same-installation peer launcher. There is no second bridge
+machine setting to maintain. Direct daemon launch captures the stable source
+repository before detach and working-directory changes. Adoption records that
+source repository automatically as `topologies.<profile>.source_repo`, so a
+supervised restart can recompute the identity without the caller's cwd.
+The private detach argument is passed only through the current/installed
+Python module launcher. Unverified legacy PATH launchers retain their original
+arguments; they do not certify support for the new source-context contract.
+An adopted `source_repo` selects that source project's configuration ahead of
+the topology's legacy control-plane fallback, even when both locators exist.
+For older profiles without `source_repo`, the declared control-plane project precedes the repository
+that happens to store shared topology; an in-repository topology source is the
+fallback when no control-plane project is declared. These are configuration
+locators, not identity authority.
+An originating registered source project takes precedence over profile locators;
+profiles supply context for a supervised or neutral-directory start. Without an
+originating project binding, all applicable profile bindings must agree.
 
-```yaml
-local_execution_space: workstation-windows
-```
+Source configuration is read again for each resolver build; a derived key is
+never written into `local_execution_space`. The key must be canonical, exist
+in the adopted topology and match the actual daemon platform. Contradictory
+adopted sources, missing bindings, authority-command errors and platform
+mismatches fail explicitly. Hostnames, display labels, physical-host grouping,
+SSH aliases and ambient owner-reference variables do not select a local space.
+Only the recognized versioned contract with explicit configured-machine
+provenance can supply a derived key. An older scalar `get machine` result is
+never sufficient, even when a detected hostname happens to equal a registry key.
 
-The selected key must exist in the topology and match the daemon's execution
-platform. Missing, ambiguous or invalid selection fails visibly; matching the
-hostname never supplies a fallback. The worktrees runtime likewise uses its
-explicit `machine` setting as the registered execution-space key.
+Standalone bridge operation does not require Worktrees. Unscoped/legacy topology
+retains its existing behavior, and an existing `local_execution_space` selector
+remains supported when no project authority is available. When authority is
+available, that legacy selector must agree with it; it never overrides a
+refusal or contradiction. A standalone explicit-space topology with neither an
+authoritative project binding nor an existing selector reports the missing
+binding instead of guessing a space.
+Local-agent/provider-only configurations with no machine inventory do not select
+an execution space at all: a residual legacy selector is inert in that mode,
+and no registered-space authority is inferred from it.
+An optional Worktrees installation that has not registered the source project
+or cannot offer the versioned binding does not supersede an existing valid
+standalone selector. A compatible machine-authority refusal is an error, never
+a legacy fallback.
 Keys cannot contain whitespace, path separators or reference delimiters, and
 must be unique without regard to case.
 
