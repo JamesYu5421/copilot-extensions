@@ -281,6 +281,80 @@ promotion authority, task queue, or dashboard.
 
 ## Journal
 
+### 2026-10-16 - Provider observation contract alignment
+
+- Removed an unsupported `unknown` observation-kind enum identified by the next
+  current-head review. Compared the entire provider enum allowlist with the
+  existing Python reader; the remaining choices match its accepted contract.
+- The provider fixture now rejects that value during acquisition. Its real
+  generated provider capture is also parsed through the Python CLI, which
+  accepts the supported observation and rejects a forged unsupported enum.
+  Neither form grants live forecasting authority.
+
+### 2026-10-16 - Capture serialization resource bounds
+
+- The next current-head review identified allocation-before-check and duplicate
+  success serialization. Replaced whole-object `JSON.stringify` with bounded
+  incremental encoding that counts JSON escapes and UTF-8 bytes, stops early,
+  rejects cycles and excess depth, and returns the already-serialized response.
+- Added exact byte-boundary, escaping, surrogate, early-abort, cycle, and depth
+  regressions. The Python bridge now diagnoses missing/duplicate fixture
+  markers explicitly instead of raising an opaque iterator error.
+- Kept fixture cleanup strict: unexpected removal is a lifecycle defect, not a
+  reason to suppress every cleanup failure with force.
+
+### 2026-10-16 - Capture producer/reader type alignment
+
+- The next current-head review identified that exact string magnitude checks
+  still admitted a form the existing Python normalizer rejects. Narrowed the
+  transport to the incumbent number-only capture contract rather than
+  broadening normalization or converting strings through floating point.
+- The actual entry fixture now rejects a synthetic string quantity, and the
+  Python bridge confirms the same form is rejected by the existing CLI.
+  Numeric captures still remain caller-declared with no live forecasting.
+
+### 2026-10-16 - Foreground capture review corrections
+
+- Addressed current-head review findings in the implementation PR: the Node
+  entry fixture now provisions its own temporary fake SDK and cannot import a
+  live SDK under direct CI discovery; exact string/BigInt magnitude checks
+  reject decimal quantities just above the numeric ceiling; unexpected
+  argument-processing errors have a distinct sanitized diagnostic.
+- The failed PR guard named the direct-discovery missing SDK dependency,
+  confirming the fixture finding. No SDK installation, live reload, or review
+  system remediation is needed.
+
+### 2026-10-16 - Foreground-session integration implemented for review
+
+- Added the optional `budget_guidance_session_quota` extension entry under the
+  reviewed host contract. It joins the foreground session once, performs no
+  startup reads, and uses only the public quota and optional account-status
+  reads. Missing APIs return unavailable; no fallback client or internal
+  credential surface exists.
+- Isolated entry fixtures cover session/account changes, old SDK shapes,
+  shared deadlines, late uncancellable reads, selected provider projection,
+  redaction, and UTF-8 byte bounds. The entry-generated capture passes the
+  existing CLI while remaining unverified and unable to enable forecasting.
+- The bounded devcontainer suite passes (443 passed, 18 skips), with the
+  Node-required fixture separately passing in the bounded local runner.
+  The default Python image lacks Node, so no container qualification is
+  claimed for that fixture. Independent review found no blocker.
+- The adapter source, skill, manifest description, and related reference docs
+  are updated. Live host enablement, quota/raw-reset evidence, release, and
+  rollout remain separate gates; no runtime or account state was changed.
+
+### 2026-10-16 - Foreground-session integration plan reviewed
+
+- PR #7055 merged as `71b2d515fded40ef84601a5ec1b5a2628ec63ab0`
+  after exact-head Copilot approval with no findings and the aggregate PR gate,
+  source-attribution, and workflow-lockdown checks passing.
+- The [host integration contract](host-integration.md) is now reviewed intent.
+  Re-read the canonical Plan/Validation Plan and the focused contract after merge;
+  implementation may proceed without changing its no-rollout boundary.
+- No extension implementation or live host changes preceded this review.
+  Next: the bounded public-SDK adapter and isolated entry-point/capture tests.
+  Raw-reset acquisition, live capability proof, and rollout remain open.
+
 ### 2026-10-16 - Foreground-session host integration proposed
 
 - Implementation is authorized through normal review, with rollout explicitly
