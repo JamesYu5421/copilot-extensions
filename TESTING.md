@@ -633,6 +633,39 @@ SessionManager/SQLite and durable first-turn admission are real; Copilot ACP/
 provider I/O is simulated. This is connected first-touch evidence, not a
 deployed binstub, full host installation or live model transcript check.
 
+Native conversation-continuity probes should use the normal worktree launcher
+and Bridge CLI control when exercising the complete ownership path. A deliberately
+manual mux/TTY probe must establish folder trust before waiting for model output:
+use the owner's `permissions.add_trusted_folder()` against the fixture's actual
+Copilot configuration, or explicitly handle the one-session trust prompt with a
+known key sequence. An isolated `COPILOT_HOME` must not accidentally leave that
+helper writing production configuration. Assert the fixture trust entry before
+launch; an unanswered trust prompt is not evidence that native resume failed.
+
+For a cold-resume claim, observe the predecessor process exit, the exact native
+conversation ID, and a new response proving remembered context. Use UTF-8 for
+captured Windows mux output. Keep backend-only evidence distinct from managed
+owner/HTTP acceptance, and close registered fixtures through Bridge control
+rather than inventing a second controller. A failed terminal-exit sequence must
+preserve the fixture's exact PID/identity for authorized cleanup; it is not a
+passing complete lifecycle test.
+
+`plugins/agent-bridge/tests/test_native_worktree_continuity.py` is an opt-in
+real-backend acceptance lane (`AGENT_BRIDGE_NATIVE_CONTINUITY=1`). It requires
+explicit lifecycle approval (`AGENT_BRIDGE_NATIVE_LIFECYCLE_APPROVED=1`), a private
+`AGENT_BRIDGE_NATIVE_ROOT`, the prepared candidate Worktrees interpreter in
+`AGENT_BRIDGE_NATIVE_OWNER_PYTHON`, and a nonsecret preferences JSON file named
+by `AGENT_BRIDGE_NATIVE_PREFERENCES_FILE`. The preferences contain the operator's
+model, effort and context selections, never credentials. Authenticate the
+fixture profile through the vendor's normal login before running; never copy a
+credential store or export a token. The shared private owner home is reused
+across mode cases while each importing Bridge starts with an empty database.
+The fixture materializes unchanged source launch assets and explicitly forwards
+its owner PATH and Bridge endpoint through the mux environment. Both ACP and
+CLI cases use real owner commands, HTTP routes and Bridge turn control, then
+assert remembered context, actual idle, exact native identity and no replacement
+history. Run through the normal bounded test runner, not against a shared daemon.
+
 Resident list-warm snapshot policy tests keep process calls mocked and verify
 exact output shapes, filter/project separation, next-pass freshness, unavailable
 classification, and unchanged standalone reads. Their bounded native companion
