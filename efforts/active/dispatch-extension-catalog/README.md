@@ -4,7 +4,7 @@
 - **Repo:** copilot-extensions
 - **Branch(es):** Amended planning PR, then authorized dependency-ordered PRs against `dev`
 - **Created:** 2026-10-16
-- **Status:** Active <!-- Execution authorized; implementation waits for the amended plan's review and merge. -->
+- **Status:** Active <!-- Implementation underway; activation and installed rollout remain separately authorized. -->
 - **Vision:** [agent-dispatch](../../../visions/plugins/agent-dispatch/README.md):
   discoverable-extension-templates, extend-any-declaration,
   task-or-charter-owns-the-workflow
@@ -236,3 +236,126 @@ automation activation still require their applicable operational authorization.
   semantics and a generic mapped-record source extension to the acceptance scope.
 - Retained process-neutral dispatch ownership and consumer-owned authentication.
   Implementation remains behind the amended plan's review/merge gate.
+
+### 2026-10-16 - Reviewed plan and first shared catalog projection
+
+- Plan #7095 merged after required CI passed. The owner-authored review
+  returned Comment with one Low role-table wording suggestion; the imperative
+  assignments were retained with an explanation and the thread resolved.
+- The first implementation slice extends the existing catalog rather than
+  creating another authority: version/read time, concrete component kinds,
+  IDs, provenance and content revisions, plus a distinct component basis.
+  Published snapshots remain authoritative when a Save-only draft changes.
+- Component metadata excludes executable specs, command argv and environment
+  values. Unknown or unreadable publications expose no inferred components.
+  The existing terminal contribution gains Kind and readable component details.
+- Final contained worker-instance suite passed 57 tests, including direct
+  composite/publication checks and real-CLI first-touch projection assertions.
+  Changed Python lint and the install-contract guard passed. No source/template
+  activation, installed update or delivery claim is made.
+
+### 2026-10-17 - Catalog review and terminal compatibility correction
+
+- Current-head review returned Comment. Scope/container and label-order
+  suggestions were checked against the actual registrar: lane scope is a
+  validated string and labels are an ordered tuple. A new regression preserves
+  both supported contracts and rejects unsupported scope containers.
+- The additional component conversion is a bounded, in-memory projection,
+  without discovery, processes or network work; no cache or state/override
+  refactor was introduced without a demonstrated performance problem.
+- Required CI found that the secondary Kind column displaced Description at
+  standard width. Preserve all six existing columns at 118 columns and show
+  all seven at 150, including space for the existing dropped-column indicator.
+- The contained worker-instance suite passed 58 tests. The directly affected
+  Configuration backstage file passed 25 tests with one platform-specific
+  skip on Windows; changed Python lint passed. Updated-head review and
+  required CI remain prerequisites to merge.
+
+### 2026-10-17 - Supported routing shapes and observed file provenance
+
+- Balanced current-head review identified two real projection gaps after the
+  earlier speculative findings were dispositioned: non-lane scope/labels
+  were stored in kind-specific configurations, and ordinary file-backed
+  declarations lost their known source path before catalog projection.
+- Normalize evaluator, bare/wrapped schedule and composed-emitter routing.
+  Add ordered `repo_scopes` without changing the legacy first-scope string;
+  retain lane label order and include every schedule entry/default.
+- Attribute the read leaf document in discovery and the known draft/publication
+  path in local configuration projection. Observational path attribution does
+  not alter the executable registration; a regression compares that complete
+  registration before and after attribution.
+- Both clients can read richer component prose through the existing card:
+  identity, all scopes, labels, source document and content revision. The
+  content hash still tracks full desired registration changes without
+  returning raw executable fields.
+- Extend focused coverage for every routing shape, ordinary verified-plugin
+  files and local draft/publication files. Keep review, aggregate CI, normal
+  release and separately authorized installed proof as open delivery gates.
+- The final contained catalog/instance, discovery and registry selection passed
+  170 tests. Changed Python lint, the 13-plugin install contract and all
+  non-widened source-module ceilings passed. No service, source activation,
+  installed update or live external process was used as a success claim.
+
+### 2026-10-17 - Rejected schedule regression and independent CI blocker
+
+- Updated-head review suggested a missing `replace` import; the existing
+  `from dataclasses import dataclass, replace` and file-backed discovery tests
+  disprove that finding. No duplicate import was added.
+- The suggested empty schedule shape is also rejected by the owning registrar:
+  an explicitly supplied schedules collection must be a non-empty object list.
+  Added a regression through real source discovery proving empty or malformed
+  containers remain visible errors, never fabricated routing metadata, while
+  healthy templates and original source bytes remain intact. Activation and
+  schedule validation behavior are unchanged.
+- The contained catalog/instance, discovery and registry selection passed
+  173 tests after correcting the test's initial unsupported fixture assumption.
+- Required guards encountered the separately tracked native POSIX PowerShell
+  timeout in #7020 (run 39026318754, job 117377895225). Recorded the exact
+  recurrence and native-venue limitation there. That issue is not an accepted
+  flake or waiver: no timeout increase, test skip, forced retry or CI bypass.
+  Normal updated-head checks remain an independent merge gate, not proof that
+  the native timeout was diagnosed or fixed.
+
+### 2026-10-17 - Projection isolation and CI-repair routing
+
+- A fresh balanced review found a real boundary gap: schedule validation
+  accepts some shapes whose full routing cannot be projected. Isolate that
+  projection failure to the affected source/draft/publication row, retain
+  healthy catalog entries, and expose both row and summary errors. Unknown
+  component metadata never substitutes for independent enablement/activity.
+- Disable toggle affordances consistently after all rows are known, including
+  healthy rows preceding a later projection error. No registrar validation,
+  activation, publication, worker or task lifecycle behavior is changed.
+- Reuse a producer-owned CI-repair routing helper for both actual admitted
+  task creation and catalog metadata. Cover explicit lane and repository
+  fallback against a real isolated queue task; no inferred task labels.
+- Add malformed second-schedule and label-container cases through source,
+  draft and published catalog rows, retaining original bytes. Extend the real
+  CLI first-touch journey to assert successful degraded JSON with healthy
+  instances/templates rather than an aborted read.
+- The coupled catalog and CI-repair selection passed 128 tests, including the
+  real-CLI degraded-read assertion. Changed Python lint and the 13-plugin
+  install contract passed. Current-head review and
+  aggregate CI remain required; installed rollout and live source effects
+  are not part of these isolated fixtures.
+
+### 2026-10-17 - Nullable bindings and attribution-aware compatibility
+
+- Follow the producer's non-null binding selection in catalog routing and
+  dependency checks. A null CI-repair binding is absent; a null issue-loop
+  binding must not mask an actual effort-driver binding or crash a direct
+  command emitter's dependency projection. Only emitters select those bindings.
+- Add valid source/catalog cases for all three emitter modes with null
+  alternatives, preserving scopes, labels, healthy controls, source bytes
+  and executable registrations. Non-emitter prerequisites retain their own spec.
+- Required CI exposed two compatibility assertions comparing file-backed
+  declarations to a different file or a pure expansion. Update only their
+  expected leaf-source attribution and additionally assert complete canonical
+  registration equivalence. Do not remove attribution or change dataclass
+  equality to make these tests pass.
+- The catalog, CI-repair, recipe and reviewer-adoption selection passed
+  234 tests. The final catalog selection, including the non-emitter dependency
+  regression with its required evaluator reference, passed 86 tests; changed
+  Python lint passed. This is a real source-attribution coupling, not a
+  pre-existing failure or waiver.
+  Fresh-head review and the complete required CI gate remain open.

@@ -20,6 +20,64 @@ The table distinguishes:
 - **Available templates**: built-in recipes plus a bounded worker-pool template,
   with **Instantiate** actions. Recipe fragments are not complete instances.
 
+### Shared catalog metadata
+
+The JSON envelope identifies `schema_version: 1` and a `fetched_at` epoch
+timestamp. The latter is a read time, not proof of recent worker activity.
+`summary.activity_updated_at` separately carries the supervisor receipt time
+when available; `activity_known` and `activity_reason` retain the existing
+freshness judgment.
+
+Each row has a `kind` and `components_basis`. For a concrete configuration,
+`components` projects the effective registrations' IDs, names, runtime and
+declaration kinds, owners, repo scope when declared, labels, source paths when
+known, and content revisions. Executable specs, command argv and environment
+values are not included in component metadata. A multi-component configuration
+has kind `composite`, including when several components have the same kind.
+
+`repo_scopes` preserves every declared scope in first-declared order, including
+wrapped schedule entries and their `default_repo` fallback. The legacy
+`repo_scope` string retains the first scope for compatible older consumers;
+use the list for a complete view. Evaluator all-repository opt-in is `all`.
+Labels come from each kind's actual routing configuration: lane labels,
+evaluator watch labels, schedule task labels, or a composed emitter's nested
+task label. No title/name classification is used.
+The built-in CI-repair emitter projects its producer-owned lane (or repository
+fallback) and fixed task label through the same routing helper used when
+creating an admitted task.
+
+File-backed declarations retain the observed leaf source document through
+repository and verified-plugin discovery. Local instance components name the
+draft or published file matching their basis. This attribution does not alter
+the executable registration. The content revision fingerprints the complete
+canonical registration, so an executable change remains observable without
+returning its command, spec or environment values.
+
+For a published local instance the component basis is `published`, even if
+its Save-only draft has changed shape. An unpublished instance uses `draft`;
+source-owned declarations use `source`. An unreadable publication uses
+`unknown` and exposes no inferred components. Uninstantiated templates have
+their declared kind, basis `template` and an empty component list, not fabricated
+registration IDs. Discovery-error rows similarly contain no components.
+
+These additive fields let independent terminal and graphical consumers
+describe the same owning catalog without classifying sources from titles or
+reconstructing composed registrations. The Manager table shows Kind and its
+Details card lists component identity, scopes, labels, source documents and
+content revisions. At standard terminal widths the secondary
+Kind column yields to the existing status, capacity, source and description
+columns; wider terminals show it alongside them. Existing IDs, edit revisions,
+form fields and activation semantics are unchanged.
+
+Projection failures are isolated per row, including registrar-supported
+specifications whose full routing metadata is malformed. The row is marked
+`metadata-error`, its `component_errors` also appear in `summary.errors`, and
+its component basis is `unknown` with no invented components. Healthy sources,
+instances and templates remain visible. Existing enablement/publication facts
+are not replaced with a fabricated stopped state; details name the failed
+projection. Any catalog error disables toggle affordances consistently, even
+when the error is found after another row was projected.
+
 Descriptions, source attribution, validation, publication, capacity, effective
 disable overrides, and observed activity are separate facts. A recent local
 supervisor receipt supplies `observed-running`; an absent/stale receipt means
