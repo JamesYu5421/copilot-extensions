@@ -2129,6 +2129,12 @@
           "sha256": "043e66e289328af9075063ab370c6efeea70784ca4ed938b8e85c3b97e927af9",
           "role": "Generation-38 keyed workspace finalization refuses retryably while retaining immutable generation-37 evidence and all prior capability floors",
           "generation": 38
+        },
+        {
+          "path": "plugins/agent-bridge/contract/fixtures/http/current/workspace-finalization-retry-generation-39.json",
+          "sha256": "b91b38fab8b6b777890587e450d16d7d081194a7cb22f7c07df63d35b03d880c",
+          "role": "Generation-39 keyed workspace finalization refuses retryably while retaining immutable generation-37 and generation-38 evidence and all prior capability floors",
+          "generation": 39
         }
       ],
       "provenance": [
