@@ -55,7 +55,7 @@ def _fixture(relative: str) -> dict:
 
 
 def test_http_declared_generation_matches_current_fixture() -> None:
-    fixture = _fixture("fixtures/http/current/remote-acp-models-generation-38.json")
+    fixture = _fixture("fixtures/http/current/acquisition-protocol.json")
     body = fixture["response"]
     assert body["protocol_version"] == bridge_protocol.HTTP_PROTOCOL_VERSION
     assert (
@@ -86,15 +86,21 @@ def test_workspace_creation_fixture_matches_additive_models_and_capability_floor
     assert fixture["capability"]["native_bound_prompt"] == bridge_protocol.NATIVE_BOUND_PROMPT_PROTOCOL_VERSION
 
 
-def test_qualified_peer_contract_matches_current_fixture() -> None:
+@pytest.mark.parametrize("generation", [35, bridge_protocol.HTTP_PROTOCOL_VERSION])
+def test_qualified_peer_contract_matches_current_fixture(generation) -> None:
     from agent_bridge.live_peer_address import LivePeerAddress
-    from agent_bridge.remote_operations import REMOTE_PEER_REPLY_MIN_VERSION
+    from agent_bridge.remote_operations import REMOTE_PEER_REPLY_MIN_VERSION, REMOTE_RECEIPT_REPLY_MIN_VERSION
     from agent_bridge.routes.remote import RemoteLiveMessageRequest
 
-    fixture = _fixture("fixtures/http/current/peer-replies-generation-35.json")
+    fixture = _fixture(f"fixtures/http/current/peer-replies-generation-{generation}.json")
     capability = fixture["capability"]
-    assert capability["required_protocol_version"] == bridge_protocol.QUALIFIED_LIVE_PEER_PROTOCOL_VERSION
-    assert capability["required_carrier_operation_version"] == REMOTE_PEER_REPLY_MIN_VERSION
+    assert capability["required_protocol_version"] == (
+        bridge_protocol.QUALIFIED_LIVE_PEER_PROTOCOL_VERSION if generation == 35
+        else bridge_protocol.LIVE_MESSAGE_RECEIPT_PROTOCOL_VERSION
+    )
+    assert capability["required_carrier_operation_version"] == (
+        REMOTE_PEER_REPLY_MIN_VERSION if generation == 35 else REMOTE_RECEIPT_REPLY_MIN_VERSION
+    )
     assert str(LivePeerAddress.parse(capability["address"])) == capability["address"]
     body = RemoteLiveMessageRequest.model_validate(fixture["request"]["json"])
     assert body.reply_to == capability["address"]
@@ -115,7 +121,7 @@ def test_live_registration_fixture_preserves_opt_in_wire_shape_and_default() -> 
     assert fixture["compatibility"]["ordinary_null_heartbeat_retains_metadata"] is True
 
 
-@pytest.mark.parametrize("generation", [35, 36, 37, 38])
+@pytest.mark.parametrize("generation", [35, 36, 37, 38, 39])
 @pytest.mark.parametrize("owner", ["prompt_models", "routes-prompts"])
 def test_native_bound_wire_is_preserved_at_later_generations(owner, generation) -> None:
     from agent_bridge.prompt_models import SubmitPromptRequest, SubmitPromptResponse
@@ -147,11 +153,12 @@ def test_worktree_render_contract_declares_versioned_opt_in_and_retained_holder(
 
 
 @pytest.mark.asyncio
-async def test_generation_38_remote_route_matches_independent_expected_wire(monkeypatch):
+@pytest.mark.parametrize("generation", [38, 39])
+async def test_remote_acp_route_matches_independent_expected_wire(monkeypatch, generation):
     from agent_bridge import remote_acp_sessions
     from agent_bridge.models import SessionStatus
 
-    fixture = _fixture("fixtures/http/current/remote-acp-models-generation-38.json")
+    fixture = _fixture(f"fixtures/http/current/remote-acp-models-generation-{generation}.json")
     observed = []
 
     async def connect(manager, name, **kwargs):
@@ -169,24 +176,27 @@ async def test_generation_38_remote_route_matches_independent_expected_wire(monk
     response = await start_session(
         StartSessionRequest.model_validate(fixture["request"]["json"]), request,
     )
-    assert response.model_dump(mode="json", exclude_none=True) == fixture["response"]
+    expected = {**fixture["response"], "protocol_version": bridge_protocol.HTTP_PROTOCOL_VERSION}
+    assert response.model_dump(mode="json", exclude_none=True) == expected
     assert observed == [("example-agent", {
         "cwd": "/workspace", "caller_id": None, "caller_session_id": None,
         "remote_session_id": "saved-example",
     })]
 
 
-def test_generation_38_remote_clients_retain_native_request_identity():
+@pytest.mark.parametrize("generation", [38, 39])
+def test_remote_acp_clients_retain_native_request_identity(generation):
     from agent_bridge.client import BridgeClient, BridgeClientError
 
-    fixture = _fixture("fixtures/http/current/remote-acp-models-generation-38.json")
+    fixture = _fixture(f"fixtures/http/current/remote-acp-models-generation-{generation}.json")
     assert fixture["capability"]["remote_acp"] == bridge_protocol.REMOTE_ACP_PROTOCOL_VERSION
     client = BridgeClient.__new__(BridgeClient)
-    client._daemon_proto = (38, 1)
+    client._daemon_proto = (generation, 1)
     calls = []
     client._request = lambda *args, **kwargs: calls.append((args, kwargs)) or {}
     client.start_session(**fixture["request"]["json"])
-    assert calls[-1][0][2] == fixture["client_requests"]["start"]
+    expected = {**fixture["client_requests"]["start"], "protocol_version": bridge_protocol.HTTP_PROTOCOL_VERSION}
+    assert calls[-1][0][2] == expected
     client.answer_ask_user("bridge-example", **fixture["client_requests"]["form"])
     assert calls[-1][1]["body"] == fixture["client_requests"]["form"]
     client.answer_permission("bridge-example", **fixture["client_requests"]["permission"])
@@ -212,6 +222,35 @@ def test_retirement_recovery_capability_matches_current_fixture() -> None:
     assert contract["capability_versions"]["acquisition_retirement_recovery"] == (
         bridge_protocol.ACQUISITION_RETIREMENT_RECOVERY_PROTOCOL_VERSION
     )
+
+
+@pytest.mark.parametrize("generation", [30, 31, 32])
+def test_historical_acquisition_fixture_retains_its_generation_and_floor(generation: int) -> None:
+    fixture = _fixture(f"fixtures/http/previous-generation-{generation}/acquisition-protocol.json")
+    assert fixture["captured_from"]["protocol_generation"] == generation
+    assert fixture["response"]["protocol_version"] == generation
+    assert fixture["capability"]["required_protocol_version"] == generation
+
+
+def test_current_workspace_fixture_preserves_original_creation_floor() -> None:
+    fixture = _fixture("fixtures/http/current/workspace-creation-generation-39.json")
+    assert fixture["capability"]["required_protocol_version"] == bridge_protocol.WORKSPACE_CREATION_PROTOCOL_VERSION
+
+
+def test_live_message_receipt_generation_and_typed_fixture() -> None:
+    from agent_bridge.models import SendMessageRequest, SendMessageResult
+
+    fixture = _fixture("fixtures/http/current/live-message-receipt.json")
+    assert fixture["capability"]["required_protocol_version"] == (
+        bridge_protocol.LIVE_MESSAGE_RECEIPT_PROTOCOL_VERSION
+    )
+    registry = _fixture("registry.json")
+    contract = next(item for item in registry["contracts"] if item["id"] == "agent-bridge.http-wire")
+    assert contract["capability_versions"]["live_message_receipt"] == (
+        bridge_protocol.LIVE_MESSAGE_RECEIPT_PROTOCOL_VERSION
+    )
+    assert SendMessageRequest.model_validate(fixture["request"]).model_dump() == fixture["accepted_model"]
+    assert SendMessageResult.model_validate(fixture["response"]).model_dump() == fixture["response"]
 
 
 def test_http_protocol_constant_fixture_matches_production() -> None:

@@ -118,6 +118,10 @@ previously accepted session IDs.
 Explicit HTTP/client `qualified_peer: true` opts into tuple-only resolution
 and the new protocol; qualified CLI forwarding supplies it. Prefix text alone
 never upgrades a legacy exact-ID request to a newer carrier operation.
+Qualified peer sends return their admission receipt without waiting by default.
+`--wait-reply` opts into receipt-backed post-consumption reply evidence, requiring
+HTTP protocol 39 at both bridges and remote operation version 5. Qualified
+addressing without a reply wait retains protocol-35/version-4 compatibility.
 
 [Session preference authority](docs/session-preferences.md) documents optional
 execution-user defaults, the unchanged caller-settings default, and the
@@ -265,11 +269,14 @@ and fallback/completeness semantics remain unchanged.
 When a host agent delegates work with `send`, it gets a **continuous, low-noise
 feed** of the remote agent's progress -- not a silent block that looks "stuck".
 
-- **`send`** streams the remote turn live by default, then returns when the turn
-  settles.
+- **`send`** streams bridge-owned ACP turns by default. Represented live-session
+  sends return an inbox receipt immediately; see
+  [peer messaging](skills/agent-bridge/references/agent-messages.md) for bounded
+  readback and optional reply waiting.
 - **`wait`** streams the in-flight turn to completion.
-- **`read`** resumes the feed from where the host last left off, or does
-  random-access historical reads.
+- **`read`** resumes an ACP feed or does random-access historical reads.
+  Represented live sessions return a bounded cursor-neutral result snapshot,
+  including pending inbox metadata and an optional message receipt.
 - **`start`** does not stream (no conversation yet).
 
 ### Collapsed feed (default)

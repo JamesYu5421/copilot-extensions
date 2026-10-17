@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from . import workspace_creation_cli
+from .client_protocol_floor import connection_refused, protocol_floored_request
+
+_connection_refused = connection_refused
 
 _COMPANION_SEED_HEADS_UP = (
     "Heads-up: you are an agent-bridge companion agent, not an agent-dispatch "
@@ -66,21 +69,6 @@ def _resolve_prompt(args: argparse.Namespace, *, required: bool) -> str | None:
     return None
 
 
-def _connection_refused(exc: BaseException) -> bool:
-    """True when the error chain proves the connection was refused (nothing
-    was sent), as opposed to a reset, timeout or broken pipe that may have
-    delivered the request."""
-    seen: set[int] = set()
-    cur: BaseException | None = exc
-    while cur is not None and id(cur) not in seen:
-        seen.add(id(cur))
-        if isinstance(cur, ConnectionRefusedError) or isinstance(getattr(cur, "reason", None),
-                                                                   ConnectionRefusedError):
-            return True
-        cur = cur.__cause__ or cur.__context__
-    return False
-
-
 def _hold_protocol_floor(client: Any, floor: int) -> None:
     """Keep ``--min-daemon-protocol`` true for every request attempt.
 
@@ -93,76 +81,7 @@ def _hold_protocol_floor(client: Any, floor: int) -> None:
     skipped. The probe-to-request window left is milliseconds; closing it fully
     needs the daemon itself to refuse, which an older daemon can't do.
     """
-    import time
-
-    from .client import BridgeClientError, BridgeConnectionError
-
-    request, resolve = client._request, getattr(client, "_reresolve", None)
-    grace = getattr(client, "_connect_grace", 0.0)
-
-    def _attempt(*a: Any, **k: Any) -> Any:
-        # The client's own retries would skip the probe, so they're off for each
-        # protocol-checked attempt -- and only then: between attempts (a stream's
-        # endpoint refresh after a cutover) its resolver must still work.
-        saved = client._reresolve, client._connect_grace
-        client._reresolve, client._connect_grace = None, 0.0
-        try:
-            return request(*a, **k)
-        finally:
-            client._reresolve, client._connect_grace = saved
-
-    def _floored(method: str, path: str, *a: Any, **k: Any) -> Any:
-        deadline = time.monotonic() + grace
-        retrying = False
-        last_error: Exception | None = None
-        while True:
-            if retrying:
-                time.sleep(0.5)
-                base = resolve() if resolve else None
-                if base:
-                    client._base = base.rstrip("/")
-            try:
-                version = int((_attempt("GET", "/health") or {}).get("protocol_version") or 0)
-            except (BridgeConnectionError, OSError, TypeError, ValueError):
-                # OSError: a read timeout (TimeoutError) after connecting
-                # escapes the client's own wrapping; the probe is unanswered.
-                unanswered = BridgeConnectionError(
-                    f"the bridge daemon at {client._base} didn't answer a protocol check in time; "
-                    "the request was not sent")
-                if time.monotonic() >= deadline:
-                    raise unanswered from None
-                retrying, last_error = True, last_error or unanswered
-                continue
-            if version < floor:
-                raise BridgeClientError(426, f"the bridge daemon now at {client._base} predates protocol "
-                                             f"{floor}; not sending the request there")
-            if last_error is not None and time.monotonic() >= deadline:
-                raise last_error  # a slow re-probe spent the budget: never send late
-            try:
-                return _attempt(method, path, *a, **k)
-            except BridgeConnectionError as exc:
-                # A request that may have reached the daemon (a reset, a timeout,
-                # a broken pipe) may have been accepted: resend only an
-                # idempotent one, or one whose connection was refused outright.
-                if time.monotonic() >= deadline or (
-                        method not in ("GET", "HEAD") and not _connection_refused(exc)):
-                    raise
-                retrying, last_error = True, exc
-            except BridgeClientError as exc:
-                # The daemon refused the request outright (it was not
-                # accepted): a retiring one ("draining") hands over to its
-                # replacement, and a starting one ("initializing") answers
-                # /health before its session paths are ready. Retry either
-                # within the same deadline, re-probing the protocol first
-                # (client.py's own retries are off: they would skip the probe).
-                # Any other HTTP error is the answer.
-                detail = str(exc.detail).lower()
-                if exc.status != 503 or not ("drain" in detail or "initializing" in detail) \
-                        or time.monotonic() >= deadline:
-                    raise
-                retrying, last_error = True, exc
-
-    client._request = _floored
+    client._request = protocol_floored_request(client, floor)
 
 
 def _companion_seed_prompt(prompt: str | None) -> str | None:
@@ -313,15 +232,24 @@ def _live_message_delivery(args: argparse.Namespace) -> str:
 def _deliver_to_live_session(client, args: argparse.Namespace, session_id: str, prompt: str,
                              *, remote_address=None) -> None:
     from .client import BridgeClientError
-    from .send_outcome import emit, live_outcome, refusal_from_live_error
+    from .live_message_models import validate_live_reply_timeout
+    from .send_outcome import SendRefused, emit, live_outcome, refusal_from_live_error
 
     core = _core()
+    wait = getattr(args, "wait_reply", False) and not getattr(args, "no_wait", False)
+    wait_timeout = getattr(args, "reply_timeout", 120.0)
+    if wait:
+        try:
+            wait_timeout = validate_live_reply_timeout(wait_timeout)
+        except ValueError as exc:
+            raise SendRefused(
+                "refused_invalid", reason="reply_timeout", error=f"--reply-timeout {exc}",
+                retryable=False, target=session_id,
+            ) from exc
     sender = core._live_sender_label(args)
     reply_to = core._live_reply_to(args)
     kind = core._live_message_kind(args)
     delivery = core._live_message_delivery(args)
-    wait = not getattr(args, "no_wait", False)
-    wait_timeout = getattr(args, "reply_timeout", 120.0)
     idempotency = getattr(args, "idempotency_key", None)
     expected_session_id = getattr(args, "expected_session_id", None)
     delivery_options = {}
@@ -353,11 +281,15 @@ def _deliver_to_live_session(client, args: argparse.Namespace, session_id: str, 
         if refused is None:
             raise
         raise refused from exc
+    session_id = result.get("session_id", session_id)
     if args.json:
         # A daemon that reports duplicates always includes the field; an older
         # one omits it, so a keyed retry can't be told from a first delivery.
         duplicate_known = not idempotency or "duplicate" in result
-        payload = {"delivered": True, "target": session_id, **result,
+        receipt = result.get("receipt") or {}
+        stage = receipt.get("stage")
+        payload = {"delivered": stage == "consumed" if stage else None,
+                   "accepted": True, "target": session_id, **result,
                    "outcome": live_outcome(result, delivery, duplicate_known=duplicate_known)}
         if not duplicate_known:
             payload["duplicate"] = None
@@ -367,14 +299,41 @@ def _deliver_to_live_session(client, args: argparse.Namespace, session_id: str, 
     kind_note = "" if kind == "prompt" else f", kind {kind}"
     delivery_note = "" if delivery == "queue" else f", delivery {delivery}"
     print(
-        f"[>] Delivered to live session {session_id} "
+        f"[>] Accepted by live session inbox {result.get('session_id', session_id)} "
         f"(message {mid}, from {sender}{kind_note}{delivery_note})"
     )
+    receipt = result.get("receipt") or {}
+    print(f"    receipt: {receipt.get('stage') or 'unavailable (delivery evidence unavailable)'}")
+    if result.get("receipt_error"):
+        print(f"    receipt evidence unavailable: {result['receipt_error']}", file=sys.stderr)
+    observe = (
+        f"observe on hosting machine {remote_address.machine}"
+        if remote_address is not None else "observe"
+    )
+    if receipt.get("stage") and result.get("receipt_current") is True:
+        print(f"    {observe}: agent-bridge read {session_id} --message-id {mid} --json")
+    else:
+        print(f"    {observe}: agent-bridge read {session_id} --json")
+        if receipt.get("stage"):
+            print("    (message receipt observation is unavailable; inspect session state instead)")
+        else:
+            from .protocol import LIVE_MESSAGE_RECEIPT_PROTOCOL_VERSION
+
+            print(
+                "    (message receipt observation requires daemon protocol "
+                f"{LIVE_MESSAGE_RECEIPT_PROTOCOL_VERSION} or newer)"
+            )
     if reply_to:
         print(f"    reply-to: {reply_to}")
     else:
         print("    (no reply-to: this sender is not a live session; reply won't route)")
     if not wait:
+        return
+    if result.get("duplicate"):
+        print(
+            "\n[..] Duplicate request; no additional reply wait was started "
+            "(inspect the existing message receipt rather than resend)."
+        )
         return
     if result.get("replied"):
         reply = result.get("reply")
@@ -383,7 +342,7 @@ def _deliver_to_live_session(client, args: argparse.Namespace, session_id: str, 
     else:
         print(
             f"\n[..] No reply within {wait_timeout:g}s "
-            "(message remains pending until delivered)."
+            "(send remains accepted; inspect its receipt rather than resend)."
         )
 
 
@@ -967,8 +926,10 @@ def register_session_targeting_commands(sub: argparse._SubParsersAction) -> None
     delivery_group.add_argument("--delivery", choices=["queue", "steer", "interrupt"], default="steer", help="Delivery urgency when targeting a live session: steer (default) injects at the running turn's next step, queue sends after the current turn finishes (can take a long time against a busy agent), interrupt aborts the current turn first.")
     delivery_group.add_argument("--steer", action="store_true", help="Shorthand for --delivery steer when targeting a live session.")
     delivery_group.add_argument("--interrupt", action="store_true", help="Shorthand for --delivery interrupt when targeting a live session.")
-    send_p.add_argument("--no-wait", action="store_true", help="Return immediately without waiting for response")
-    send_p.add_argument("--reply-timeout", type=float, default=120.0, metavar="SECONDS", help="When delivering to a live interactive session, how long to wait for the receiver's reply turn before returning (default 120; the message is queued and still delivered on timeout). Ignored with --no-wait.")
+    reply_group = send_p.add_mutually_exclusive_group()
+    reply_group.add_argument("--no-wait", action="store_true", help="Return immediately without waiting for response")
+    reply_group.add_argument("--wait-reply", action="store_true", help="For live sessions, opt into a bounded post-consumption reply wait (default: return the send receipt immediately)")
+    send_p.add_argument("--reply-timeout", type=float, default=120.0, metavar="SECONDS", help="With --wait-reply, maximum reply wait (0..600 seconds; default 120). A timeout is not a failed send.")
     send_p.add_argument("--new", action="store_true", help=argparse.SUPPRESS)
     send_p.add_argument("--full-history", action="store_true", help="When resuming an existing session, replay its prior conversation instead of fast-forwarding past it (default hides the backlog and prints a marker)")
     send_p.add_argument("--force", action="store_true", help="If the target's session is busy running a turn, terminate that in-flight turn and start a fresh session to deliver this prompt (discards the in-flight turn's work). Without --force, a busy target is rejected with guidance to wait/observe or end it.")
