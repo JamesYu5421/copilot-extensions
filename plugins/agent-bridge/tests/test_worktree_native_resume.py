@@ -19,6 +19,7 @@ from agent_bridge.acquisition_store import AcquisitionStore
 from agent_bridge.db import Database
 from agent_bridge.models import ServiceConfig, SessionStatus
 from agent_bridge.routes import worktrees as wt
+from agent_bridge.routes import worktree_probe
 from agent_bridge.session_manager import SessionManager
 from agent_bridge.session_manager import Session
 from agent_bridge.transport import SpawnTarget
@@ -130,6 +131,29 @@ async def test_invalid_record_ids_refuse_before_owner_commands(boundary, worktre
     assert not boundary.calls
 
 
+@pytest.mark.asyncio
+async def test_resume_resolves_through_the_apps_own_cache_not_the_global_one(boundary, monkeypatch):
+    # Regression: a restored serving app lists worktrees from its retained
+    # (app-bound) cache, so resume must resolve through that exact cache --
+    # never fall back to the process-global singleton, which can be empty
+    # or unrelated and would otherwise force an unnecessary live probe.
+    monkeypatch.setattr(wt, "_find_cached_worktree_entry", worktree_probe.find_worktree_entry)
+    app_cache = wt.WorktreeDiscoveryCache()
+    app_cache._cache = {"example": [boundary.entry]}
+    boundary.request.app.state.worktree_discovery_cache = app_cache
+
+    global_cache = wt.get_cache()
+    monkeypatch.setattr(global_cache, "get_all", Mock(
+        side_effect=AssertionError("resume escaped to the process-global cache"),
+    ))
+    monkeypatch.setattr(global_cache, "probe_live", AsyncMock(
+        side_effect=AssertionError("resume escaped to the process-global cache"),
+    ))
+
+    result = await native_resume.resume_native_worktree("wt-example", boundary.request, "acp")
+    assert result.acp_session_id == result.durable_session_id == "native-original"
+
+
 @pytest.fixture
 def singleton_boundary(boundary, monkeypatch):
     from agent_bridge import singleton_resume
@@ -167,6 +191,29 @@ def _singleton_session(boundary, *, session_id="singleton-known", status=Session
         now=time.time(), target_json=target.to_json(), acp_session_id=session.acp_session_id,
     )
     return session
+
+
+@pytest.mark.asyncio
+async def test_singleton_resume_passes_the_apps_own_cache(singleton_boundary, monkeypatch):
+    # Regression: the singleton-anchor fresh-init cache lookup must also
+    # resolve through the app-bound cache (wt.cache_for_app), not the
+    # process-global singleton -- the same ownership boundary bug fixed
+    # for ordinary worktree resume.
+    boundary = singleton_boundary
+    mock = AsyncMock(return_value=("example", boundary.entry))
+    monkeypatch.setattr(wt, "_find_cached_worktree_entry", mock)
+
+    async def initialize(target, *, agent_name, caller_id, creation_session_id):
+        session = Session(creation_session_id, "initialized", target)
+        session.acp_session_id = "singleton-created"
+        session.status = SessionStatus.IDLE
+        return session
+
+    boundary.manager.start_session = AsyncMock(side_effect=initialize)
+    await native_resume.resume_native_worktree("example@anchor", boundary.request, "acp")
+    mock.assert_awaited_once()
+    _args, kwargs = mock.call_args
+    assert kwargs.get("cache") is wt.cache_for_app(boundary.request.app)
 
 
 @pytest.mark.asyncio
