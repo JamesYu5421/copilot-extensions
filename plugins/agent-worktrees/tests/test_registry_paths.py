@@ -372,6 +372,99 @@ def test_namespaced_project_state_uses_stable_repository_identity(
     )
 
 
+def test_ownership_scan_survives_a_duplicate_remote_entry(
+    monkeypatch, tmp_path
+):
+    """Installation-cell regression (copilot-extensions PR #7102): a
+    conflicting (duplicate-key) ``remote`` entry anywhere in repos.yaml must
+    not silently select a wrong remote for either registered project, nor
+    abort the whole ownership scan with an uncaught exception -- every
+    project whose ledger routes through that corrupt registry must surface
+    an explicit 'project-unavailable' finding, and the scan must stay
+    complete=false rather than claim a clean result. The ownership fixtures
+    in test_producer_views.py replace cfg.project_dir() outright and never
+    exercise this real namespaced lookup path."""
+    from agent_worktrees import installer, producer_view_scan
+
+    payload = _payload(tmp_path, "payload")
+    context, _plugin_root = _stamp(
+        tmp_path / "durable",
+        payload,
+        marketplace="ownership-scan",
+        repository="Example-Org/Ownership-Scan-Marketplace",
+    )
+    _select(monkeypatch, context, payload)
+    _register_repo("good", "https://github.com/Example-Org/Good-Repo.git")
+    good_state = project_state.ensure_project_state("good")
+    (good_state / "worktrees").mkdir(parents=True, exist_ok=True)
+
+    # Corrupt the registry in place with a duplicate `remote:` key under a
+    # second project, after "good"'s own state root already exists.
+    registry_paths.registry_path("repos.yaml").write_text(
+        "repos:\n"
+        "  good:\n"
+        "    remote: https://github.com/Example-Org/Good-Repo.git\n"
+        "  bad:\n"
+        "    remote: https://github.com/Example-Org/Bad-Repo-A.git\n"
+        "    remote: https://github.com/Example-Org/Bad-Repo-B.git\n",
+        encoding="utf-8",
+    )
+    installer.projects_yaml_path().parent.mkdir(parents=True, exist_ok=True)
+    installer.projects_yaml_path().write_text(
+        "projects:\n  good: {}\n  bad: {}\n", encoding="utf-8",
+    )
+
+    snapshot = producer_view_scan.scan_ownership()
+
+    assert not snapshot["complete"]
+    issues_by_subject = {i["subject"]: i["code"] for i in snapshot["issues"]}
+    assert issues_by_subject.get("good") == "project-unavailable"
+    assert issues_by_subject.get("bad") == "project-unavailable"
+
+
+def test_ownership_scan_reports_uncertainty_for_a_linked_repos_registry(
+    monkeypatch, tmp_path
+):
+    """Installation-cell regression (copilot-extensions PR #7102): a
+    symlink/reparse-point repos.yaml must not be silently skipped while
+    cfg.project_dir() still follows it through its own strict read -- it
+    must be recorded as uncertainty (an incomplete snapshot with suppressed
+    current owners), not a falsely complete result built on a routing input
+    this scan itself refused."""
+    from agent_worktrees import installer, producer_view_scan
+
+    payload = _payload(tmp_path, "payload")
+    context, _plugin_root = _stamp(
+        tmp_path / "durable",
+        payload,
+        marketplace="ownership-scan-link",
+        repository="Example-Org/Ownership-Scan-Link-Marketplace",
+    )
+    _select(monkeypatch, context, payload)
+    _register_repo("good", "https://github.com/Example-Org/Good-Repo.git")
+    good_state = project_state.ensure_project_state("good")
+    (good_state / "worktrees").mkdir(parents=True, exist_ok=True)
+
+    repos_path = registry_paths.registry_path("repos.yaml")
+    real = repos_path.with_name("repos-real.yaml")
+    repos_path.rename(real)
+    try:
+        repos_path.symlink_to(real)
+    except OSError:
+        pytest.skip("symlink creation unavailable on this platform")
+    installer.projects_yaml_path().parent.mkdir(parents=True, exist_ok=True)
+    installer.projects_yaml_path().write_text(
+        "projects:\n  good: {}\n", encoding="utf-8",
+    )
+
+    snapshot = producer_view_scan.scan_ownership()
+
+    assert not snapshot["complete"]
+    issues_by_subject = {i["subject"]: i["code"] for i in snapshot["issues"]}
+    assert issues_by_subject.get("repos") == "registry-unavailable"
+    assert all(e["current_owner"] is None for e in snapshot["entries"])
+
+
 def test_same_repository_has_same_id_but_isolated_cell_state(
     monkeypatch, tmp_path
 ):
