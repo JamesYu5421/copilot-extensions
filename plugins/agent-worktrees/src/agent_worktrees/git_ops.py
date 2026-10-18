@@ -88,29 +88,33 @@ def resolve_to_anchor(repo_path: Path) -> Path:
     """Resolve a git worktree path back to its anchor (main checkout).
 
     If *repo_path* is already the anchor (has a ``.git`` directory), it is
-    returned unchanged.  If it is a worktree (has a ``.git`` file),
-    ``git rev-parse --git-common-dir`` is used to find the shared ``.git``
-    directory whose parent is the anchor repo root.
+    returned unchanged. If it is a worktree (has a ``.git`` file),
+    ``git rev-parse --git-common-dir`` finds the shared git dir: an ordinary
+    clone nests it under ``<anchor>/.git``; a pure bare anchor's common dir
+    *is* the anchor itself, tried as a fallback (#7088).
     """
+    def _probe(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=5,
+            env=repository_identity_env(), **no_window_kwargs(),
+        )
+
     git_path = repo_path / ".git"
     if git_path.is_dir():
         return repo_path  # already the anchor
     if git_path.is_file():
         try:
-            r = subprocess.run(
-                ["git", "-C", str(repo_path), "rev-parse", "--git-common-dir"],
-                capture_output=True, text=True, timeout=5,
-                env=repository_identity_env(),
-                **no_window_kwargs(),
-            )
+            r = _probe(repo_path, "rev-parse", "--git-common-dir")
             if r.returncode == 0:
                 common = Path(r.stdout.strip())
                 if not common.is_absolute():
                     common = (repo_path / common).resolve()
-                # common is the shared .git dir; its parent is the anchor
-                anchor = common.parent
+                anchor = common.parent  # common is the shared .git dir
                 if (anchor / ".git").is_dir():
                     return anchor
+                bare = _probe(common, "rev-parse", "--is-bare-repository")
+                if bare.returncode == 0 and bare.stdout.strip() == "true":
+                    return common
         except Exception:
             pass
     return repo_path
@@ -692,7 +696,7 @@ DEFAULT_FETCH_TIMEOUT = 30.0
 
 def fetch(
     remote: str, *, cwd: str | Path, timeout: float | None = DEFAULT_FETCH_TIMEOUT,
-    isolated_repository: bool = False,
+    isolated_repository: bool = False, no_hooks: bool = False,
 ) -> None:
     """Fetch from a remote (auto-authenticating cross-account remotes; #29).
 
@@ -704,7 +708,7 @@ def fetch(
         git(
             *_auth_config_args(remote, cwd=cwd), "fetch", remote, "--quiet",
             cwd=cwd, timeout=timeout, isolated_repository=isolated_repository,
-            auth_acquisition=True,
+            auth_acquisition=True, **({"no_hooks": True} if no_hooks else {}),
         )
     except subprocess.TimeoutExpired as exc:
         raise GitError(
