@@ -57,6 +57,19 @@ The initial paired disconnected Linux run executes all 17 groups with the same
 seconds, including preparation and cleanup. This is local execution evidence,
 not a substitute for the exact hosted release gates or Windows margin proof.
 
+The existing artifact-readiness suite also executes the immutable release
+materializer against current direct and nested retained-flat source references.
+On Dev's legacy controller it reads the actual `origin/main` controller; an
+exact generated candidate retains its preserved controller but replays the
+unmaterialized manifests and libraries from its recorded exact Dev commit,
+not its already-rewritten payload. A real generated Git checkout exercises
+that boundary, with altered generated library bytes and refused missing,
+invalid or unavailable source identities. Full Git history is
+required, as in both existing artifact-contract CI lanes. The fixture loads
+only pinned Git helper files in an isolated child, verifies materialized bytes
+and rewritten paths, and retains the obsolete-helper refusal as a negative.
+It does not build, install, publish or qualify an artifact.
+
 Canonical native machine-record repair has focused existing-linked-Git and
 removed-record lanes:
 
