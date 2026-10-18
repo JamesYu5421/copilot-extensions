@@ -106,6 +106,151 @@ class TrustedHarnessTests(unittest.TestCase):
             self.assertTrue(callable(control._paths))
 
 
+@dataclass
+class _ShellResult:
+    returncode: int
+    stdout: str
+    stderr: str
+    output: str
+
+
+class _ShellFixture(unittest.TestCase):
+    def shell(
+        self, body: str, env: dict[str, str], *, timeout: float = 10,
+    ) -> _ShellResult:
+        bash = shutil.which("bash")
+        git = shutil.which("git")
+        child_env = {"PATH": os.defpath, **env}
+        if os.name == "nt":
+            native = Path(git).resolve().parent.parent / "bin/bash.exe" if git else None
+            bash = str(native) if native is not None and native.is_file() else None
+            child_env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", r"C:\Windows")
+        if bash is None:
+            self.skipTest("Native Bash (Git for Windows on Windows) is required for literal shell fixtures")
+        with tempfile.TemporaryDirectory(prefix="literal-shell-") as directory:
+            output = Path(directory) / "github-output"
+            output.write_text("", encoding="utf-8")
+            child_env["GITHUB_OUTPUT"] = output.as_posix()
+            completed = subprocess.run(
+                [bash, "--noprofile", "--norc", "-e"], input=body, text=True,
+                capture_output=True, timeout=timeout, env=child_env,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            return _ShellResult(
+                completed.returncode, completed.stdout, completed.stderr,
+                output.read_text(encoding="utf-8"),
+            )
+
+
+class ShellFixtureTests(_ShellFixture):
+    def test_windows_shell_launch_is_native_and_consoleless(self) -> None:
+        fake_os = types.SimpleNamespace(name="nt", defpath="synthetic-path",
+                                        environ={"SYSTEMROOT": "synthetic-windows"})
+        resolved = {"bash": "/wsl/bash.exe", "git": "/native/git/cmd/git.exe"}
+        with (
+            mock.patch.object(sys.modules[__name__], "os", fake_os),
+            mock.patch("shutil.which", side_effect=resolved.get),
+            mock.patch.object(Path, "resolve", lambda path, **kwargs: path),
+            mock.patch.object(Path, "is_file", return_value=True),
+            mock.patch.object(subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True),
+            mock.patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run,
+        ):
+            self.shell("exit 0", {}, timeout=5)
+        argv = run.call_args.args[0]
+        self.assertEqual(Path(argv[0]), Path("/native/git/bin/bash.exe"))
+        self.assertEqual(run.call_args.kwargs["creationflags"], 0x08000000)
+        self.assertEqual(run.call_args.kwargs["env"]["SYSTEMROOT"], "synthetic-windows")
+        self.assertEqual(run.call_args.kwargs["timeout"], 5)
+
+    def test_output_uses_an_owned_file_and_preserves_process_channels(self) -> None:
+        for returncode in (0, 7):
+            with self.subTest(returncode=returncode):
+                outputs = []
+
+                def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+                    output = Path(kwargs["env"]["GITHUB_OUTPUT"])
+                    self.assertNotEqual(output.as_posix(), "/dev/stdout")
+                    self.assertNotEqual(output.as_posix(), "/unowned/output")
+                    self.assertTrue(output.is_file())
+                    output.write_text("proceed=true\n", encoding="utf-8")
+                    outputs.append(output)
+                    return subprocess.CompletedProcess(argv, returncode, "notice\n", "diagnostic\n")
+
+                with mock.patch("subprocess.run", side_effect=run):
+                    completed = self.shell("exit 0", {"GITHUB_OUTPUT": "/unowned/output"}, timeout=5)
+                self.assertEqual(completed.returncode, returncode)
+                self.assertEqual(completed.stdout, "notice\n")
+                self.assertEqual(completed.stderr, "diagnostic\n")
+                self.assertEqual(completed.output, "proceed=true\n")
+                self.assertEqual(len(outputs), 1)
+                self.assertFalse(outputs[0].exists())
+
+
+class PromotionJobAdmissionTests(_ShellFixture):
+    def setUp(self) -> None:
+        self.promote = jobs(WORKFLOW.read_text(encoding="utf-8"))["promote"]
+
+    def test_declined_or_failed_gate_does_not_allocate_a_promote_runner(self) -> None:
+        condition = re.search(r"^    if: (.+)$", self.promote, re.M)
+        self.assertIsNotNone(condition)
+        self.assertEqual(
+            condition[1],
+            "always() && needs.gate.result == 'success' && needs.gate.outputs.is_dev == 'true'",
+        )
+        parts = condition[1].split(" && ")
+        self.assertEqual(parts.pop(0), "always()")
+        comparisons = []
+        for part in parts:
+            comparison = re.fullmatch(r"(needs\.gate(?:\.outputs)?\.[a-z_]+) == '([a-z]+)'", part)
+            self.assertIsNotNone(comparison)
+            comparisons.append(comparison.groups())
+        for gate, is_dev in itertools.product(
+            ("success", "SUCCESS", "failure", "cancelled", "skipped", "", "unknown"),
+            ("true", "True", "TRUE", "false", "", "unknown"),
+        ):
+            with self.subTest(gate=gate, is_dev=is_dev):
+                values = {"needs.gate.result": gate, "needs.gate.outputs.is_dev": is_dev}
+                # Actions string comparisons are case-insensitive.
+                admitted = all(values[field].casefold() == expected for field, expected in comparisons)
+                self.assertEqual(admitted, gate.casefold() == "success" and is_dev.casefold() == "true")
+
+    def test_admitted_source_still_requires_every_validation_result(self) -> None:
+        validation = [
+            "full", "worktree-manager", "agent-index-service-linux",
+            "agent-index-service-windows", "guards-full-sweep", "python-artifacts",
+        ]
+        template = script(step(self.promote, "decide"))
+        fields = {"needs.gate.result": "success", "needs.gate.outputs.is_dev": "true"}
+        fields.update({f"needs.{name}.result": "success" for name in validation})
+        scenarios = [
+            ({}, True),
+            *(
+                ({f"needs.{name}.result": result}, False)
+                for name, result in itertools.product(
+                    validation, ("failure", "cancelled", "skipped", "", "unknown"),
+                )
+            ),
+            ({"needs.gate.result": "SUCCESS"}, False),
+            ({"needs.gate.outputs.is_dev": "True"}, False),
+        ]
+        for overrides, proceed in scenarios:
+            with self.subTest(overrides=overrides):
+                values = {**fields, **overrides}
+                command = re.sub(
+                    r"\$\{\{\s*([^{}]+?)\s*\}\}",
+                    lambda match: values[match[1].strip()],
+                    template,
+                )
+                completed = self.shell("set -u\n" + command, {}, timeout=5)
+                self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                decisions = completed.output.splitlines()
+                self.assertEqual(decisions, [f"proceed={str(proceed).lower()}"])
+                if not proceed and not overrides.keys() & {
+                    "needs.gate.result", "needs.gate.outputs.is_dev",
+                }:
+                    self.assertIn("refusing to promote", completed.stdout)
+
+
 def controller(text: str, marker: str) -> None:
     if marker not in text:
         message = "Legacy controller: new publication boundary is NOT active; use an explicit prepared workflow."
@@ -194,7 +339,7 @@ class Provider:
         return contextlib.nullcontext(self.output)
 
 
-class BoundaryTests(unittest.TestCase):
+class BoundaryTests(_ShellFixture):
     @classmethod
     def setUpClass(cls) -> None:
         cls.text = WORKFLOW.read_text(encoding="utf-8")
@@ -231,11 +376,109 @@ class BoundaryTests(unittest.TestCase):
         self.assertNotIn("secrets.", self.jobs["merge-promotion"])
         for dependency in ("qualify-candidate", "publish-python-artifacts"):
             self.assertIn(f"needs.{dependency}.result == 'success'", self.jobs["merge-promotion"])
+        self.assertRegex(self.jobs["merge-promotion"], r"(?m)^      actions: read$")
         ci = jobs((WORKFLOW.parent / "ci.yml").read_text(encoding="utf-8"))
         excluded = {"promotion-gate", "pr-gate", "coverage-guided-selection-integration"}
         self.assertEqual(needs(ci["promotion-gate"]), set(ci) - excluded)
         self.assertIn("inputs.promotion_phase == 'candidate'", ci["full"])
         self.assertEqual(len(re.findall(r"^          - [a-z][a-z0-9-]*$", ci["full"], re.M)), 9)
+
+    def test_postlanding_attribution_refresh_is_bounded_and_not_release_qualification(self) -> None:
+        body = self.jobs["refresh-promotion-attribution"]
+        self.assertEqual(needs(body), {"merge-promotion"})
+        for expected in (
+            "if: needs.merge-promotion.outputs.merge_sha != ''",
+            "timeout-minutes: 5", "continue-on-error: true", "actions: write",
+            "MERGE_SHA: ${{ needs.merge-promotion.outputs.merge_sha }}",
+            "PROMOTION_RUN: ${{ github.run_id }}-${{ github.run_attempt }}",
+        ):
+            self.assertIn(expected, body)
+        self.assertNotIn("uses:", body)
+        self.assertNotIn("secrets.", body)
+        code = python_body(script(step(
+            body, "Dispatch the bounded idempotent attribution refresh without release qualification",
+        )))
+        for merged, run in ((MERGED, "123-4"), ("invalid", "123-4"), (MERGED, "invalid")):
+            with self.subTest(merged=merged, run=run):
+                env = {**environment(), "MERGE_SHA": merged, "PROMOTION_RUN": run}
+                with mock.patch.dict(os.environ, env, clear=True), mock.patch("subprocess.run") as dispatch:
+                    if merged == "invalid" or run == "invalid":
+                        with self.assertRaises(RuntimeError):
+                            exec(compile(code, "<literal-attribution-refresh>", "exec"), {})
+                        dispatch.assert_not_called()
+                        continue
+                    exec(compile(code, "<literal-attribution-refresh>", "exec"), {})
+                    dispatch.assert_called_once()
+                    argv, = dispatch.call_args.args
+                    self.assertEqual(argv, [
+                        "gh", "api", "--method", "POST",
+                        "repos/example/project/actions/workflows/workflow-lockdown-guard.yml/dispatches",
+                        "--input", "-",
+                    ])
+                    self.assertEqual(json.loads(dispatch.call_args.kwargs["input"]), {
+                        "ref": "main", "inputs": {"promotion_sha": MERGED, "promotion_run": "123-4"},
+                    })
+                    self.assertIs(dispatch.call_args.kwargs["check"], True)
+                    self.assertEqual(dispatch.call_args.kwargs["timeout"], 60)
+        with (
+            mock.patch.dict(os.environ, {**environment(), "MERGE_SHA": MERGED, "PROMOTION_RUN": "123-4"}, clear=True),
+            mock.patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, ["gh"])),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            exec(compile(code, "<literal-attribution-refresh>", "exec"), {})
+
+    def test_pause_defers_normal_work_but_not_explicit_replacement_without_weakening_evidence(self) -> None:
+        gate = self.jobs["gate"]
+        pause = step(gate, "pause")
+        self.assertIn("git fetch --no-tags origin main", script(pause))
+        self.assertIn("if: steps.pause.outputs.normal_paused != 'true'", step(gate, "check"))
+        self.assertIn(
+            "is_dev: ${{ steps.pause.outputs.normal_paused == 'true' && 'false' || steps.check.outputs.is_dev }}",
+            gate,
+        )
+        code = python_body(script(pause))
+        state = {"schema": "copilot-extensions.release-pipeline-state", "version": 1, "paused": True}
+        for paused, qualification in itertools.product((True, False), ("true", "false")):
+            with self.subTest(paused=paused, qualification=qualification):
+                output = io.StringIO()
+                env = {**environment(), "QUALIFICATION_ONLY": qualification}
+                result = subprocess.CompletedProcess([], 0, json.dumps({**state, "paused": paused}), "")
+                with (
+                    mock.patch.dict(os.environ, env, clear=True),
+                    mock.patch("subprocess.run", return_value=result) as read,
+                    mock.patch("builtins.open", return_value=contextlib.nullcontext(output)),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    exec(compile(code, "<literal-early-pause>", "exec"), {})
+                read.assert_called_once_with(
+                    ["git", "show", "refs/remotes/origin/main:.github/release-pipeline-state.json"],
+                    check=True, capture_output=True, text=True, timeout=30,
+                )
+                expected = str(paused and qualification == "false").lower()
+                self.assertEqual(output.getvalue(), f"normal_paused={expected}\n")
+        invalid = [
+            None, [], {}, {**state, "schema": "other"}, {**state, "version": True},
+            {**state, "version": 2}, {**state, "paused": "true"}, {**state, "paused": None},
+        ]
+        for value in invalid:
+            with self.subTest(invalid=value):
+                result = subprocess.CompletedProcess([], 0, json.dumps(value), "")
+                with (
+                    mock.patch.dict(os.environ, {**environment(), "QUALIFICATION_ONLY": "false"}, clear=True),
+                    mock.patch("subprocess.run", return_value=result),
+                    mock.patch("builtins.open") as output,
+                    self.assertRaises(RuntimeError),
+                ):
+                    exec(compile(code, "<literal-early-pause>", "exec"), {})
+                output.assert_not_called()
+        with (
+            mock.patch.dict(os.environ, {**environment(), "QUALIFICATION_ONLY": "false"}, clear=True),
+            mock.patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, ["git"])),
+            mock.patch("builtins.open") as output,
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            exec(compile(code, "<literal-early-pause>", "exec"), {})
+        output.assert_not_called()
 
     def test_pending_checks_then_exact_nonadmin_merge(self) -> None:
         provider = Provider(buckets=["pending", "pass"])
@@ -308,22 +551,6 @@ class BoundaryTests(unittest.TestCase):
         self.unmerged(provider)
         self.assertFalse(provider.calls)
 
-    def shell(self, body: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-        bash = shutil.which("bash")
-        git = shutil.which("git")
-        child_env = {"PATH": os.defpath, "GITHUB_OUTPUT": "/dev/stdout", **env}
-        if os.name == "nt":
-            native = Path(git).resolve().parent.parent / "bin/bash.exe" if git else None
-            bash = str(native) if native is not None and native.is_file() else None
-            child_env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", r"C:\Windows")
-        if bash is None:
-            self.skipTest("Native Bash (Git for Windows on Windows) is required for literal shell fixtures")
-        return subprocess.run(
-            [bash, "--noprofile", "--norc", "-e"], input=body, text=True,
-            capture_output=True, timeout=10, env=child_env,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-
     def test_zero_helper_pin_is_refused_before_any_checkout_or_publication(self) -> None:
         gate = self.jobs["gate"]
         identifier = "Require an immutable reviewed release-helper pin"
@@ -331,24 +558,6 @@ class BoundaryTests(unittest.TestCase):
         body = script(step(gate, identifier))
         self.assertNotEqual(self.shell(body, {"RELEASE_HELPERS_SHA": "0" * 40}).returncode, 0)
         self.assertEqual(self.shell(body, {"RELEASE_HELPERS_SHA": CONTROL}).returncode, 0)
-
-    def test_windows_shell_launch_is_native_and_consoleless(self) -> None:
-        fake_os = types.SimpleNamespace(name="nt", defpath="synthetic-path",
-                                        environ={"SYSTEMROOT": "synthetic-windows"})
-        resolved = {"bash": "/wsl/bash.exe", "git": "/native/git/cmd/git.exe"}
-        with (
-            mock.patch.object(sys.modules[__name__], "os", fake_os),
-            mock.patch("shutil.which", side_effect=resolved.get),
-            mock.patch.object(Path, "resolve", lambda path, **kwargs: path),
-            mock.patch.object(Path, "is_file", return_value=True),
-            mock.patch.object(subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True),
-            mock.patch("subprocess.run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run,
-        ):
-            self.shell("exit 0", {})
-        argv = run.call_args.args[0]
-        self.assertEqual(Path(argv[0]), Path("/native/git/bin/bash.exe"))
-        self.assertEqual(run.call_args.kwargs["creationflags"], 0x08000000)
-        self.assertEqual(run.call_args.kwargs["env"]["SYSTEMROOT"], "synthetic-windows")
 
     def test_only_manual_trusted_main_can_admit_paused_qualification(self) -> None:
         body = script(step(self.jobs["gate"], "mode"))
@@ -359,7 +568,7 @@ class BoundaryTests(unittest.TestCase):
         }
         accepted = self.shell(body, env)
         self.assertEqual(accepted.returncode, 0, accepted.stderr)
-        self.assertIn("qualification_only=true", accepted.stdout)
+        self.assertIn("qualification_only=true", accepted.output)
         for key, value in [
             ("GITHUB_EVENT_NAME", "repository_dispatch"), ("GITHUB_REF", "refs/heads/dev"),
             ("DEFAULT_REF", "refs/heads/dev"), ("WORKFLOW_SHA", DEV), ("RUN_SHA", ""),
@@ -369,7 +578,7 @@ class BoundaryTests(unittest.TestCase):
         automatic = self.shell(body, {**env, "REQUESTED_QUALIFICATION_ONLY": "false",
                                       "GITHUB_EVENT_NAME": "repository_dispatch"})
         self.assertEqual(automatic.returncode, 0)
-        self.assertIn("qualification_only=false", automatic.stdout)
+        self.assertIn("qualification_only=false", automatic.output)
 
     def test_pause_is_preserved_and_normal_dispatch_cannot_bypass_it(self) -> None:
         code = python_body(script(step(self.jobs["promote"], "ready")))
