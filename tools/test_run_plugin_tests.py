@@ -239,6 +239,20 @@ def test_explicit_test_files_preserve_default_grouping_and_filter_only_collectio
     ) == [[tests / "nested/test_child.py", tests / "test_selected.py"]]
 
 
+@pytest.mark.parametrize("value", ["./tests/test_selected.py", "tests//test_selected.py"])
+def test_interactive_test_file_paths_are_normalized_without_changing_manifest_policy(selectable_tests, value):
+    assert runner._test_file_groups("example", 25, test_files=(value,)) == [
+        [selectable_tests / "test_selected.py"],
+    ]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows native path separators")
+def test_interactive_test_file_accepts_native_windows_separators(selectable_tests):
+    assert runner._test_file_groups(
+        "example", 25, test_files=("tests\\test_selected.py",),
+    ) == [[selectable_tests / "test_selected.py"]]
+
+
 @pytest.mark.parametrize("path", [
     "missing.py", "../test_selected.py", "test_selected.py", "nested",
 ])
@@ -762,7 +776,9 @@ def test_external_targets_are_explicit_and_contained_in_repository(monkeypatch, 
     monkeypatch.setattr(runner, "REPO", tmp_path)
     assert runner._plugin_dir("worktree-manager") == tmp_path / "worktree-manager"
     assert runner._plugin_dir("payload-invocation") == tmp_path / "libs" / "payload-invocation"
+    assert runner._plugin_dir("runtime-source") == tmp_path / "libs" / "versioned-runtime"
     assert runner.EXTERNAL_TEST_DEPENDENCIES["payload-invocation"] == ("pyyaml>=6.0.3",)
+    assert runner.EXTERNAL_TEST_DEPENDENCIES["runtime-source"] == ("pyyaml>=6.0.3",)
 
 
 def test_optional_file_override_is_validated_only_when_present(

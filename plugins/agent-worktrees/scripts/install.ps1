@@ -2673,7 +2673,7 @@ function Deploy-RuntimeResolvers {
 
 function Deploy-Binstub {
     <# Generate the project-specific binstub in ~/.local/bin/.
-       Every path routes through this payload's attributable command. #>
+       Every path routes through the installed user-side command. #>
     Ensure-InstallDir $LocalBin
 
     # Reserved-name guard (belt-and-suspenders with the ProjectName resolution
@@ -2685,29 +2685,29 @@ function Deploy-Binstub {
         return
     }
 
-    $payloadCmd = Join-Path $PluginDir 'bin\payload\agent-worktrees.cmd'
-    $payloadPs1 = Join-Path $PluginDir 'bin\payload\agent-worktrees.ps1'
+    $userCmd = Join-Path $LocalBin 'agent-worktrees.cmd'
+    $userPs1 = Join-Path $LocalBin 'agent-worktrees.ps1'
     $content = @"
 @echo off
 rem agent-worktrees project binstub
 set "PYTHONUTF8=1"
 set "AGENT_WORKTREES_LAUNCH_ID=$ProjectName-%RANDOM%-%RANDOM%"
-call "$payloadCmd" --project $ProjectName %*
+"$userCmd" --project $ProjectName %*
 exit /b %ERRORLEVEL%
 "@
     $dst = Join-Path $LocalBin "$ProjectName.cmd"
     Set-Content -Path $dst -Value $content -NoNewline
 
-    # Primary .ps1 (PowerShell prefers it over .cmd); both pin the payload.
+    # Primary .ps1 (PowerShell prefers it over .cmd).
     $ps1Content = (@'
 # agent-worktrees project binstub
 $env:PYTHONUTF8 = '1'
 $env:AGENT_WORKTREES_LAUNCH_ID = '%%PROJECT%%-' + [guid]::NewGuid().ToString('N')
-& '%%PAYLOAD%%' --project '%%PROJECT%%' @args
+& '%%COMMAND%%' --project '%%PROJECT%%' @args
 exit $LASTEXITCODE
 '@).Replace('%%PROJECT%%', $ProjectName).Replace(
-        '%%PAYLOAD%%',
-        $payloadPs1.Replace("'", "''")
+        '%%COMMAND%%',
+        $userPs1.Replace("'", "''")
     )
     $ps1Dst = Join-Path $LocalBin "$ProjectName.ps1"
     [System.IO.File]::WriteAllText($ps1Dst, $ps1Content, (New-Object System.Text.UTF8Encoding($false)))
@@ -3832,6 +3832,7 @@ switch ($Action) {
             Write-ServiceOk "Context runtime installed at $InstallDir"
             exit 0
         }
+        Write-V3Manifest
         Deploy-CopilotPlugin
         Deploy-GlobalBinstub
         Ensure-CopilotExperimental
@@ -3873,8 +3874,6 @@ switch ($Action) {
         } catch {
             Write-ServiceWarn "Config migration skipped: $_"
         }
-
-        Write-V3Manifest
 
         Write-Host ""
         Write-ServiceOk "Installation complete"
@@ -4182,6 +4181,7 @@ switch ($Action) {
         Deploy-VenvAndPackage
         if (-not (Deploy-Wrappers)) { exit 1 }
         if (-not (Invoke-VersionedActivate)) { exit 1 }
+        Write-V3Manifest
         Deploy-CopilotPlugin
         Deploy-GlobalBinstub
         Ensure-CopilotExperimental
@@ -4229,8 +4229,6 @@ switch ($Action) {
         } catch {
             Write-ServiceWarn "Config migration skipped: $_"
         }
-
-        Write-V3Manifest
 
         Write-ServiceOk "Update complete"
     }

@@ -23,12 +23,32 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
+from typing import Any
 
 from machine_transport import MachineEntry, machine_entries_to_topology, machine_name, resolve_identity
 from machine_transport import resolve_machine_selection, split_machine_environment
 from machine_transport import is_local_machine as _mt_is_local_machine
 
 from . import config as cfg
+
+
+def configured_machine_binding(
+    machine_raw: dict, global_raw: dict, capture: dict[str, str] | None = None,
+) -> Any:
+    """Select the existing configured tier and optionally capture its provenance."""
+    value = machine_raw.get("machine") or global_raw.get("machine")
+    if capture is not None:
+        if "machine" in machine_raw:
+            capture["source"], explicit = "project-machine-config", machine_raw["machine"]
+        elif "machine" in global_raw:
+            capture["source"], explicit = "global-machine-config", global_raw["machine"]
+        else:
+            capture["source"], explicit = "detected", None
+        if capture["source"] != "detected" and (
+            not isinstance(explicit, str) or not explicit.strip()
+        ):
+            raise ValueError("configured machine binding must be a nonempty string")
+    return value
 
 
 def resolve_execution_machine(
@@ -73,11 +93,9 @@ def is_local_machine(name: str, config: cfg.Config) -> bool:
     Canonicalizes both sides through the registry (the same key/alias/
     hostname/display_name matching ``config.detect_machine`` itself uses)
     and, as a final ground-truth check, the real local OS hostname, before
-    deciding.
+    deciding. This read-only classification does not grant mutation authority;
+    owned writes must enforce the separate ``execution_spaces`` fences.
     """
-    from .execution_spaces import require_owner_identity
-
-    require_owner_identity(name, config, canonical_ref=False)
     return _mt_is_local_machine(
         name,
         config_machine=config.machine,

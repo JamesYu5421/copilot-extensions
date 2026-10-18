@@ -1,9 +1,21 @@
 {
   "last_promotion": {
-    "dev_head": "fc61ab3aa44ac2b235ea540601127ff91129b81c",
-    "main_before": "ad7376904b0e622f7f44abf516cbef560b322f36",
-    "promoted_at": "2026-10-16T06:19:44Z",
-    "tag": "promote-20261016061944"
+    "control_preserved": {
+      "files": {
+        ".github/promotion-control.json": "afab28d33694384f5167b7d268e0586be2b691c5",
+        ".github/workflows/base-branch-reminder.yml": "0cff158925120b6ee5c72b3d9b7d0b631c161500",
+        ".github/workflows/ci.yml": "8f3fd59ac4323fabfe3942891ebdf0a7b7ab4a0b",
+        ".github/workflows/copilot-code-review.yml": "e4e9b375d839f3b791c128739f59da3c9d6051a4",
+        ".github/workflows/validate-and-promote.yml": "ba061136a60f5e16dfee04e2ce238a42883547fd"
+      },
+      "main_head": "ff6773de1b539f5227b98634be13fcaaa75adac7",
+      "manifest_blob": "afab28d33694384f5167b7d268e0586be2b691c5"
+    },
+    "dev_head": "a9c26ff2332ec050970dab792d8536e9af0144c7",
+    "main_before": "ff6773de1b539f5227b98634be13fcaaa75adac7",
+    "promoted_at": "2026-10-18T18:10:29Z",
+    "release_id": "a9c26ff2332ec050970dab792d8536e9af0144c7",
+    "tag": "promote-dev-a9c26ff2332ec050970dab792d8536e9af0144c7"
   },
   "last_rollback": null,
   "pause_reason": "Operator-approved containment until pre-merge qualification makes Main safe to consume (#6237)",

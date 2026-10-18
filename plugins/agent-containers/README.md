@@ -260,6 +260,41 @@ unchanged.
   for Azure-token minting on the shared relay; it is no longer compensating for
   a host-network-reachable endpoint.
 
+## Plugin preparation
+
+Trusted container launches share the `plugin-resolve` install/copy/register
+barrier with CodeSpaces. Bridge selects related-repository plugins and retains
+that selection independently of the provider's legacy launch argv. Its headed
+CLI handoff carries explicit `--stage-plugin` and `--plugin-root` inputs;
+`--stage-plugin-disabled SOURCE` prepares the same payload but preserves its
+disabled selection. Both staging flags are repeatable; plain source values
+remain unchanged, including paths containing spaces or `=false`. Retained
+provider metadata carries each selection as a `{source, enable}` row while
+accepting older plain-source rows as enabled.
+Standalone container CLI use does not depend on importing bridge's runtime.
+All required remote installs and local copies complete before the execution
+repository's `.github/copilot/settings.local.json` is merged and the child
+starts. The target repository's own enabled remote plugins join that same
+installation barrier. ACP also receives each effective directory explicitly; CLI discovers
+the registered identities from repository settings, without duplicate external
+directory entries. Explicit worktree mode targets that worktree's repository,
+not the fleet's default checkout. Attached and detached native CLI attempts run
+the idempotent plugin barrier before the remote reuse/create decision, even if
+the host live-session registration remains fresh. Preparation failure blocks
+creation; a genuine rejoin still reuses the running child without changing its
+active bindings or replaying its seed. Guaranteed surviving Session Host
+reattachment skips preparation. Restricted fleets remain outside host plugin
+projection.
+Attached CLI launch binds its child login shell to the exact checkout selected
+for preparation, after login profiles run. A worktree resolver's returned path
+wins over conventional workspace metadata; failure to enter it prevents launch.
+
+See [`plugin-resolve`](../../libs/plugin-resolve/README.md#trusted-venue-preparation)
+for settings ownership, isolated installation cache, retained snapshots and
+selected-asset handling. Manifest companions outside the eligible selection are
+diagnostics for caller-owned execution routing, not permission to propagate
+additional plugins.
+
 ## CLI
 
 ```
@@ -419,6 +454,25 @@ attached/detached CLI launches re-read that existing host source for each launch
 the native Copilot process receives the selected inference token: a private,
 one-use launch file is consumed by a narrow executable wrapper, not sourced
 into the Session Host, `embody`, tmux, container, or session environment.
+Shared launch inputs and companion authentication use private mode-0700
+directories under `/dev/shm/agent-containers-<user>/launch`, even when HOME
+is disk-backed. The writer verifies tmpfs, ownership, permissions and
+non-symlink ancestors before reading credential input; an unavailable or
+unsafe RAM destination refuses the launch without a disk fallback. Final
+files are created with mode 0600 and exclusive, no-clobber writes. Companion
+authentication must share the validated RAM-backed launch owner directory.
+Promotion into a companion auth file is an exclusive same-filesystem link,
+followed by removing its staging name; an existing destination refuses rather
+than being replaced. Cleanup and abandoned-input reaping validate both storage
+roots, including filesystem, ownership, mode and non-symlink ancestry, before
+removal. Missing roots remain an idempotent cleanup case.
+The credential-free executable wrapper and nonsecret lifecycle receipts live
+in a separate private `/tmp/agent-containers-<user>/launch` directory because
+Linux commonly mounts `/dev/shm` with `noexec`. Wrapper content contains only
+the RAM credential path and variable name, never credential bytes. Cleanup
+and the abandoned-input reaper cover both directories together.
+Existing launch inputs in the former home-directory location are not migrated
+or swept by the new RAM-only reaper.
 Successful CLI startup must confirm the native child consumed its file before
 cleanup removes the executable wrapper; an `embody` return alone is not proof
 of native startup. Explicit create-or-resume receipts distinguish a new native

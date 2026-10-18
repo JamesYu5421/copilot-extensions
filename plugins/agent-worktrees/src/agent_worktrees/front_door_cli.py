@@ -344,6 +344,7 @@ def _git_toplevel(path: Path | None) -> Path | None:
 
 
 _NO_PROJECT_COMMANDS = {
+    "identity-vault",
     "--version",
     "-V",
     "--help",
@@ -406,11 +407,21 @@ def _is_no_project_invocation(args_list: list[str]) -> bool:
     command = args_list[0]
     if command in _NO_PROJECT_COMMANDS or command.startswith("-"):
         return True
+    if command == "update" and "--auth-report" in args_list[1:] and any(
+        arg == "--auth-source" or arg.startswith("--auth-source=") for arg in args_list[1:]
+    ):
+        return True
     if command == "list-sessions" and "--all-projects" in args_list[1:]:
         return True
     if command == "claims" and args_list[1:3] == ["find", "pr"]:
         # Scans every adopted project's tracking store, never the CWD's own:
         # it must give the same answer from any directory.
+        return True
+    if command == "claims" and args_list[1:2] == ["ownership"]:
+        # Strict read-only global snapshot (cmd_ownership -> scan_ownership):
+        # scans every adopted project's tracking store, never the CWD's own,
+        # and takes no positional selectors -- it must run from a neutral
+        # directory with no active project, same as `claims find pr`.
         return True
     if command == "get" and any(
         arg == "--session-id" or arg.startswith("--session-id=") for arg in args_list[1:]

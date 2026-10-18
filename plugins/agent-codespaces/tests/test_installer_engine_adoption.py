@@ -151,7 +151,6 @@ if expected_sources and args[:2] == ["pip", "install"]:
     private_root = config.parent
     assert config.is_file() and not config.is_symlink()
     assert private_root.name == "inputs"
-    assert private_root.parent.parent.samefile(Path(os.environ["TEMP"]))
     if os.name != "nt":
         assert private_root.stat().st_uid == os.getuid()
         assert private_root.stat().st_mode & 0o077 == 0
@@ -167,6 +166,13 @@ if expected_sources and args[:2] == ["pip", "install"]:
         for member in original.rglob("*.py"):
             assert (source / member.relative_to(original)).read_bytes() == member.read_bytes()
         args[index] = str(original)
+    if os.name == "nt" and "--editable" in args:
+        expected_parents = {Path(value).resolve().parent for value in expected_sources.values()}
+        assert any(private_root.parent.parent.samefile(parent) for parent in expected_parents)
+    else:
+        assert private_root.parent.parent.samefile(Path(os.environ["TEMP"]))
+    assert not any(private_root.resolve().is_relative_to(Path(value).resolve())
+                   for value in expected_sources.values())
 log = Path(os.environ["TEST_UV_LOG"])
 history = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 with log.open("a") as stream:
@@ -252,6 +258,8 @@ def _prelude(ext: str, engine: Path = ENGINE) -> str:
             '_warn() { echo "$*" >&2; }\n_fail() { echo "$*" >&2; }\n'
             "_step() { :; }\n_ok() { :; }\nsleep() { :; }\n"
             f'. "{engine / "installer-engine.sh"}"\n'
+            f'PLUGIN_DIR="{PLUGIN}"\n'
+            f'. "{PLUGIN / "scripts" / "source-runtime.sh"}"\n'
         )
     return (
         "$ErrorActionPreference = 'Stop'\n"
@@ -261,6 +269,9 @@ def _prelude(ext: str, engine: Path = ENGINE) -> str:
         "function Write-Warn { param($Msg) Write-ServiceWarn $Msg }\n"
         "function Write-Ok { param($Msg) }\nfunction Start-Sleep { param($Seconds) }\n"
         f". '{engine / 'installer-engine.ps1'}'\n"
+        f". '{PLUGIN / 'scripts' / 'versioned_runtime_native.ps1'}'\n"
+        f"$PluginDir = '{PLUGIN}'\n"
+        f". '{PLUGIN / 'scripts' / 'source-runtime.ps1'}'\n"
     )
 
 
@@ -764,6 +775,8 @@ def codespaces_stamped_snapshot(tmp_path_factory, request):
         "versioned_runtime.py",
         "versioned_runtime_leases.py",
         "versioned_runtime_construction.py",
+        "versioned_runtime_source.py",
+        "versioned_runtime_native.ps1",
     ):
         assert (snapshot / "scripts" / name).read_bytes() == (PLUGIN / "scripts" / name).read_bytes()
     for name in ("installer_dependency_policy.py", "installer_dependency_config.py"):
@@ -937,6 +950,7 @@ def test_codespaces_manifest_shared_writer_preserves_slot_and_source(tmp_path, e
     if ext == "sh" and os.name == "nt":
         pytest.skip("POSIX harness")
     env = _env(tmp_path)
+    version = tomllib.loads((PLUGIN / "pyproject.toml").read_text())["project"]["version"]
     root = tmp_path / "runtime"
     root.mkdir()
     if marketplace:
@@ -950,6 +964,8 @@ def test_codespaces_manifest_shared_writer_preserves_slot_and_source(tmp_path, e
             + f"""
 INSTALL_DIR='{root}'
 PLUGIN_DIR='{PLUGIN}'
+SRC_VERSION='{version}'
+_initialize_source_runtime
 VENV_DIR='{root}/versions/test'
 _git_info() {{ echo 'abc dev true'; }}
 _write_codespaces_deploy_manifest
@@ -962,6 +978,8 @@ _write_codespaces_deploy_manifest
             + f"""
 $InstallDir='{root}'
 $PluginDir='{PLUGIN}'
+$SrcVersion='{version}'
+Initialize-SourceRuntime
 $RepoRoot='original-root'
 $VenvDir='{root}/versions/build'
 $LinkDir='{root}/versions/selected'
@@ -1101,7 +1119,10 @@ def test_native_dev_generation_dependency_failure_preserves_working_runtime(tmp_
     root = tmp_path / "runtime"
     env = _env(tmp_path)
     base, helper = Path(sys._base_executable), PLUGIN / "scripts/versioned_runtime.py"
-    for name in ("versioned_runtime_leases.py", "versioned_runtime_construction.py", "versioned_runtime.py"):
+    for name in (
+        "versioned_runtime_leases.py", "versioned_runtime_construction.py",
+        "versioned_runtime_source.py", "versioned_runtime.py", "versioned_runtime_native.ps1",
+    ):
         shutil.copyfile(helper.with_name(name), tmp_path / name)
     if ext == "ps1":
         # The extracted Windows entry point must consume the real host venv layout.
@@ -1318,6 +1339,10 @@ def test_installer_engine_adoption_environment_excludes_host_tools(tmp_path):
         ("Register-ScheduledTask", "register scheduled task"),
         ("Start-ScheduledTask", "start scheduled task"),
         ("Start-Process -FilePath 'host.exe' -ArgumentList 'owner'", "start host process"),
+        ("Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList '-File', $PSCommandPath",
+         "start host process"),
+        ("""Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList ('"-NoProfile" "-ExecutionPolicy" "Bypass" "-File" "' + $PSCommandPath + '"')""",
+         "start host process"),
     ],
 )
 def test_installer_engine_adoption_guards_reject_host_effects(tmp_path, command, effect):

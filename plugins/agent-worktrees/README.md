@@ -11,6 +11,13 @@ sibling plugin to use local worktree isolation. Those sibling plugins compose
 gracefully when installed (extra picker pivots, cross-machine delegation,
 CodeSpace/container resolvers), but their absence only disables those features.
 
+For optional encrypted PR attribution with an already configured agent-vault
+KeePass database, use `identity-vault setup/status/verify` or the
+[setting-up-pr-identity skill](skills/setting-up-pr-identity/SKILL.md).
+The [local setup flow](docs/identity-vault.md) reuses one shared owner key and
+persists only installation-scoped source selection; routine reads remain
+cache-only and require no vault unlock.
+
 Resolved machine topology treats native Windows and WSL as independent logical
 machines, conventionally `host` and `host-wsl`. The shared machine owner
 projects legacy combined entries without editing topology or historical
@@ -64,12 +71,15 @@ ownership, not invented readiness. See the
 [shared binding contract](../../libs/payload-invocation/README.md#source-qualified-command-binding)
 for selection/refusal semantics and consumer compatibility.
 
-Project launchers are attributable global entry points. Each launcher invokes
-the absolute payload-local agent-worktrees command that created it and carries
-an ownership receipt under `~/.agent-worktrees/binstub-receipts/`. Routine
+Project launchers are attributable global entry points with ownership receipts
+under `~/.agent-worktrees/binstub-receipts/`. Legacy launchers delegate to the
+installed user-side `agent-worktrees` command in their resolved local-bin
+directory, not a checkout or plugin payload. Cell-scoped launchers retain their
+selected payload-local command. Routine
 install, update, repair, and reconciliation preserve foreign owners and edited
 bytes. Known historical generated launchers migrate automatically when receipt,
-installation lineage and exact generated-content checks establish ownership.
+installation lineage and exact generated-content checks establish ownership,
+including checkout-to-marketplace adoption of the same legacy runtime.
 Attributable obsolete or knowledge-only launchers retire through the same
 recoverable boundary; unknown unreceipted files and ambiguous relocations still
 require deliberate attribution. Windows command names are compared
@@ -134,6 +144,11 @@ uses a source-root discovery fallback. Invalid or duplicate registry mappings,
 missing registrations and unavailable checkouts are explicit errors. Acquisition
 and adoption remain separate owner operations; this read never clones a repo.
 
+Worktree Manager's [Repositories Configuration section](docs/repositories-configuration.md)
+uses the native read/preview/apply CLI to inspect registration, routes, state
+binding and tracked pairs. Its only editable setting is the machine-local
+future-launch Copilot login preference; it does not log in or launch agents.
+
 ## Independent Execution Spaces
 
 Native Windows and WSL can register independent execution-space keys without
@@ -141,6 +156,11 @@ sharing project registrations, settings or ownership ledgers. Physical-host
 grouping never makes distinct registered spaces local to one another. See
 [Execution-space identity](docs/config-reference.md#execution-space-identity)
 for explicit selection, compatibility and lifecycle fences.
+For deliberate historical label normalization, see
+[native machine-record repair](docs/machine-record-repair.md). The canonical
+report-first doctor scope preserves same-machine alias relationships and requires
+independent registration/namespace proof for removed checkouts. Ordinary doctor
+fixes never rebind ownership.
 
 ## Captured child ownership
 
@@ -152,6 +172,19 @@ Explicit descendant escape is prevented by this bounded Job; durable-service
 launchers retain the shared helper's permissive default outside this seam.
 POSIX retains its process-group timeout cleanup. This is not a durable-daemon
 launch or an interactive terminal.
+
+## Native resume admission
+
+Bridge's exact-head ACP resume uses `resolve --no-resume
+--native-resume-session <id>` for the selected existing worktree. The returned
+command retains the worktree owner's process-exclusion guard through backend
+execution and rechecks native identity, process liveness and pending intent at
+the actual invocation boundary. A `finalizing` worktree refuses even before its
+cleanup lock is acquired. A live or unknown incumbent refuses; a dry-run
+plan is not launch authority. Mux embodiment takes that same per-worktree guard
+before creating a new execution leg. Older owners reject the new flag rather
+than silently returning an unfenced launch. The caller-facing mode contract is
+owned by the [Bridge resume reference](../agent-bridge/skills/agent-bridge/references/cli-commands.md#session-management).
 
 ## Static instruction preparation
 
@@ -244,7 +277,10 @@ session's.
  anomalous-potato  [ win ]  test-chamber:8e45
 ```
 
-- **Machine** -- the host designation (black)
+- **Machine** -- the registered execution-space name (black). Historical
+  hostnames are resolved using the worktree's recorded platform, so native
+  and guest labels remain distinct without renaming worktrees or changing
+  their ownership.
 - **Environment** -- platform as a color-coded badge keyed on OS type
   (win = blue, wsl = purple, linux = orange), so a Windows pane and a WSL
   pane are distinguishable at a glance
@@ -329,17 +365,19 @@ standalone-behavior changes.
 
 | Skill | Description |
 |-------|-------------|
-| `worktree` | Worktree lifecycle -- creation, finalization, cleanup, safety rules |
-| `git-collaboration` | Pull-forward and shared feature-branch git primitives |
-| `service-lifecycle` | Service installer patterns -- deploy, update, status |
-| `copilot-extensions-setup` | Bootstrap agent-worktrees and optional sibling plugins |
-| `agent-worktrees-wsl-provision` | Provision the current project in WSL |
-| `agent-worktrees-repos` | Repos registry -- known repos and source roots |
-| `agent-worktrees-related` | Directional related-repo index and locus/delegation plan |
-| `resolving-state-home` | Native stateless-harness state routing and paired knowledge-worktree resolution |
-| `repairing-worktrees` | Diagnose/repair worktree+session health via `doctor` |
-| `create-setup-script` | Generate repo-specific session setup scripts |
-| `working-cross-repo` | Good-citizen workflow for work in another registered repo |
+| [worktree](skills/worktree/SKILL.md) | Worktree lifecycle -- creation, finalization, cleanup, safety rules |
+| [git-collaboration](skills/git-collaboration/SKILL.md) | Pull-forward and shared feature-branch git primitives |
+| [service-lifecycle](skills/service-lifecycle/SKILL.md) | Service installer patterns -- deploy, update, status |
+| [copilot-extensions-setup](skills/copilot-extensions-setup/SKILL.md) | Bootstrap agent-worktrees and optional sibling plugins |
+| [agent-worktrees-wsl-provision](skills/agent-worktrees-wsl-provision/SKILL.md) | Provision the current project in WSL |
+| [agent-worktrees-repos](skills/agent-worktrees-repos/SKILL.md) | Repos registry -- known repos and source roots |
+| [agent-worktrees-related](skills/agent-worktrees-related/SKILL.md) | Directional related-repo index and locus/delegation plan |
+| [resolving-state-home](skills/resolving-state-home/SKILL.md) | Native stateless-harness state routing and paired knowledge-worktree resolution |
+| [repairing-worktrees](skills/repairing-worktrees/SKILL.md) | Diagnose/repair worktree+session health via `doctor` |
+| [create-setup-script](skills/create-setup-script/SKILL.md) | Generate repo-specific session setup scripts |
+| [working-cross-repo](skills/working-cross-repo/SKILL.md) | Good-citizen workflow for work in another registered repo |
+| [tracing-claimant-graphs](skills/tracing-claimant-graphs/SKILL.md) | Trace resource claims back to their owning worktree |
+| [setting-up-pr-identity](skills/setting-up-pr-identity/SKILL.md) | Set up and verify a shared vault-backed PR identity key |
 
 ## Hooks
 

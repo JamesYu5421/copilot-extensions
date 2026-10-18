@@ -9,6 +9,7 @@ from typing import Callable
 import pytest
 
 from copilot_review_setup_fixtures import BAD_SETUPS, write_setup
+from copilot_review_control_fixtures import CASES, check_control_case, prepare_review_allowlist
 
 MODULE_PATH = Path(__file__).with_name("check-trusted-ci.py")
 SPEC = importlib.util.spec_from_file_location("check_trusted_ci", MODULE_PATH)
@@ -466,3 +467,15 @@ def test_old_repository_without_review_setup_remains_valid(tmp_path: Path) -> No
     trusted = _workflow(tmp_path, lambda text: text)
     assert not (tmp_path / "copilot-code-review.yml").exists()
     assert MODULE.validate_workflow(trusted) == []
+
+
+@pytest.mark.parametrize("prepared", [False, True], ids=["old-policy", "prepared-overlay"])
+@pytest.mark.parametrize("case", CASES)
+def test_prepared_review_preservation_admission(case: str, prepared: bool) -> None:
+    check_control_case(MODULE.ROOT, case, prepared=prepared)
+
+
+def test_review_control_overlay_is_idempotent_after_activation() -> None:
+    text = (MODULE.ROOT / ".github/workflows/base-branch-reminder.yml").read_text(encoding="utf-8")
+    prepared = prepare_review_allowlist(text)
+    assert prepare_review_allowlist(prepared) == prepared

@@ -100,6 +100,7 @@ def test_registered_only_cli_refuses_malformed_remote(registry_path, tmp_path, c
     assert registry_path.read_bytes() == before
 
 
+@pytest.mark.guard
 def test_registered_only_native_cli_first_touch(tmp_path):
     home = tmp_path / "home"
     root = tmp_path / "tools"
@@ -128,6 +129,91 @@ def test_registered_only_native_cli_first_touch(tmp_path):
     assert payload["class"] == "worktree"
     assert payload["path"] == str(root)
     assert registry.read_bytes() == before
+    inventory = subprocess.run(
+        [sys.executable, "-m", "agent_worktrees", "repos", "list", "--strict", "--json"],
+        cwd=tmp_path, env={**os.environ, "AGENT_HOME": str(home)},
+        capture_output=True, text=True, check=False, timeout=20, **no_window_kwargs(),
+    )
+    assert inventory.returncode == 0, inventory.stderr
+    listed = json.loads(inventory.stdout)
+    assert listed["inventory_authority"] == "complete"
+    assert [entry["name"] for entry in listed["repos"]] == ["tools"]
+    assert registry.read_bytes() == before
+
+
+@pytest.mark.guard
+@pytest.mark.parametrize("body", [
+    "repos: [", "repos: [invalid]", "repos:\n  invalid: null\n",
+    "repos:\n  duplicate: {}\n  duplicate: {}\n",
+])
+def test_strict_inventory_refuses_corrupt_or_dropped_entries(registry_path, capfd, body):
+    registry_path.write_text(body, encoding="utf-8")
+    before = registry_path.read_bytes()
+    assert repos_cli.cmd_repos_dispatch(["list", "--strict", "--json"]) == 2
+    failure = json.loads(capfd.readouterr().out)
+    assert failure["error"] and "inventory_authority" not in failure
+    assert registry_path.read_bytes() == before
+    with pytest.raises(repos.RepositoryResolutionError):
+        repos.list_repos(strict=True)
+
+
+@pytest.mark.guard
+def test_strict_inventory_missing_is_complete_but_legacy_json_is_not_an_attestation(registry_path, capfd):
+    assert repos_cli.cmd_repos_dispatch(["list", "--strict", "--json"]) == 0
+    assert json.loads(capfd.readouterr().out) == {"version": 1, "repos": [], "inventory_authority": "complete"}
+    assert not registry_path.exists()
+    assert repos_cli.cmd_repos_dispatch(["list", "--json"]) == 0
+    assert json.loads(capfd.readouterr().out) == {"version": 1, "repos": []}
+
+
+@pytest.mark.guard
+def test_strict_inventory_refuses_nonregular_registry(registry_path):
+    registry_path.mkdir()
+    with pytest.raises(repos.RepositoryResolutionError, match="regular file"):
+        repos.list_repos(strict=True)
+
+
+@pytest.mark.guard
+def test_strict_inventory_dangling_link_is_unavailable_not_absent(registry_path, tmp_path, capfd):
+    missing = tmp_path / "missing-registry.yaml"
+    try:
+        registry_path.symlink_to(missing)
+    except OSError as exc:
+        pytest.skip(f"native symlink creation unavailable: {exc}")
+    with pytest.raises(repos.RepositoryResolutionError, match="could not be read"):
+        repos.list_repos(strict=True)
+    assert repos_cli.cmd_repos_dispatch(["list", "--strict", "--json"]) == 2
+    failure = json.loads(capfd.readouterr().out)
+    assert failure["error"] and "inventory_authority" not in failure
+    assert registry_path.is_symlink() and not missing.exists()
+
+
+@pytest.mark.guard
+@pytest.mark.parametrize("ancestor", ["absent", "dangling", "file", "loop"])
+def test_native_strict_inventory_distinguishes_missing_and_unavailable_ancestors(tmp_path, ancestor):
+    home = tmp_path / "home"
+    home.mkdir()
+    storage = home / ".agent-worktrees"
+    missing = tmp_path / "missing-storage"
+    if ancestor == "file":
+        storage.write_text("not a directory", encoding="utf-8")
+    elif ancestor in {"dangling", "loop"}:
+        storage.symlink_to(storage if ancestor == "loop" else missing, target_is_directory=True)
+    result = subprocess.run(
+        [sys.executable, "-m", "agent_worktrees", "repos", "list", "--strict", "--json"],
+        cwd=tmp_path, env={**os.environ, "AGENT_HOME": str(home)},
+        capture_output=True, text=True, check=False, timeout=20, **no_window_kwargs(),
+    )
+    payload = json.loads(result.stdout)
+    if ancestor == "absent":
+        assert result.returncode == 0, result.stderr
+        assert payload == {"version": 1, "repos": [], "inventory_authority": "complete"}
+        assert not storage.exists()
+    else:
+        assert result.returncode == 2, result.stderr
+        assert payload["error"] and "inventory_authority" not in payload
+        assert storage.is_symlink() if ancestor != "file" else storage.read_text() == "not a directory"
+    assert not missing.exists()
 
 
 @pytest.mark.guard

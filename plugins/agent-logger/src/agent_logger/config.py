@@ -80,6 +80,7 @@ DEFAULTS: dict[str, Any] = {
         # session-sync) coordinate on the same lock; a tenant with a distinct
         # source sets its own name to run in parallel.
         "lock_name": "session-sync.lock",
+        "usage_capture": True,
         # Target-independent post-push notify. After any successful push the
         # engine fires a best-effort HTTP POST to `url` (JSON body
         # {"machine": <machine>}; `{machine}` in the url is also substituted),
@@ -650,6 +651,11 @@ class Config(ProcessLogArchiveConfig):
         self.home = home
         self.repo_config_path = repo_config_path
         self.repo_root = repo_root
+        if self.process_log_reclamation.enabled:
+            raise ValueError(
+                "process-log reclamation is not available: post-publication scheduling "
+                "and machine-local policy provenance are not wired"
+            )
 
     # -- resolved convenience accessors ---------------------------------
 

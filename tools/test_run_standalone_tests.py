@@ -44,6 +44,7 @@ def test_retained_preparation_builds_actual_standalone_resource_hooks(
             "versioned_runtime.py": "_versioned_runtime.py",
             "versioned_runtime_leases.py": "versioned_runtime_leases.py",
             "versioned_runtime_construction.py": "versioned_runtime_construction.py",
+            "versioned_runtime_source.py": "versioned_runtime_source.py",
         }.items()
     }
     output = tmp_path / "artifacts"
@@ -60,7 +61,8 @@ def test_retained_preparation_builds_actual_standalone_resource_hooks(
         retained.append(Path(kwargs["cwd"]))
         assert retained[0] != checkout
         for name in ("standalone_build.py", "versioned_runtime.py",
-                     "versioned_runtime_leases.py", "versioned_runtime_construction.py"):
+                     "versioned_runtime_leases.py", "versioned_runtime_construction.py",
+                     "versioned_runtime_source.py"):
             (resources / name).write_text("raise RuntimeError('mutable original reopened')\n")
         candidate = Path(next(argument for argument in command if argument.endswith(str(Path(component)))))
         result = actual_run(
@@ -731,7 +733,9 @@ with owned_python(['-c', 'import time; time.sleep(120)'],
 
 
 def test_ci_path_gates_smoke_and_promotion_keeps_exhaustive():
+    import shlex
     import yaml
+    from packaging.requirements import Requirement
 
     workflows = SCRIPT.parent.parent / ".github" / "workflows"
     ci = yaml.safe_load((workflows / "ci.yml").read_text(encoding="utf-8"))["jobs"]
@@ -750,7 +754,15 @@ def test_ci_path_gates_smoke_and_promotion_keeps_exhaustive():
             step["run"] for step in ci[name]["steps"]
             if step.get("name") == "Test runner admission and isolation"
         )
-        assert 'python tools/seasoned_uv.py --uv uv -- --system pytest pyyaml "setuptools>=83.0.0" wheel' in command
+        install = shlex.split(command.split("&&", 1)[0])
+        assert "tools/seasoned_uv.py" in install and "--system" in install
+        requirements = {
+            requirement.name: requirement
+            for requirement in map(Requirement, install[install.index("--system") + 1:])
+        }
+        assert {"pytest", "pytest-timeout", "pyyaml", "setuptools", "wheel"} <= requirements.keys()
+        assert "83.0.0" in requirements["setuptools"].specifier
+        assert "82.9.0" not in requirements["setuptools"].specifier
     for name in ("agent-index-service-linux", "agent-index-service-windows"):
         assert ci[name]["needs"] == "discover"
         assert "needs.discover.outputs.standalone_service == 'true'" in ci[name]["if"]

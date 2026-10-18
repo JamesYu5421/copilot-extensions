@@ -22,9 +22,8 @@ from typing import Any
 from agent_procutil import no_window_flags
 
 from .acp_client import AcpClient
-from .db import Database
 from .events import EventLog
-from .models import ServiceConfig, SessionStatus
+from .models import SessionStatus
 from .session_host_liveness import _HostLivenessMixin
 from .session_recovery_dormancy import (
     _BACKGROUND_RECOVERY_IDLE_DORMANCY_AFTER,  # noqa: F401 -- re-exported for tests
@@ -300,14 +299,9 @@ class RemoteHostRecoveryPendingError(RuntimeError):
 
 
 def _codespace_claim_key(target: "SpawnTarget") -> tuple[str, str] | None:
-    """Resolve ``(codespace_name, owner_worktree)`` for a CodeSpace target.
+    """Use recorded claim identity, falling back to caller_worktree for legacy targets.
 
-    The owner is the *caller's* worktree (the dispatcher), carried on
-    ``target.caller_worktree`` -- the same key agent-codespaces uses. Returns
-    ``None`` when the target is not a resolvable CodeSpace or has no owner to key
-    a claim on (degrade-safe: no owner -> no claim). Deterministic from the
-    persisted target, so it survives a daemon restart (unlike a per-session
-    in-memory attribute).
+    Known skipped admission has no lease. Caller provenance is never rewritten.
     """
     name: str | None = None
     cs = getattr(target, "codespace", None)
@@ -321,6 +315,14 @@ def _codespace_claim_key(target: "SpawnTarget") -> tuple[str, str] | None:
             name = parsed.get("name")
     if not name:
         return None
+    venue = getattr(target, "venue", None)
+    overrides = venue.get(_REQUEST_OVERRIDES_KEY) if isinstance(venue, dict) else None
+    if isinstance(overrides, dict) and "codespace_claim" in overrides:
+        identity = overrides["codespace_claim"]
+        if not isinstance(identity, dict):
+            return None
+        key = identity.get("name"), identity.get("owner")
+        return key if all(isinstance(value, str) and value for value in key) else None
     owner = getattr(target, "caller_worktree", None)
     if not owner:
         return None
@@ -379,17 +381,19 @@ def _claim_codespace(
     two separately-versioned plugin venvs stay decoupled; mirrors
     ``gh_account``'s shell-out-to-a-sibling-binstub pattern.
 
-    Returns ``("ok", "")`` on success or a degrade-safe skip,
+    Returns ``("ok", "")`` after an allowed claim attempt,
+    ``("skipped", "")`` when no claim was attempted,
     ``("conflict", detail)`` for a live owner conflict, or
     ``("coordination-rejected", detail)`` for a compatible binding rejection.
+    Uncertain attempted outcomes conservatively remain cleanup-owned.
     """
     if os.environ.get("AGENT_CODESPACES_DISABLE_CLAIM") and not holder_ref:
-        return "ok", ""
+        return "skipped", ""
     if not codespace_name or (not owner and not holder_ref):
-        return "ok", ""
+        return "skipped", ""
     binstub = shutil.which("agent-codespaces")  # marketplace-isolation: allow provider-management
     if not binstub:
-        return "ok", ""
+        return "skipped", ""
     command = [binstub, "claim", codespace_name]
     if owner:
         command.extend(["--owner", owner])
@@ -757,6 +761,8 @@ class Session:
         agent_name: str | None = None,
         caller_id: str | None = None,
         caller_session_id: str | None = None,
+        *,
+        preserve_target: bool = False,
     ) -> None:
         self.session_id = session_id
         self.name = name
@@ -766,8 +772,10 @@ class Session:
         self.target = target
         from .container_preference_launch import migrate_selected_instance
 
-        migrate_selected_instance(target)
+        if not preserve_target:
+            migrate_selected_instance(target)
         self.client: AcpClient | None = None
+        self._remote_affinity_cookies: Any = None
         self.status = SessionStatus.CREATED
         # Status read from durable storage during daemon startup before
         # rehydrate converts an adoptable session to STOPPED. Used only by the
@@ -917,6 +925,7 @@ from .session_parity import _SessionParityMixin
 from .session_prompts import _SessionPromptMixin
 from .session_resume import _SessionResumeMixin
 from .session_start import _SessionStartMixin
+from .session_runtime import _SessionRuntimePolicyMixin, session_manager_from_config
 
 __all__ = [
     "AcpClient",
@@ -948,6 +957,7 @@ __all__ = [
 
 class SessionManager(
     _SessionCoreMixin,
+    _SessionRuntimePolicyMixin,
     _RecoveryDormancyMixin,
     _HostLivenessMixin,
     _SessionHostConnectionMixin,
@@ -961,28 +971,3 @@ class SessionManager(
     _SessionHandoffMixin,
 ):
     """Manages all agent-bridge sessions with SQLite persistence."""
-
-def session_manager_from_config(db: Database, cfg: ServiceConfig) -> SessionManager:
-    """Build a :class:`SessionManager` wired from service config.
-
-    The **single** construction site for a config-driven manager, so every
-    entrypoint -- the HTTP daemon (``app.py``) and ACP-agent mode
-    (``__main__._cmd_agent``) -- wires the same session-host settings. Session
-    Hosts are always on (dotfiles#1478); this factory forwards the operator's
-    host tunables (reap/idle/stall budgets). Route every config-driven
-    construction through here.
-    """
-    return SessionManager(
-        db,
-        context_thresholds=cfg.context_thresholds,
-        auto_handoff=cfg.auto_handoff,
-        timeouts=cfg.timeouts,
-        retention=cfg.retention,
-        session_host_stale_reap_seconds=cfg.session_host_stale_reap_seconds,
-        graceful_cancel_settle_seconds=cfg.graceful_cancel_settle_seconds,
-        cancel_turns_on_redeploy=cfg.cancel_turns_on_redeploy,
-        idle_reap_ttl_seconds=cfg.idle_reap_ttl_seconds,
-        live_stall_interrupt_after_s=cfg.live_stall_interrupt_after_s,
-        session_host_unexpected_reap_seconds=cfg.session_host_unexpected_reap_seconds,
-        session_host_active_reap_seconds=cfg.session_host_active_reap_seconds,
-    )

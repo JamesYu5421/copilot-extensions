@@ -4,10 +4,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import runpy
 import shlex
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -50,8 +52,95 @@ def fake_uv(tmp_path: Path, body: str) -> Path:
 def construction_bundle(scripts: Path) -> None:
     scripts.mkdir(parents=True, exist_ok=True)
     for name in ("versioned_runtime.py", "versioned_runtime_leases.py",
-                 "versioned_runtime_construction.py"):
+                 "versioned_runtime_construction.py", "versioned_runtime_source.py"):
         shutil.copy2(REPO / "libs/versioned-runtime" / name, scripts / name)
+
+
+def _materializer() -> dict:
+    previous = sys.path[:]
+    try:
+        return runpy.run_path(str(REPO / "tools/materialize_main.py"))
+    finally:
+        sys.path[:] = previous
+
+
+def stage_index_installer(payload: Path, *, materialized: bool) -> Path:
+    """Build either wrapper layout from canonical assets, regardless of the test checkout."""
+    release = _materializer()
+    refs = release["mie"].ier
+    canonical_root = payload.parents[1]
+    canonical_engine = canonical_root / "libs" / "installer-engine"
+    shutil.copytree(
+        ENGINE, canonical_engine,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
+    )
+    scripts = payload / "scripts"
+    scripts.mkdir(parents=True)
+    for extension in ("sh", "ps1"):
+        source = PLUGIN / "scripts" / f"install.{extension}"
+        ref = refs.find_engine_ref(source, extension)
+        assert ref is not None
+        assert refs.is_canonical_ref(ref, PLUGIN, repo_root=REPO) or refs.is_local_ref(ref, PLUGIN)
+        lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
+        matches = 0
+        for index, line in enumerate(lines):
+            if line.strip() in (refs.canonical_line(extension), refs.local_line(extension)):
+                lines[index] = refs.canonical_line(extension) + "\n"
+                matches += 1
+        assert matches == 1
+        (scripts / source.name).write_text("".join(lines), encoding="utf-8")
+    script = scripts / "install.ps1"
+    if refs.HUMAN_SOURCE_LINE in script.read_text(encoding="utf-8"):
+        shutil.copy2(canonical_engine / refs.HUMAN_HELPER, scripts / refs.HUMAN_HELPER)
+        script.with_suffix(".human-output.json").write_text(
+            refs.human_output_json(script), encoding="utf-8",
+        )
+    if materialized:
+        report = release["materialize_installer_engine_ref_into"](
+            source_consumer_dir=payload, dest_consumer_dir=payload,
+            canonical_root=canonical_root, dest_root=canonical_root,
+        )
+        assert not any(message.startswith("SKIP ") for message in report), report
+    # Fixture text writers, including the materializer, translate newlines on
+    # Windows. Git Bash needs LF after the final rewrite, not just the first one.
+    bash_entry = scripts / "install.sh"
+    bash_entry.write_bytes(bash_entry.read_bytes().replace(b"\r\n", b"\n"))
+    for extension in ("sh", "ps1"):
+        ref = refs.find_engine_ref(scripts / f"install.{extension}", extension)
+        assert ref is not None
+        if materialized:
+            assert refs.is_local_ref(ref, payload)
+            assert (scripts / ref.file_name).read_bytes() == (canonical_engine / ref.file_name).read_bytes()
+        else:
+            assert refs.is_canonical_ref(ref, payload, repo_root=canonical_root)
+            assert not (scripts / ref.file_name).exists()
+    if script.with_suffix(".human-output.json").exists():
+        assert script.with_suffix(".human-output.json").read_text(encoding="utf-8") == (
+            refs.human_output_json(script)
+        )
+    return payload
+
+
+def stage_procutil_layout(repository: Path, *, materialized: bool) -> Path:
+    """Select an explicit procutil layout instead of inheriting the checkout's layout."""
+    from test_installer_publication_provisioning import stage_index_policy_sources
+
+    payload = stage_index_policy_sources(repository, materialized=True)
+    local = payload / "libs" / "agent-procutil"
+    assert (local / "pyproject.toml").is_file()
+    if not materialized:
+        canonical = repository / "libs" / "agent-procutil"
+        shutil.copytree(local, canonical, dirs_exist_ok=True)
+        sources = _materializer()["uer"]
+        project = payload / "pyproject.toml"
+        assert sources.can_rewrite_uv_source_to_editable(project, "agent-procutil")
+        sources.rewrite_uv_source_to_editable(
+            project, "agent-procutil", "../../libs/agent-procutil",
+        )
+        shutil.rmtree(local)
+        assert not local.exists()
+        assert (canonical / "pyproject.toml").is_file()
+    return payload
 
 
 def posix_venv_uv(tmp_path: Path, *, failure: bool = False, transient: bool = False) -> Path:
@@ -148,13 +237,13 @@ def run_ps(tmp_path: Path, script: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_canonical_references_and_both_runtime_builds():
-    sh = (PLUGIN / "scripts/install.sh").read_text(encoding="utf-8")
-    ps = (PLUGIN / "scripts/install.ps1").read_text(encoding="utf-8")
-    assert '. "$SCRIPT_DIR/../../../libs/installer-engine/installer-engine.sh"' in sh
-    assert r". (Join-Path $PSScriptRoot '..\..\..\libs\installer-engine\installer-engine.ps1')" in ps
-    assert not (PLUGIN / "scripts/installer-engine.sh").exists()
-    assert not (PLUGIN / "scripts/installer-engine.ps1").exists()
+@pytest.mark.parametrize("materialized", [False, True], ids=["dev", "materialized"])
+def test_canonical_references_and_both_runtime_builds(tmp_path: Path, materialized: bool) -> None:
+    payload = stage_index_installer(
+        tmp_path / "repo" / "plugins" / "agent-index", materialized=materialized,
+    )
+    sh = (payload / "scripts/install.sh").read_text(encoding="utf-8")
+    ps = (payload / "scripts/install.ps1").read_text(encoding="utf-8")
     for directory in ("$VENV_DIR", "$ENGINE_VENV", "$server_venv_dir"):
         assert f'_new_index_venv "{directory}"' in sh
     assert 'invoke_uv_venv_resilient "${UV_COMMAND:-uv}" "$dir" --allow-existing' in sh
@@ -164,9 +253,70 @@ def test_canonical_references_and_both_runtime_builds():
     assert "Invoke-UvPipInstallResilient" in function("Invoke-IndexUvPipInstall", "ps1")
 
 
+@pytest.mark.parametrize(
+    ("extension", "name", "sources"),
+    [
+        ("ps1", "Install-Engine", '"$PluginDir", "$PluginDir\\server"'),
+        ("sh", "_install_engine", '"$PLUGIN_DIR" "$PLUGIN_DIR/server"'),
+    ],
+)
+def test_engine_transactions_keep_local_base_for_uv_and_fallback(extension, name, sources):
+    transactions = [
+        line for line in function(name, extension).splitlines()
+        if ("$pipArgs =" in line or "local uv_args=" in line or "local pip_args=" in line)
+        and ("/server" in line or "\\server" in line)
+    ]
+    assert len(transactions) == 2
+    assert all(sources in line for line in transactions)
+
+
+def test_engine_upgrade_resolves_unpublished_base_offline(tmp_path):
+    uv = shutil.which("uv")
+    assert uv is not None
+    wheels = []
+    for name, dependency in (("agent_index", ""), ("agent_index_engine", "Requires-Dist: agent-index\n")):
+        wheel = tmp_path / f"{name}-1.0.0-py3-none-any.whl"
+        metadata = f"{name}-1.0.0.dist-info"
+        with zipfile.ZipFile(wheel, "w") as archive:
+            archive.writestr(
+                f"{metadata}/METADATA",
+                f"Metadata-Version: 2.1\nName: {name.replace('_', '-')}\nVersion: 1.0.0\n{dependency}",
+            )
+            archive.writestr(
+                f"{metadata}/WHEEL",
+                "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+            )
+            archive.writestr(f"{metadata}/RECORD", "")
+        wheels.append(wheel)
+    target = tmp_path / "venv"
+    env = environment(tmp_path)
+    created = subprocess.run(
+        [uv, "venv", "--offline", "--python", sys.executable, str(target)],
+        env=env, capture_output=True, text=True, timeout=15,
+    )
+    assert created.returncode == 0, created.stderr
+    python = target / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+    def install(*args):
+        return subprocess.run(
+            [uv, "pip", "install", "--offline", "--no-index", "--python", str(python), *args],
+            env=env, capture_output=True, text=True, timeout=15,
+        )
+
+    base, engine = map(str, wheels)
+    missing_source = install("--upgrade", engine)
+    assert missing_source.returncode != 0
+    assert "agent-index" in missing_source.stderr
+    resolved = install("--upgrade", base, engine)
+    assert resolved.returncode == 0, resolved.stderr
+
+
 @pytest.mark.parametrize("failure_stage", ["zdd", "agent-procutil", "server", "torch"])
 def test_native_engine_failed_upgrade_preserves_selection_and_retries(tmp_path, failure_stage):
-    for name in ("versioned_runtime_leases.py", "versioned_runtime_construction.py", "versioned_runtime.py"):
+    for name in (
+        "versioned_runtime_leases.py", "versioned_runtime_construction.py",
+        "versioned_runtime_source.py", "versioned_runtime.py",
+    ):
         shutil.copyfile(REPO / "libs/versioned-runtime" / name, tmp_path / name)
     base = str(Path(sys._base_executable)).replace("'", "''")
     script = f"""
@@ -196,8 +346,12 @@ function New-IndexVenv {{
     return $true
 }}
 function Invoke-IndexUvPipInstall {{
+    $server = @($args | Where-Object {{ "$_" -eq "$PluginDir\\server" }})
+    if ($server.Count -gt 0 -and "$PluginDir" -notin $args) {{
+        throw 'Engine dependency resolution lost the unpublished local base source'
+    }}
     $stage = if ($args[-1] -eq 'torch') {{ 'torch' }} else {{
-        @($args | Where-Object {{ "$_" -like "$PluginDir*" }})[0] | Split-Path -Leaf
+        @($args | Where-Object {{ "$_" -like "$PluginDir*" }})[-1] | Split-Path -Leaf
     }}
     $global:LASTEXITCODE = if ($stage -eq $script:FailStage) {{ 37 }} else {{ 0 }}
 }}
@@ -297,6 +451,7 @@ exit "$rc"
     else:
         assert str(tmp_path / "plugin") in installs[2]
         assert str(tmp_path / "plugin/server") in installs[3]
+        assert shlex.split(installs[3]).count(str(tmp_path / "plugin")) == 1
         assert "--index-url https://example.invalid/cuda --reinstall-package torch torch" in installs[4]
         assert len(installs) == 5
         assert (tmp_path / "engine/versions/1.0.0/.install-complete.json").is_file()

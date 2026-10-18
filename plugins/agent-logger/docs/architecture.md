@@ -57,9 +57,11 @@ ordinary local-machine sync path (opt-in, filesystem targets only; see the
 doc's "Sync publication" section), with independently recoverable transfer-leg
 health and sustained-partial reporting. Source enumeration, direct reads and
 sync transfers pin canonical ancestors through the same directory boundary
-used by additive ZIP snapshots. Destination containment, source reclamation,
-SSH/ingest target support, repo-scoped admission fencing, and accounting
-ingestion remain outstanding.
+used by additive ZIP snapshots. Process-log payload destinations separately pin
+lexical ancestors before directory creation and retain that boundary through
+incremental inspection, atomic publication and cleanup. Session-state and
+health-metadata containment, source reclamation, SSH/ingest target support,
+repo-scoped admission fencing, and accounting ingestion remain outstanding.
 
 ### Segmenter (`agent_logger.segmenter`)
 
@@ -93,6 +95,10 @@ All machine/path/voice coupling is configuration — there is no
 deployment-specific hostname, shared-folder path, or persona baked in.
 
 ### Session sync (`agent_logger.sync`)
+
+The scheduled producer preserves content-free, source-qualified accounting
+before signatures and cold compaction; see [session-local usage evidence](usage-evidence.md)
+for coverage, replay, limits and failure semantics.
 
 A transport-blind engine that pushes raw Copilot session data to a configurable
 **target**, under a `{machine}/` subpath. It archives only `session-state/` and,

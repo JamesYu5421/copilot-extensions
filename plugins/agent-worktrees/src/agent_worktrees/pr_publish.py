@@ -650,7 +650,7 @@ def persist_publication(config: Config, record: tracking.WorktreeRecord, pr: tra
 
     path = cfg.tracking_dir(config.repo_name) / f"{record.worktree_id}.yaml"
     fields = ("state", "base_sha", "head_sha", "patch_id", "remote", "head_repo",
-              "head_identity", "head_owner", "head_observed_at", "head_observed_api_base", "provider")
+              "head_identity", "head_owner", "head_observed_at", "head_observed_api_base", "provider", "opened_at")
     with metadata_lock(record.worktree_id, project=config.repo_name), tracking._RecordLock(path, require_sidecar=True):
         fresh = tracking.load_record(path)
         current = _publication_pr(fresh, pr)
@@ -684,9 +684,10 @@ def prepare_existing_publication(
     """Persist a fresh association before a legacy feature-branch push starts."""
     if record is None or existing is not None:
         return existing
+    from . import pr_publication_state
     target = tracking.PRRecord(
         branch=branch, provider=prcfg.provider, repo=record.repo or "",
-        state="creating", opened_at=tracking._now_iso(),
+        state="creating", opened_at=pr_publication_state.monotonic_opened_at(record),
     )
     previous = next((p for p in reversed(record.prs)
                      if p.branch == branch and tracking._pr_is_terminal(p) and p.head_sha), None)
