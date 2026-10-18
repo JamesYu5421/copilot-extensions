@@ -167,6 +167,33 @@ measured from actual holder acquisition. Earlier healthy publication/fixture I/O
 is not part of that contention interval; the native lock and whole-item deadline
 remain real and unchanged.
 
+Budget Guidance's installer fixture supports both development and materialized
+payloads through the real materializer. It preserves an embedded dependency
+byte-for-byte and fails visibly
+for an incomplete embedded manifest/package rather than repairing it from the
+development checkout. The cross-platform fixture guards cover both layouts,
+source immutability, and malformed embedded input; installer behavior is unchanged.
+The billing-response rejection matrix uses short explicit parameter IDs while
+retaining its 65,537-byte oversized input, so Windows can set pytest's current-test
+environment value without preventing the actual 65,536-byte boundary check.
+External-reader fixture snippets use isolated, no-site Python because they need
+only the standard library. The real reader, process cleanup and existing
+half-second deadline still execute; unrelated editable-package startup is not
+part of the fixture's parse/exit/byte-bound classification workload.
+Native failed-install and retry cases execute the real PowerShell installer from
+a standalone fixture completed by the real dependency materializer. The payload
+has no file-pointer or installer-engine references to expand. Fixture copies
+omit only their own top-level tests and runtime caches, retain embedded
+dependency test/data inputs, and use at most 16 copy workers with propagated
+errors. The fake UV's stdlib-only driver uses isolated no-site Python, and the
+native child receives explicit executable/module paths and disabled PowerShell
+telemetry. Real installer execution, failure injection, slot/selection assertions
+and existing item/child deadlines remain unchanged.
+The verified-session quota guard checks one absolute acquisition deadline before
+and after RPC phases and passes only remaining budget to each RPC. Deterministic
+clock cases prove completed late values are withheld; separate real async cases
+retain cancellation checks at first status, quota and final status.
+
 The registered-repository Git-probe guard follows the real `repos._git` to
 `git_ops.git` call chain. It checks headless options at that subprocess owner,
 the existing 60-second bound and UTF-8 capture policy, and removal of inherited
