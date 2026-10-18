@@ -82,6 +82,22 @@ only pinned Git helper files in an isolated child, verifies materialized bytes
 and rewritten paths, and retains the obsolete-helper refusal as a negative.
 It does not build, install, publish or qualify an artifact.
 
+Native tmux pane targeting and seeded New/Resume handoff have a focused lane:
+
+```text
+python tools/run-plugin-tests.py agent-worktrees --test-file tests/test_mux_active_pane.py --test-file tests/test_launch_seed_state.py
+```
+
+The native cases use a test-owned foreground tmux server and private socket,
+never the user's default server. They exercise both active-pane lookup helpers
+and the final cold-handoff guard with real staged-prompt state and a recording
+backend, including rejection of a different pane without consuming the prompt.
+The companion argv cases preserve psmux target syntax. This module belongs to
+the existing fast contract-guard lane, so ordinary PR CI exercises its native
+cases on Linux rather than only collecting them. POSIX GitHub Actions refuses
+missing tmux instead of silently skipping that proof. Local native cases skip
+when POSIX tmux is unavailable; this is not a live Copilot or Windows psmux test.
+
 Canonical native machine-record repair has focused existing-linked-Git and
 removed-record lanes:
 
