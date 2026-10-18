@@ -984,6 +984,150 @@ proposal.
 
 ## Journal
 
+### 2026-10-18 - Repair candidate inputs and prove bounded native Bridge completion
+
+The four candidate-failure tracks are integrated into one source repair, not a
+new qualification attempt or a Main-control overwrite. Source-specific workflow
+contracts now replay the exact recorded Dev controller while retaining the
+actual preserved Main CI in generated fixtures. All 139 selected contract cells
+pass, including missing/invalid source-lineage refusals.
+
+The complete Dispatch adoption module passes 61 cases in both canonical and
+genuinely materialized inputs; Codespaces passes 58 with two existing native
+Windows skips in each form. Real materialization performs 31 operations with
+zero skipped operations, and parsed installer references and UV sources are
+local in the generated form. Missing-consumed-input negatives remain intact.
+Native MCP cleanup retains bounded stage/stack diagnostics and its original
+twenty-second child deadline; four focused cleanup cases pass. This does not
+establish the historical hosted cleanup root cause or accept it as a flake.
+
+Bridge profiling finds both fixture overhead and a real HTTP/2 starvation
+defect, tracked in #7186. Before cancellation, a completed control response has
+queued terminal frames while a quiet SSE reader owns the shared read lock.
+The explicitly authorized transport repair isolates each long-lived SSE pool
+from the control pool, preserving logical connection identity, scoped cookies,
+authentication, TLS, complete response-body validation and every deadline.
+Deterministic shared-lock/ownership/cleanup regressions pass; the original eight
+native lifecycle/cancellation cases pass across twenty fresh executions.
+
+The complete native Bridge suite now passes all twelve file groups:
+6,444 passed, 60 platform/opt-in skips, 341.274 seconds including local runner
+preparation. This leaves 138.726 seconds inside the unchanged eight-minute
+candidate-job bound before hosted setup differences. Real PowerShell coverage
+is present; this is not the container profile that omitted native cases.
+Two workers reuse the existing contained-job pattern only for promotion
+candidates, with unchanged item, group, aggregate and resource bounds.
+
+Install contracts, module caps and the newly declared development dependency's
+seven-day seasoning check pass. Current-head hosted review/checks, minimal
+reviewed Main worker-policy and matching validator-pin activation, a new changed-input qualification,
+publication/resume, natural-cycle cadence and client acceptance remain open.
+The failed candidate #7184 stays unmerged and Main stays paused.
+
+The first repair PR check also catches its coupled qualification inventory
+contract: the candidate-only worker environment must be recognized explicitly,
+not mistaken for an unknown partition recipe. Admit only the exact reviewed
+two-worker expression or the historical no-worker step, preserve the full row
+set and bind the changed recipe digest. Reject expanded worker scope/count,
+filters and extra environment fields. Matching trusted helper activation is
+therefore part of the next minimal Main-control PR; old pinned inventory code
+cannot validate the new step by implication.
+The exact ordinary runner lane plus the complete qualification module passes
+594 cases with twelve platform skips after this correction.
+
+Current-head Windows CI and review then expose a clean-checkout fixture defect:
+shared clones do not inherit remote-tracking Main refs, and a local Main branch
+had masked that absence. Seed the fixture from the original checkout's exact
+canonical Main commit; a real-Git negative fixture has no local Main branch in
+either checkout and initially no cloned Main remote ref. Preserve the actual
+Main controller and source-lineage assertions.
+
+The same CI also reproduces the unresolved native purge signature #7020.
+Fixture-only timestamped phase output now distinguishes startup, engine load,
+real identity reads, home refusal and runtime purge at the unchanged twenty-
+second child deadline. Timeout readback is bounded and re-raises the original
+exception; all purge safety assertions remain. This is not a diagnosed cause
+or an accepted-flake claim. The full source-controller, standalone and install-
+contract guard modules pass 475 cases with five Windows-only skips after these
+changes; current-head hosted review/checks still decide admission.
+The next Windows run passes the original 216 artifact-contract cases but
+exposes CRLF translation in the new regression's hand-authored Git alternates
+file. A real-Git negative control reproduces exit 128 with CRLF and success
+with LF against the same object store. Write exact LF bytes and assert the
+absence of CR; all twelve source-contract cases then pass locally. This is a
+fixture serialization repair, not a source-lineage or Windows coverage waiver.
+That head receives current-head Copilot approval and passes the Windows repair,
+but the synthetic merge with #7140 exposes a separate stale Configuration
+contract: the independently selected native Configuration job is still compared
+to Manager's newly path-admitted predicate. Pin the native job's own unchanged
+Main-PR exclusion instead, retaining its five-minute bound, required membership
+and real owner/UI checks. Mutation regressions prove independence from Manager
+selection and continued refusal of widened Main scope; all 29 cases pass.
+No workflow admission policy is changed by this test-only correction.
+
+### 2026-10-18 - Source and artifact repair passes; candidate qualification blocks publication
+
+Qualification `39152940504` admitted exact Dev
+`a9c26ff2332ec050970dab792d8536e9af0144c7` from trusted Main `ff6773de1b`,
+confirmed from completed source-checkout evidence. All fourteen source jobs and
+all nine required baseline artifacts succeeded. Artifact construction and
+attestation succeeded, and generated candidate
+`b40b0aabf9bd1b82b7f2fa607a21f803e7a8532a` opened as #7184.
+
+Canonical full candidate CI `39155521483` failed, so qualification correctly
+blocked publication, product Main merge and tagging. Main remains paused at
+the same control commit and exposed source. The terminal generation's announced
+Main-control/helper-pin hold is released; #7184 remains open and unmerged, not
+implicitly retired or eligible for a retry.
+
+The next repair has four bounded tracks. Source-specific workflow contracts
+incorrectly read the preserved older Main controller; their source and generated
+fixtures must distinguish those authorities without dropping checks. Dispatch
+and Codespaces installer fixtures assume canonical input while candidate tests
+execute already-materialized input; repair the fixtures while preserving every
+cell and missing-consumed-input negative. A native MCP PowerShell cleanup case
+reached its twenty-second inner deadline after dependency denial; a passing
+instrumented local case localizes settlement but does not establish the hosted
+root cause or an accepted flake. Finally, the provider confirms Bridge's ordinary
+candidate job exceeded its unchanged eight-minute budget; per-test profiling,
+not a deadline increase, owns that blocker.
+
+Source-control contract and installer-fixture repairs have separate isolated
+local owners; native settlement diagnosis and Bridge profiling remain explicit.
+No new qualification is dispatched until the demonstrated blockers have real
+reviewed fixes and the unchanged source/generated/native gates can pass.
+Release, resume, natural-cycle cadence and client acceptance remain open.
+
+### 2026-10-18 - Both observed qualification blockers repaired in reviewed source
+
+Source #7181 merged as `a912c1d2346598f4c8badfceef0c45692c3f9ac6` after
+current-head Copilot approval and the complete ordinary CI run `39151234210`
+passed, including all three required checks. The flat-library artifact builder,
+complete alias-grid fixture optimization and fail-closed enrolled baseline
+contracts are now reviewed source. Local full-plus-baseline proof retained all
+12,626 Worktrees cases in 648.926 seconds within unchanged bounds.
+
+The next gate is the minimal workflow-only Main activation: select that immutable
+reviewed helper and carry the enrolled collector/upload failure fields, preserving
+the pause, exposed product, control manifest, source matrix and every resource
+limit. No source merge is treated as qualification, publication, resume or
+client deployment. Phases 7 and 9 and their Validation Plan remain open.
+
+Matching workflow-only Main #7183 then merged normally, without administrator
+override, as `ff6773de1b539f5227b98634be13fcaaa75adac7` after actual current-head
+Copilot approval and successful Main source gate. Actual merged-controller
+readback passed the source baseline and premerge-boundary contracts. Semantic
+comparison admits exactly the helper pin and three enrolled-evidence failure
+fields; pause, exposed product, CI and control-manifest blobs are unchanged.
+
+One changed paused qualification, `39152940504`, was dispatched at 18:10:29 UTC
+against that trusted Main/helper pair, with `push=true` and
+`qualification_only=true`. Its gate passed; admitted-source checkout evidence
+and all downstream source, baseline, artifact, candidate, publication and landing
+gates remain to be read back. This is not an unchanged retry or a release claim.
+The new generation's bounded Main-control/helper-pin hold is announced while
+ordinary Dev work continues.
+
 **Latest outcome:** source repairs #7152 and #7164 and matching Main activation
 #7166 are merged. Fresh qualification `39123233231` passed all fourteen source
 validation jobs, then failed composed-candidate materialization because its
