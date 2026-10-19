@@ -16,7 +16,9 @@ Linux uses the same command with `--out fleet-manager-linux.json`. These are
 deliberate **full** validation runs: environment and project pytest selection
 overrides are removed; incomplete, deselected, failed, empty or inconsistent
 universes cannot produce a baseline. Instrumentation dependencies are provisioned
-through the existing `uv` configuration; no alternate feed is selected.
+through the existing governed `run_uv_install` admission and `uv` configuration,
+including the dependency-age policy; no alternate feed or raw install bypass is
+selected. Admission failures propagate without a retry or fallback.
 The dedicated full lane allows 720 seconds for instrumented execution inside its
 15-minute job budget; ordinary required CI budgets are unchanged.
 
@@ -24,8 +26,11 @@ The dedicated full lane allows 720 seconds for instrumented execution inside its
 
 Before and after collection, installed Python modules must match the canonical
 checkout byte-for-byte and have the exact expected inventory. The wheel's
-generated `_versioned_runtime.py` maps to its canonical library, not a nonexistent
-source mirror. Only verified installed paths receive repository line coordinates.
+generated runtime modules map to the canonical library resources declared by
+`standalone_build.py`, not nonexistent source mirrors. The collector reads that
+literal resource mapping without importing build-time setuptools, and still
+rejects missing, extra, changed or ambiguously named modules. Only verified
+installed paths receive repository line coordinates.
 Source/build/test inputs must be clean at the named `HEAD`.
 
 The `collection` record includes native platform, Python version, source/test-input
@@ -50,9 +55,12 @@ Windows venv redirector. Audit registration is self-tested. Empty-source-hit
 producers remain distinguishable from missing producers.
 
 The parent validates every manifest against its source inventory and context map,
-rechecks installed bytes, rejects live writers, and validates bounded framing,
+rechecks installed bytes, rejects a filename-bound live writer **before** reading
+its authoritative stream snapshot, and validates bounded framing,
 version, IDs and line ranges before unioning child hits with parent attribution
-in schema 3. Missing hooks/evidence, bootstrap errors swallowed by `.pth`,
+in schema 3. Later producer identity/completeness checks remain mandatory; a
+read/append/exit interleaving cannot turn a partial prefix into complete evidence.
+Missing hooks/evidence, bootstrap errors swallowed by `.pth`,
 trace/write errors, duplicate records, unknown contexts or unmatched producers
 invalidate the entire collection. No success-shaped partial baseline is emitted.
 Retained `CGS-ERROR/1` diagnostics bind the immutable manifest/context digest to the
@@ -79,6 +87,10 @@ application clocks/deadlines or change ordinary/plugin/shadow consumers. Hook an
 instrumentation files are removed before releasing the lease, including on failure.
 Parent dynamic-context capability is checked in prepared environments; the coverage.py
 `_exit` patch is not needed for sparse child persistence.
+The positive parity regression computes its independent coverage.py reference in
+a separate uninstrumented contained run before installing the leased hook.
+Instrumented child tests retain their inherited context; stripping it still
+invalidates collection rather than exempting the reference process.
 
 Windows uses digest-named `tmp_path` directories beneath a short checkout-local
 sandbox to preserve native artifact path headroom. Extended/UNC prefixes are not
@@ -267,6 +279,6 @@ and fail visibly on unavailable/untrusted evidence rather than run a full suite
 or treat a null decision as a successful empty run. Existing shadow consumers
 remain unchanged.
 
-Workflow-structure assertions require PyYAML and skip only those assertions in
-the pytest-only manual tooling environment; collection, source-equivalence,
-selection and provenance tests continue to run without it.
+Workflow-structure assertions require PyYAML in the prepared tooling environment.
+The manual integration lane declares it through governed dependency admission;
+missing YAML support fails visibly rather than skipping required assertions.

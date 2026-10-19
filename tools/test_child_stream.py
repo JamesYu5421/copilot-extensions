@@ -262,6 +262,43 @@ def test_running_producer_is_never_a_complete_prefix(evidence):
         stream.read_streams(directory, **options)
 
 
+def test_live_producer_cannot_append_and_exit_between_snapshot_and_verification(evidence, monkeypatch):
+    from pathlib import Path
+
+    directory, path, _, payload, options = evidence
+    state = {"alive": True, "snapshot_taken": False}
+    original_open = Path.open
+
+    class Snapshot:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.handle.close()
+
+        def read(self, size):
+            prefix = self.handle.read(size)
+            state["snapshot_taken"] = True
+            with original_open(path, "ab") as producer:
+                producer.write(payload[6:8] + (1).to_bytes(4, "big"))
+            state["alive"] = False
+            return prefix
+
+    def open_path(candidate, mode="r", *args, **kwargs):
+        handle = original_open(candidate, mode, *args, **kwargs)
+        return Snapshot(handle) if candidate == path and mode == "rb" else handle
+
+    monkeypatch.setattr(child_audit, "live", lambda _pid: state["alive"])
+    monkeypatch.setattr(Path, "open", open_path)
+    with pytest.raises(ValueError, match="still-running"):
+        stream.read_streams(directory, **options)
+    assert not state["snapshot_taken"]
+    assert state["alive"]
+
+
 def test_timing_must_precede_line_records(evidence):
     directory, path, header, payload, options = evidence
     path.write_bytes(header + payload[6:] + payload[:6])
@@ -347,7 +384,7 @@ def test_bootstrap_failure_maps_immutable_context_and_sanitized_lineage(tmp_path
 class TestChildStreamNative:
     """Persisted real-process regressions; never invokes full baseline collection."""
 
-    def _run(self, source=None, *, pair=False, ordinary=False, selection=None):
+    def _run(self, source=None, *, pair=False, ordinary=False, selection=None, reference_code=None):
         import hashlib
         import json
         import subprocess
@@ -371,6 +408,29 @@ class TestChildStreamNative:
             )
             installed = Path(probe.stdout.strip())
             mapping, hashes = s.verified_source_mapping(repo, installed, environment)
+            self._last_source_mapping = mapping
+            if reference_code is not None:
+                reference_sandbox = sandbox / "reference-run"
+                reference_env = s.isolated_environment(os.environ, reference_sandbox)
+                for name in (
+                    "PYTEST_ADDOPTS", "PYTHONPATH", "COVERAGE_PROCESS_START", "COVERAGE_PROCESS_CONFIG",
+                    "_CGS_CHILD_MANIFEST", "_CGS_CHILD_AUDITOR",
+                ):
+                    reference_env.pop(name, None)
+                reference_driver = sandbox / "reference.py"
+                reference_driver.write_text(
+                    "import coverage,json\nfrom pathlib import Path\n"
+                    f"c=coverage.Coverage(config_file=False,data_file={str(sandbox / 'reference.coverage')!r},"
+                    f"source=[{str(installed)!r}]);c.start()\n"
+                    + reference_code + "\nc.stop();d=c.get_data()\n"
+                    f"Path({str(sandbox / 'reference.json')!r}).write_text(json.dumps("
+                    "{f:sorted(d.lines(f)) for f in d.measured_files() if d.lines(f)}))\n",
+                    encoding="utf-8",
+                )
+                assert s.run_contained(
+                    [str(python), "-I", str(reference_driver)], cwd=repo / "fleet-manager",
+                    env=reference_env, sandbox=reference_sandbox, limits=s.Limits(wall_seconds=90),
+                ) == 0
             text, options = s.coverage_files(sandbox, mapping)
             path = installed.parent / "_cgs_standalone.pth"
             with path.open("x", encoding="utf-8") as file:
@@ -447,31 +507,19 @@ class TestChildStreamNative:
     def test_exact_line_parity_threads_crashes_union_and_selection(self):
         import json
         from tools.coverage_guided_selection.selection import select_tests
-        source = r'''
+        code = (
+            "import os,sys,threading;from fleet_manager.planning import canonical;"
+            "canonical({'child':True});"
+            "t=threading.Thread(target=lambda:canonical('thread-only'));t.start();t.join();"
+        )
+        source = f"CODE={code!r}\n" + r'''
 import json,os,signal,subprocess,sys,threading
 from pathlib import Path
 import pytest
-CODE = (
-    "import os,sys,threading;from fleet_manager.planning import canonical;"
-    "canonical({'child':True});"
-    "t=threading.Thread(target=lambda:canonical('thread-only'));t.start();t.join();"
-)
 RUN = "assert 'coverage' not in __import__('sys').modules;" + CODE
 FLAGS={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}
 def test_normal():
     assert subprocess.run([sys.executable,'-I','-c',RUN],**FLAGS).returncode==0
-    environment=dict(os.environ)
-    environment.pop('_CGS_CHILD_MANIFEST')
-    reference=(
-        "import coverage,json; c=coverage.Coverage(config_file=False,data_file="
-        +repr(str(Path(__file__).with_name('reference.coverage')))+",source=["
-        +repr(os.environ['CGS_TEST_INSTALLED'])+"]);c.start();"+CODE+
-        "c.stop();d=c.get_data();"
-        "print(json.dumps({f:sorted(d.lines(f)) for f in d.measured_files() if d.lines(f)}))"
-    )
-    result=subprocess.run([sys.executable,'-I','-c',reference],env=environment,
-                          capture_output=True,text=True,check=True,**FLAGS)
-    Path(__file__).with_name('reference.json').write_text(result.stdout)
 def test_abrupt():
     assert subprocess.run([sys.executable,'-I','-c',RUN+"os._exit(23)"],**FLAGS).returncode==23
 def test_forced():
@@ -486,7 +534,7 @@ def test_forced():
 def test_zero():
     assert subprocess.run([sys.executable,'-I','-c','pass'],**FLAGS).returncode==0
 '''
-        status, data, reference, _ = self._run(source)
+        status, data, reference, _ = self._run(source, reference_code=code)
         assert status == 0
         children = data["children"]
         assert children["audited_producers"] == children["child_streams"] == 4
@@ -499,15 +547,8 @@ def test_zero():
             }
             actual = {file: lines for file, lines in actual.items() if lines}
             expected = {}
-            # Reference keys are installed paths; correlate only known source bytes.
-            package = next(file for file in reference if file.endswith("planning.py"))
-            root = str(__import__("pathlib").Path(package).parent)
             for file, lines in reference.items():
-                relative = __import__("pathlib").Path(file).relative_to(root).as_posix()
-                canonical = (
-                    "libs/versioned-runtime/versioned_runtime.py" if relative == "_versioned_runtime.py"
-                    else "fleet-manager/src/fleet_manager/" + relative
-                )
+                canonical = self._last_source_mapping[str(__import__("pathlib").Path(file).resolve())]
                 expected[canonical] = lines
             assert actual == expected
         key = "fleet-manager/src/fleet_manager/planning.py"

@@ -41,14 +41,23 @@ class TestStandaloneCoverage:
         source = repo / standalone.SOURCE
         source.mkdir(parents=True)
         (source / "__init__.py").write_text("def selected():\n    return 3\n")
-        canonical = repo / "libs/versioned-runtime/versioned_runtime.py"
-        canonical.parent.mkdir(parents=True)
-        canonical.write_text("def lifecycle():\n    return True\n")
+        runtime = repo / "libs/versioned-runtime"
+        runtime.mkdir(parents=True)
+        resources = {
+            "versioned_runtime.py": "_versioned_runtime.py",
+            "versioned_runtime_leases.py": "versioned_runtime_leases.py",
+            "versioned_runtime_construction.py": "versioned_runtime_construction.py",
+            "versioned_runtime_source.py": "versioned_runtime_source.py",
+        }
+        (runtime / "standalone_build.py").write_text("RUNTIME_RESOURCES = " + repr(resources) + "\n")
         environment = tmp_path / "environment"
         installed = environment / "site-packages/fleet_manager"
         installed.mkdir(parents=True)
         (installed / "__init__.py").write_bytes((source / "__init__.py").read_bytes())
-        (installed / "_versioned_runtime.py").write_bytes(canonical.read_bytes())
+        for name, destination in resources.items():
+            canonical = runtime / name
+            canonical.write_text(f"RESOURCE = {name!r}\n")
+            (installed / destination).write_bytes(canonical.read_bytes())
         tests = repo / "fleet-manager/tests"
         tests.mkdir(parents=True)
         (tests / "test_selected.py").write_text("def test_selected(): pass\n")
@@ -67,6 +76,33 @@ class TestStandaloneCoverage:
         )
         assert set(mapping.values()) == set(hashes)
         assert all(len(value) == 64 for value in hashes.values())
+
+    def test_mapping_follows_the_current_packaged_runtime_declaration(self, tmp_path):
+        repo, environment, installed = self._sources(tmp_path)
+        declaration = repo / "libs/versioned-runtime/standalone_build.py"
+        resources = {path.name: name for name, path in standalone.runtime_resource_mapping(repo).items()}
+        resources["versioned_runtime_next.py"] = "versioned_runtime_next.py"
+        declaration.write_text("RUNTIME_RESOURCES = " + repr(resources) + "\n")
+        canonical = declaration.with_name("versioned_runtime_next.py")
+        canonical.write_text("next_resource = True\n")
+        copied = installed / canonical.name
+        copied.write_bytes(canonical.read_bytes())
+        mapping, _ = standalone.verified_source_mapping(repo, installed, environment)
+        assert mapping[str(copied.resolve())] == "libs/versioned-runtime/versioned_runtime_next.py"
+        copied.write_text("not_the_canonical_resource = True\n")
+        with pytest.raises(ValueError, match="source differs"):
+            standalone.verified_source_mapping(repo, installed, environment)
+
+    @pytest.mark.parametrize("resources", [
+        {"../foreign.py": "owned.py"}, {"owned.py": "../foreign.py"},
+        {"first.py": "same.py", "second.py": "same.py"}, {},
+    ])
+    def test_runtime_declaration_refuses_unowned_or_ambiguous_coordinates(self, tmp_path, resources):
+        repo, environment, installed = self._sources(tmp_path)
+        declaration = repo / "libs/versioned-runtime/standalone_build.py"
+        declaration.write_text("RUNTIME_RESOURCES = " + repr(resources) + "\n")
+        with pytest.raises(ValueError, match="runtime resource declaration"):
+            standalone.verified_source_mapping(repo, installed, environment)
 
     @pytest.mark.parametrize("corruption", ["changed", "extra", "missing", "outside"])
     def test_unearned_installed_coordinates_are_rejected(self, tmp_path, corruption):
@@ -273,6 +309,7 @@ class TestStandaloneCoverage:
         self, tmp_path, monkeypatch, initially_compatible,
     ):
         calls = []
+        installs = []
 
         def run(command, **kwargs):
             calls.append(command)
@@ -280,18 +317,28 @@ class TestStandaloneCoverage:
             return subprocess.CompletedProcess(command, status, stdout="", stderr="unsupported")
 
         monkeypatch.setattr(standalone.subprocess, "run", run)
+        monkeypatch.setattr(
+            standalone, "run_uv_install",
+            lambda uv, args, **kwargs: installs.append((uv, args, kwargs)),
+        )
         python = tmp_path / "python"
         standalone._prepare_instrumentation(python, repo=tmp_path, prepare=False)
         probe = [str(python), "-I", "-c", standalone.COVERAGE_CAPABILITY_PROBE]
         assert calls[0] == probe
         if initially_compatible:
             assert calls == [probe]
+            assert installs == []
         else:
-            assert calls[1] == [
-                "uv", "pip", "install", "--python", str(python),
+            assert calls == [probe, probe]
+            assert len(installs) == 1
+            uv, arguments, options = installs[0]
+            assert uv == "uv" and arguments == [
+                "--python", str(python),
                 "coverage>=7", "pytest-json-report",
             ]
-            assert calls[2] == probe
+            assert options["trusted_source_roots"] == (tmp_path,)
+            assert options["cwd"] == tmp_path and options["check"] is True
+            assert options["timeout"] == 300
 
     def test_incompatible_coverage_after_provisioning_is_a_visible_error(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
@@ -300,8 +347,29 @@ class TestStandaloneCoverage:
                 command, 1 if command[1] == "-I" else 0, stdout="", stderr="unsupported patch",
             ),
         )
+        monkeypatch.setattr(standalone, "run_uv_install", lambda *_args, **_kwargs: None)
         with pytest.raises(standalone.BaselineCollectionError, match="parent dynamic-context"):
             standalone._prepare_instrumentation(tmp_path / "python", repo=tmp_path, prepare=False)
+
+    def test_instrumentation_admission_refusal_is_not_retried_or_bypassed(self, tmp_path, monkeypatch):
+        from seasoned_uv import DependencyPolicyError
+
+        monkeypatch.setattr(
+            standalone.subprocess, "run",
+            lambda command, **kwargs: subprocess.CompletedProcess(
+                command, 1, stdout="", stderr="instrumentation missing",
+            ),
+        )
+        calls = []
+
+        def refuse(*args, **kwargs):
+            calls.append((args, kwargs))
+            raise DependencyPolicyError("dependency seasoning refused")
+
+        monkeypatch.setattr(standalone, "run_uv_install", refuse)
+        with pytest.raises(DependencyPolicyError, match="dependency seasoning refused"):
+            standalone._prepare_instrumentation(tmp_path / "python", repo=tmp_path, prepare=False)
+        assert len(calls) == 1
 
     @pytest.mark.skipif(
         os.environ.get("CGS_RUN_STANDALONE_INTEGRATION") != "1",

@@ -114,6 +114,11 @@ def read_streams(directory, *, nonce, contexts, inventory, audit_control, genera
         maximum = 512 + 6 * (MAX_RECORDS + 1)
         if path.is_symlink() or not path.is_file() or path.stat().st_size > maximum:
             raise ValueError("unsafe or oversized child stream")
+        identity = re.fullmatch(r"([1-9][0-9]{0,9})-[0-9a-f]{32}\.hits", path.name)
+        if not identity or int(identity[1]) >= 2**32:
+            raise ValueError("invalid child stream producer filename")
+        if _auditor().live(int(identity[1])):
+            raise ValueError("still-running native producer before child stream snapshot")
         with path.open("rb") as handle:
             data = handle.read(maximum + 1)
         if len(data) > maximum:

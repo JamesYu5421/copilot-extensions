@@ -7,11 +7,13 @@ baseline authority. Publication uses the existing promotion/Release pointers.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import importlib.util
 import json
 import math
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -30,6 +32,7 @@ from tools.coverage_guided_selection.baseline import (  # noqa: E402
 )
 from tools.coverage_guided_selection import child_stream, child_stream_parent, child_audit  # noqa: E402
 from plugin_test_containment import Limits, isolated_environment, run_contained  # noqa: E402
+from seasoned_uv import run_uv_install  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
     "_standalone_baseline_runner", REPO / "tools" / "run-standalone-tests.py"
@@ -71,6 +74,25 @@ def verify_revision(repo: Path, measured_commit: str) -> None:
         raise ValueError("standalone source/build/test inputs differ from measured_commit")
 
 
+def runtime_resource_mapping(repo: Path) -> dict[str, Path]:
+    root = repo / "libs/versioned-runtime"
+    tree = ast.parse((root / "standalone_build.py").read_text(encoding="utf-8"))
+    declarations = [
+        ast.literal_eval(node.value) for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "RUNTIME_RESOURCES" for target in node.targets)
+    ]
+    if len(declarations) != 1 or not isinstance(declarations[0], dict) or not declarations[0]:
+        raise ValueError("expected one literal runtime resource declaration")
+    resources = declarations[0]
+    if any(
+        not isinstance(value, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\.py", value)
+        for pair in resources.items() for value in pair
+    ) or len(set(resources.values())) != len(resources):
+        raise ValueError("invalid or ambiguous runtime resource declaration")
+    return {destination: root / name for name, destination in resources.items()}
+
+
 def verified_source_mapping(
     repo: Path, installed: Path, environment: Path, *, with_inventory: bool = False,
 ) -> tuple:
@@ -80,7 +102,7 @@ def verified_source_mapping(
         raise ValueError("package is not installed inside the leased environment")
     source = repo / SOURCE
     expected = {p.relative_to(source).as_posix(): p for p in source.rglob("*.py")}
-    expected["_versioned_runtime.py"] = repo / "libs/versioned-runtime/versioned_runtime.py"
+    expected.update(runtime_resource_mapping(repo))
     actual = {p.relative_to(installed).as_posix(): p for p in installed.rglob("*.py")}
     if actual.keys() != expected.keys():
         raise ValueError("installed/source Python module inventories differ")
@@ -191,9 +213,10 @@ def _prepare_instrumentation(python: Path, *, repo: Path, prepare: bool) -> None
     probe = [str(python), "-I", "-c", COVERAGE_CAPABILITY_PROBE]
     check = subprocess.run(probe, capture_output=True, text=True, timeout=30, **flags)
     if check.returncode:
-        subprocess.run(
-            ["uv", "pip", "install", "--python", str(python),
+        run_uv_install(
+            "uv", ["--python", str(python),
              COVERAGE_REQUIREMENT, "pytest-json-report"],
+            trusted_source_roots=(repo,),
             cwd=repo, check=True, capture_output=True, text=True, timeout=300, **flags,
         )
         checked = subprocess.run(probe, capture_output=True, text=True, timeout=30, **flags)
