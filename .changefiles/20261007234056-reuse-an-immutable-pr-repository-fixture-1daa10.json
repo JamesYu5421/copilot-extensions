@@ -1,0 +1,9 @@
+{
+  "comment": "Reuse immutable PR and context-resolution fixture seeds with independently copied Git stores and repaired worktree links; preserve real Git test isolation and fresh per-case publication or rerun operations. Isolate irrelevant committed-config discovery for fixture-owned non-repository handoff anchors while retaining fresh topology and actual lease operations. Prefer the available safe YAML backend for fresh machine-local configuration reads without caching their authority. Stage all canonical native installation-context support in reconcile payload fixtures without overwriting deliberate fixture mutations. Bound native ADO stream-fixture cancellation before connection and during streaming without changing transport deadlines.",
+  "changes": [
+    {
+      "plugin": "agent-worktrees",
+      "type": "dev"
+    }
+  ]
+}

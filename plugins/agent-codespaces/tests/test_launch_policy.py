@@ -6,6 +6,7 @@ import argparse
 import os
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,7 @@ def _align_isolated_profile(monkeypatch, tmp_path):
     """Keep this module's registration fixture inside its effective profile."""
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
 
 def _policy(code: str, *, timeout: float = 20.0) -> None:

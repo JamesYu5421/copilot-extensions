@@ -4,10 +4,10 @@ box and force only that refusal when all of them are verified clean."""
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import shlex
 import shutil
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -133,16 +133,20 @@ def _repo(path, remotes):
 
 
 def _run_audit(root, extra=()):
-    cmd = unsaved_guard.audit_command(workspace_root=root.as_posix(), extra_dirs=extra)
-    argv = shlex.split(cmd)
-    bash = shutil.which(argv[0])
-    assert bash is not None
-    argv[0] = bash
+    from .test_sessions import _resolve_bash
+
+    bash = _resolve_bash()
+    if bash is None:
+        pytest.skip("requires a host-native Bash, not a WSL launcher")
+    cmd = shlex.split(unsaved_guard.audit_command(
+        workspace_root=root.as_posix(),
+        extra_dirs=tuple(Path(path).as_posix() for path in extra),
+    ))
+    cmd[0] = bash
     out = subprocess.run(
-        argv, capture_output=True, text=True,
-        timeout=30, creationflags=no_window_flags(),
+        cmd, capture_output=True, text=True, check=True, timeout=30,
+        creationflags=no_window_flags(),
     )
-    assert out.returncode == 0, (out.stdout, out.stderr)
     return unsaved_guard.parse_audit(out.stdout)
 
 

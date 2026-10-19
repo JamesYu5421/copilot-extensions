@@ -49,8 +49,9 @@ def _bash() -> str | None:
     return str(candidate) if candidate is not None and candidate.is_file() else None
 
 
-def _function(name: str, suffix: str) -> str:
-    text = (SCRIPTS / f"install.{suffix}").read_text(encoding="utf-8")
+def _function(name: str, suffix: str, script: Path | None = None) -> str:
+    script = script if script is not None else SCRIPTS / f"install.{suffix}"
+    text = script.read_text(encoding="utf-8")
     if suffix == "sh":
         start = text.index(f"\n{name}() {{")
         return text[start:text.index("\n}\n", start) + 3]
@@ -190,6 +191,7 @@ function Invoke-VersionedActivate {{
 }}
 function Write-DeployManifest {{ param($PayloadHash) Rec 'MANIFEST' }}
 function Write-Binstubs {{ Rec 'BINSTUB' }}
+{_function('Copy-InstallSnapshotItem', 'ps1', ROOT / 'libs' / 'installer-engine' / 'installer-engine.ps1')}
 {chr(10).join(_function(name, 'ps1') for name in names)}
 Initialize-SourceRuntime
 """

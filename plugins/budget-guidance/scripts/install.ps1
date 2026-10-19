@@ -1134,7 +1134,7 @@ Write-Host '  Try: budget-guidance --version' -ForegroundColor DarkGray
 exit 0
 } finally {
     try {
-        if (Get-Command Stop-RuntimeConstruction -ErrorAction SilentlyContinue) {
+        if (Test-Path Function:\Stop-RuntimeConstruction) {
             Stop-RuntimeConstruction
         }
     } finally {

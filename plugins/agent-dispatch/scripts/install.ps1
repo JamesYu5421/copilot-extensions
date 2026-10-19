@@ -1159,7 +1159,7 @@ function Materialize-DispatchSnapshot {
         if (-not (Test-Path -LiteralPath (Join-Path $destination 'pyproject.toml'))) {
             $source = Resolve-VendoredLib -LibName $entry.Value -LibRoot $PluginDir
             if (-not $source) { throw "Cannot locate required snapshot library: $($entry.Value)" }
-            Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
+            Copy-InstallSnapshotItem -Source $source -Destination $destination
         }
         $old = '{0} = {{ path = "../../libs/{1}", editable = true }}' -f $entry.Key, $entry.Value
         $new = '{0} = {{ path = "libs/{1}" }}' -f $entry.Key, $entry.Value
@@ -1333,7 +1333,7 @@ function New-PluginBuildSnapshot {
             # same exclusion list Invoke-Stamp uses for its own snapshot.
             $exclude = @('.git', '__pycache__', '.venv', 'node_modules', 'build', 'dist', '.pytest_cache', '.mypy_cache', 'tests')
             Get-ChildItem -LiteralPath $PluginDir -Force | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
-                Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $snapTmp $_.Name) -Recurse -Force
+                Copy-InstallSnapshotItem -Source $_.FullName -Destination (Join-Path $snapTmp $_.Name)
             }
             Materialize-DispatchSnapshot -SnapshotDir $snapTmp -PluginDir $PluginDir
             if ($localStamp) {
@@ -4189,7 +4189,7 @@ switch ($Action) {
 exit 0
 
 } finally {
-    if (Get-Command Stop-RuntimeConstruction -ErrorAction SilentlyContinue) {
+    if (Test-Path Function:\Stop-RuntimeConstruction) {
         Stop-RuntimeConstruction
     }
 }

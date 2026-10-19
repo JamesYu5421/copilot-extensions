@@ -265,19 +265,22 @@ public class OfflineUv {
 '''.replace("PYTHON", json.dumps(sys._base_executable)),
             encoding="utf-8",
         )
-        compiler = (
-            Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell"
-            / "v1.0" / "powershell.exe"
+        compilers = (
+            Path(os.environ["SystemRoot"]) / "Microsoft.NET" / framework
+            / "v4.0.30319" / "csc.exe"
+            for framework in ("Framework64", "Framework")
         )
+        compiler = next((path for path in compilers if path.is_file()), None)
+        assert compiler is not None, "Windows .NET Framework C# compiler is unavailable"
         compilation = subprocess.run(
-            [str(compiler), "-NoProfile", "-Command",
-             "Add-Type -TypeDefinition ([IO.File]::ReadAllText($env:FIXTURE_LAUNCHER_SOURCE)) "
-             "-OutputAssembly $env:FIXTURE_LAUNCHER_EXE -OutputType ConsoleApplication"],
-            env={**env, "FIXTURE_LAUNCHER_SOURCE": str(launcher), "FIXTURE_LAUNCHER_EXE": str(provider)},
+            [str(compiler), "/nologo", "/target:exe", f"/out:{provider}", str(launcher)],
+            env=env,
             capture_output=True, text=True, timeout=_HARNESS_TIMEOUT_SECONDS,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
-        assert compilation.returncode == 0 and provider.is_file(), compilation.stderr
+        assert compilation.returncode == 0 and provider.is_file(), (
+            compilation.stdout + compilation.stderr
+        )
         _UV_LAUNCHER_BYTES = provider.read_bytes()
     elif os.name == "nt":
         provider = directory / "uv.exe"
@@ -574,6 +577,17 @@ def provisioned_snapshot(stamped_snapshot):
     state = stamped_snapshot
     home, snapshot, env, pwsh = state.home, state.snapshot, state.env, state.pwsh
     if os.name == "nt":
+        runner = home / "tmp" / "provision.ps1"
+        runner.write_text(
+            "param($Installer, $InstallRoot)\n"
+            "function Get-ScheduledTask {}\n"
+            "function Stop-ScheduledTask { throw 'unexpected service mutation' }\n"
+            "function Register-ScheduledTask { throw 'unexpected service mutation' }\n"
+            "function Set-ScheduledTask { throw 'unexpected service mutation' }\n"
+            "& $Installer provision -NoService -InstallDir $InstallRoot\n"
+            "exit $LASTEXITCODE\n",
+            encoding="utf-8",
+        )
         provision = subprocess.run(
             [
                 pwsh,
@@ -581,10 +595,8 @@ def provisioned_snapshot(stamped_snapshot):
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
+                str(runner),
                 str(snapshot / "scripts" / "install.ps1"),
-                "provision",
-                "-NoService",
-                "-InstallDir",
                 str(home / ".agent-vault"),
             ],
             env=env,

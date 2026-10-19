@@ -2174,7 +2174,7 @@ function Materialize-SnapshotVendoredLibs {
             continue
         }
         Remove-Item -LiteralPath $destination -Recurse -Force -ErrorAction SilentlyContinue
-        Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
+        Copy-InstallSnapshotItem -Source $source -Destination $destination
     }
 
     $snapshotPyproject = Join-Path $SnapshotDir 'pyproject.toml'
@@ -2259,7 +2259,7 @@ function Invoke-Stamp {
         @('.git', '__pycache__', '.venv', 'node_modules', 'build', 'dist', '.pytest_cache', '.mypy_cache', 'tests')
     }
     Get-ChildItem -LiteralPath $PluginDir -Force | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $snapTmp $_.Name) -Recurse -Force
+        Copy-InstallSnapshotItem -Source $_.FullName -Destination (Join-Path $snapTmp $_.Name)
     }
     if ($sourceQualified) {
         # Prepared payloads already contain their complete, hashed assembly.
@@ -3457,7 +3457,7 @@ try {
     }
 } finally {
     try {
-        if (Get-Command Stop-RuntimeConstruction -ErrorAction SilentlyContinue) {
+        if (Test-Path Function:\Stop-RuntimeConstruction) {
             Stop-RuntimeConstruction
         }
     } finally {

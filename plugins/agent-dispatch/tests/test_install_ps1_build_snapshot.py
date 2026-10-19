@@ -42,6 +42,7 @@ import pytest
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 _INSTALL_PS1 = _PLUGIN_ROOT / "scripts" / "install.ps1"
+_ENGINE_PS1 = _PLUGIN_ROOT.parents[1] / "libs" / "installer-engine" / "installer-engine.ps1"
 _PWSH = shutil.which("pwsh")
 
 pytestmark = pytest.mark.skipif(_PWSH is None, reason="pwsh is not available")
@@ -58,10 +59,10 @@ _skip_pwsh_race = pytest.mark.skipif(
 
 
 
-def _extract_function_block(name: str) -> str:
+def _extract_function_block(name: str, source: Path = _INSTALL_PS1) -> str:
     """Extract one `function <name> { ... }` block by brace-counting from
     its own opening `{`."""
-    text = _INSTALL_PS1.read_text(encoding="utf-8")
+    text = source.read_text(encoding="utf-8")
     func_start = text.index(f"function {name}")
     brace_start = text.index("{", func_start)
     depth = 0
@@ -82,8 +83,8 @@ def _harness_script(extra_script: str) -> str:
     Write-* helpers (matching install.ps1's actual Write-Host-based
     implementations, which never pollute a captured function's pipeline
     return value) plus every function New-PluginBuildSnapshot depends on,
-    extracted verbatim from the real install.ps1 so this module proves the
-    actual source behaves correctly, not a reimplementation of it."""
+    extracted verbatim from the real installer and canonical engine so this
+    module proves the actual source behaves correctly, not a reimplementation."""
     return (
         # Matches install.ps1's own top-level `$ErrorActionPreference = 'Stop'`
         # (line ~78) -- without it, a non-existent $PluginDir's Get-ChildItem
@@ -94,6 +95,8 @@ def _harness_script(extra_script: str) -> str:
         "function Write-Warn { param($m) Write-Host \"WARN: $m\" }\n"
         "function Write-Skip { param($m) Write-Host \"SKIP: $m\" }\n"
         "function Materialize-DispatchSnapshot { param($SnapshotDir, $PluginDir) }\n"
+        + _extract_function_block("Copy-InstallSnapshotItem", _ENGINE_PS1)
+        + "\n\n"
         + _extract_function_block("Get-SourceKind")
         + "\n\n"
         + _extract_function_block("Enter-PluginSnapshotLock")

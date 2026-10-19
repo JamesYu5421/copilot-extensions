@@ -1843,7 +1843,7 @@ function Install-Engine {
     return $true
     } finally {
         try {
-            if (Get-Command Stop-RuntimeConstruction -ErrorAction SilentlyContinue) { Stop-RuntimeConstruction }
+            if (Test-Path Function:\Stop-RuntimeConstruction) { Stop-RuntimeConstruction }
         } finally {
             [void]$buildMutex.ReleaseMutex(); $buildMutex.Dispose()
         }
@@ -2494,7 +2494,7 @@ function Materialize-IndexSnapshot {
         if (-not (Test-Path -LiteralPath (Join-Path $destination 'pyproject.toml'))) {
             $source = Resolve-VendoredLib -LibName $entry.Value
             if (-not $source) { throw "Required snapshot library unavailable: $($entry.Value)" }
-            Copy-Item -LiteralPath $source -Destination $destination -Recurse -ErrorAction Stop
+            Copy-InstallSnapshotItem -Source $source -Destination $destination
         }
         $old = '{0} = {{ path = "../../libs/{1}", editable = true }}' -f $entry.Key, $entry.Value
         $text = $text.Replace($old, ('{0} = {{ path = "libs/{1}" }}' -f $entry.Key, $entry.Value))
@@ -2526,7 +2526,7 @@ function New-IndexSnapshot {
         New-Item -ItemType Directory -Path $temporary -Force | Out-Null
         $exclude = @('.git', '__pycache__', '.venv', 'node_modules', 'build', 'dist', '.pytest_cache', '.mypy_cache', 'tests')
         Get-ChildItem -LiteralPath $PluginDir -Force | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
-            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $temporary $_.Name) -Recurse -Force
+            Copy-InstallSnapshotItem -Source $_.FullName -Destination (Join-Path $temporary $_.Name)
         }
         Materialize-IndexSnapshot -SnapshotDir $temporary
         Get-ChildItem -LiteralPath $temporary -Directory -Recurse -Force |
@@ -2716,7 +2716,7 @@ switch ($Action) {
 }
 
 } finally {
-    if (Get-Command Stop-RuntimeConstruction -ErrorAction SilentlyContinue) {
+    if (Test-Path Function:\Stop-RuntimeConstruction) {
         Stop-RuntimeConstruction
     }
 }
