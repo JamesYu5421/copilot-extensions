@@ -23,7 +23,7 @@ import yaml
 from machine_transport import MachineEntry, SSHEnvironment  # noqa: F401 (re-exported)
 from machine_transport import find_machine_entry as _mt_find_machine_entry
 from machine_transport import machine_name  # noqa: F401 (re-export)
-from machine_transport import detect_platform as _detect_execution_platform
+from machine_transport import detect_platform
 from machine_transport import find_machine_metadata as _mt_find_machine_metadata
 from machine_transport import merge_machines_yaml as _mt_merge_machines_yaml
 from machine_transport import normalize_machine_entries as _mt_normalize_machine_entries
@@ -523,10 +523,10 @@ class RepoConfig:
 @dataclass(frozen=True)
 class Config:
     """Top-level project configuration."""
-
     srcroot: str
     machine: str
     platform: str
+    configured_machine: str | None = field(default=None, kw_only=True)
     repo_name: str = ""
     repos: dict[str, RepoConfig] = field(default_factory=dict)
     knowledge_repo: str = ""
@@ -705,17 +705,17 @@ def load_machines_yaml(
 
 
 def find_machine_entry(
-    entries: dict[str, MachineEntry], name: str,
+    entries: dict[str, MachineEntry], name: str, *, execution_platform: str | None = None,
 ) -> MachineEntry | None:
-    """Look up a machine by key, alias, ``hostname`` field, or display_name
-    (case-insensitive).
+    """Resolve a key, alias, hostname or display name case-insensitively.
 
-    Hostnames are case-insensitive, so match without regard to case (Windows
-    reports COMPUTERNAME in mixed case but tooling often lowercases it). Matching
-    the explicit ``hostname`` field lets a machine keyed by a friendly name still
-    be found by its raw COMPUTERNAME. Returns None if no entry matches.
+    Execution context disambiguates physical metadata shared by native and guest
+    registrations. Without it, strict selection is unchanged. Return None when
+    no entry matches; ambiguous or conflicting selections raise.
     """
-    return _mt_find_machine_entry(entries, name, reject_ambiguous=True)
+    return _mt_find_machine_entry(
+        entries, name, reject_ambiguous=True, execution_platform=execution_platform,
+    )
 
 
 def find_machine_metadata(
@@ -746,11 +746,6 @@ def render_copilot_instructions(
         entry, project, machine=machine, platform=detect_platform(),
         hostname=socket.gethostname(),
     )
-
-
-def detect_platform() -> str:
-    """Detect the current platform: 'windows', 'wsl', or 'linux'."""
-    return _detect_execution_platform()
 
 
 def _home() -> Path:
@@ -868,6 +863,7 @@ def _load_config_uncached(
     *,
     include_control_plane_related_pr: bool = True,
     project: str | None = None,
+    _machine_binding: dict[str, str] | None = None,
 ) -> Config:
     """Load and parse the layered project config.
 
@@ -908,6 +904,8 @@ def _load_config_uncached(
             avoid resolving the same active-plugin corpus twice.
         project: Explicit project identity. When supplied, it overrides legacy
             machine/global ``repo_name`` values for this load.
+        _machine_binding: Internal per-load provenance capture; never a YAML
+            setting and never persisted.
 
     Returns:
         Parsed Config object.
@@ -954,7 +952,8 @@ def _load_config_uncached(
         or global_raw.get("platform")
         or detect_platform()
     )
-    configured_machine = machine_raw.get("machine") or global_raw.get("machine")
+    from .machine_identity import configured_machine_binding
+    configured_machine = configured_machine_binding(machine_raw, global_raw, _machine_binding)
     machine = configured_machine or detect_machine()
     srcroot = machine_raw.get("srcroot") or global_raw.get("srcroot") or ""
 
@@ -1089,6 +1088,7 @@ def _load_config_uncached(
     repository_assignment_raw = inrepo_profile_assignments.get(repo_name)
 
     config = Config(
+        configured_machine=configured_machine or None,
         srcroot=srcroot,
         machine=machine,
         platform=platform,
@@ -1228,7 +1228,7 @@ def _load_yaml_safe(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _load_inrepo_config(anchor: str) -> dict[str, Any]:
+def _load_inrepo_config(anchor: str, *, strict: bool = False) -> dict[str, Any]:
     """Return the repo's in-repo flat settings dict, or ``{}``.
 
     Prefers the config as **committed** on the resolved default branch
@@ -1245,12 +1245,7 @@ def _load_inrepo_config(anchor: str) -> dict[str, Any]:
         Path(INREPO_CONFIG_FILENAME),
     )
 
-    merged = inrepo_config_source.load_inrepo_config_from_committed_ref(
-        root, rel_candidates
-    )
-    if not merged:
-        base_path = next((root / rel for rel in rel_candidates if (root / rel).exists()), None)
-        merged = _load_yaml_safe(base_path) if base_path is not None else {}
+    merged = inrepo_config_source.load_config_base(root, rel_candidates, strict=strict)
 
     context = registry_paths.installation_context()
     marketplace_id = (
@@ -1266,7 +1261,7 @@ def _load_inrepo_config(anchor: str) -> dict[str, Any]:
             / GLOBAL_CONFIG_FILENAME
         )
         if overlay_path.exists():
-            merged = _deep_merge(merged, _load_yaml_safe(overlay_path))
+            merged = _deep_merge(merged, inrepo_config_source.load_config_file(overlay_path, strict=strict))
     return merged
 
 

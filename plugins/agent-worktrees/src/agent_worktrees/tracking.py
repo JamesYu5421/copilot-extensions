@@ -932,6 +932,7 @@ class WorktreeRecord:
     # explicit, per-record operator edit ever promotes it). Emitted only
     # when set, so a legacy/pre-Phase-1 YAML stays byte-identical.
     codename_source: str | None = None
+    _loaded_machine: str | None = field(default=None, repr=False, compare=False)
 
     @property
     def owner_claim_ref(self) -> ClaimRef | None:
@@ -1255,7 +1256,7 @@ def _path_write_lock(path: Path) -> threading.RLock:
         return lk
 
 
-def _atomic_write(path: Path, content: str) -> None:
+def _atomic_write(path: Path, content: str | bytes) -> None:
     """Write content to a file atomically via temp + atomic replace.
 
     Serialized per path by an in-process lock (so the picker's own background
@@ -1271,7 +1272,7 @@ def _atomic_write(path: Path, content: str) -> None:
     with _path_write_lock(path):
         fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         try:
-            os.write(fd, content.encode())
+            os.write(fd, content if isinstance(content, bytes) else content.encode())
             os.close(fd)
             _replace_with_retry(tmp, str(path))
         except BaseException:
@@ -1529,11 +1530,17 @@ def _yaml_safe_load(raw: str) -> object:
 
 
 def load_record(path: Path, *, copy_result: bool = True) -> WorktreeRecord:
-    """Load a worktree tracking record from a YAML file. Routed through
-    :mod:`record_cache`; self-invalidating on ``(mtime_ns, size)``. ``copy_result=False`` is read-only."""
+    """Load using the record cache's ``(mtime_ns, size)`` invalidation.
+
+    Copies carry transient machine CAS evidence, never serialized. A non-copy
+    result is shared/read-only; clone it before making an intentional update.
+    """
     from .pr_publication_state import loaded
     record = record_cache.cached_load(path, _load_record_uncached, copy_result=copy_result)
-    return loaded(record) if copy_result else record
+    if copy_result:
+        record = loaded(record)
+        record._loaded_machine = record.machine  # Read-time CAS evidence, never serialized.
+    return record
 
 
 def parse_record_data(data: dict, *, path: Path) -> WorktreeRecord:
@@ -2164,7 +2171,7 @@ def parse_record_data(data: dict, *, path: Path) -> WorktreeRecord:
         codename_source=(str(data["codename_source"])
                          if data.get("codename_source") else None),
     )
-    record._loaded_from = path
+    record._loaded_from, record._loaded_machine = path, record.machine
     return record
 
 
@@ -3246,11 +3253,17 @@ def retire_record(record: WorktreeRecord, tracking_path: Path) -> bool:
       RECREATE a file a legitimate concurrent hard-delete had already
       removed (copilot-extensions#3749).
 
+    Open PRs and held outbound resources prohibit retirement, even when the
+    checkout is already gone. Re-read responsibility under the record lock;
+    stale caller snapshots cannot erase a newly acquired obligation.
+
     Returns ``True`` once the record is durably retired (tombstoned or
     deleted, or found already retired by a concurrent call); ``False`` if
-    deferred by a contended lock -- callers treat that as "retry on a later
-    reap pass," not a failure.
+    deferred by a contended lock or changed pair -- callers retry on a later
+    reap pass. Raises ``ValueError`` for unsettled responsibility.
     """
+    from .retirement_safety import require_retirable, retirement_blocker, same_pair
+
     path = tracking_path / f"{record.worktree_id}.yaml"
     sibling_path: Path | None = None
     if record.is_paired:
@@ -3277,6 +3290,12 @@ def retire_record(record: WorktreeRecord, tracking_path: Path) -> bool:
             if not path.exists():
                 return True
 
+            latest = load_record(path)
+            require_retirable(latest)
+            if not same_pair(record, latest):
+                return False
+            record = latest
+
             hard_delete_sibling = False
             if record.is_paired:
                 sibling: WorktreeRecord | None = None
@@ -3284,7 +3303,11 @@ def retire_record(record: WorktreeRecord, tracking_path: Path) -> bool:
                     sibling = find_paired_record(record)
                 except Exception:
                     sibling = None
-                if sibling is not None and sibling.reaped_at:
+                if (
+                    sibling is not None
+                    and sibling.reaped_at
+                    and retirement_blocker(sibling) is None
+                ):
                     hard_delete_sibling = True
 
             if hard_delete_sibling:
@@ -3859,10 +3882,11 @@ class _RecordLock:
     Always check ``acquired`` inside a ``blocking=False`` ``with`` block before
     writing; for the default ``blocking=True`` it is always True.
 
-    **Scope -- keep the lock window to the RMW only (#4547).** Wrap exactly the
-    ``load_record -> mutate -> save_record`` window and **never hold the lock
-    across network or git I/O** (a fetch, push, rebase, or provider call). Two
-    consequences follow:
+    **Scope -- keep normal RMW locks short (#4547).** Do not hold across fetch,
+    push, rebase, or provider I/O. Cleanup is the deliberate exception: under
+    ``FinalizeLock``, its record-writer fence spans local removal so no new
+    responsibility appears between validation and deletion. Ordinary writers
+    use the following short-RMW protocol:
 
     - **Foreground CLI verbs** whose RMW is self-contained (``set-pr``,
       ``set-disposition``, ``mark-complete``, resume's ``mark_resumed``, the

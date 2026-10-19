@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -22,7 +23,21 @@ pytestmark = pytest.mark.guard
 
 
 def _copy_payload(target: Path) -> None:
-    shutil.copytree(PLUGIN, target)
+    def ignore(directory, names):
+        omitted = {"__pycache__", ".pytest_cache"}
+        if Path(directory) == PLUGIN:
+            omitted.add("tests")
+        return omitted.intersection(names)
+
+    pending = []
+    with ThreadPoolExecutor(max_workers=16) as copies:
+        def queue_copy(source, destination):
+            pending.append(copies.submit(shutil.copy2, source, destination))
+            return destination
+
+        shutil.copytree(PLUGIN, target, ignore=ignore, copy_function=queue_copy)
+        for future in pending:
+            future.result()
     previous = sys.path.copy()
     sys.path.insert(0, str(PLUGIN.parents[1] / "tools"))
     try:
@@ -34,7 +49,11 @@ def _copy_payload(target: Path) -> None:
         canonical_root=PLUGIN.parents[1],
     )
     assert not any(change.startswith("SKIP ") for change in changes), changes
-    assert (target / "libs" / "agent-procutil" / "pyproject.toml").is_file()
+    procutil = target / "libs" / "agent-procutil"
+    assert (procutil / "pyproject.toml").is_file(), "Missing agent-procutil fixture manifest"
+    assert (procutil / "src" / "agent_procutil" / "__init__.py").is_file(), (
+        "Missing agent-procutil fixture package"
+    )
 
 
 def test_installers_recommend_supported_version_flag():
@@ -50,7 +69,7 @@ def test_installers_recommend_supported_version_flag():
 def test_package_installers_retain_quiet_native_output_with_explicit_failure():
     posix = (PLUGIN / "scripts" / "install.sh").read_text(encoding="utf-8")
     powershell = (PLUGIN / "scripts" / "install.ps1").read_text(encoding="utf-8")
-    assert '"$procutil" "$PLUGIN_DIR" --quiet' in posix
+    assert '"${dependencies[@]}" "$PLUGIN_DIR" --quiet' in posix
     assert '@pipSources --quiet 2>&1' in powershell
     assert "installer_dependency_policy.py" in posix and "installer_dependency_policy.py" in powershell
     assert '-m pip install' not in posix and '-m pip install' not in powershell
@@ -65,12 +84,7 @@ def _fake_uv_environment(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     driver.write_text(
         """
 import os
-from pathlib import Path
-import shutil
-import site
-import subprocess
 import sys
-import json
 
 args = sys.argv[1:]
 base = os.environ["TEST_BASE_PYTHON"]
@@ -83,6 +97,12 @@ if "--show-settings" in args:
           " exclude_newer: ExcludeNewer {\\n"
           " global: None, package: ExcludeNewerPackage({}),\\n },\\n },\\n}")
     raise SystemExit(0)
+from pathlib import Path
+import shutil
+import site
+import subprocess
+import json
+
 if args and args[0] == "venv":
     target = Path(args[1])
     log = os.environ.get("TEST_UV_VENV_LOG")
@@ -90,7 +110,7 @@ if args and args[0] == "venv":
         with Path(log).open("a", encoding="utf-8") as stream:
             stream.write(str(target) + "\\n")
     rc = subprocess.run(
-        [base, "-m", "venv", "--without-pip", str(target)],
+        [base, "-I", "-S", "-m", "venv", "--without-pip", str(target)],
         check=False,
     ).returncode
     if rc == 0 and os.environ.get("TEST_BUILD_ARTIFACT_PROBE"):
@@ -137,17 +157,22 @@ if args[:2] == ["pip", "install"]:
         [python, "-c", "import site; print(site.getsitepackages()[0])"],
         text=True,
     ).strip()
-    shutil.copytree(
-        plugin / "src" / "budget_guidance",
-        Path(site_dir) / "budget_guidance",
-        dirs_exist_ok=True,
-    )
     procutil = next(Path(arg) for arg in args if Path(arg).name == "agent-procutil")
-    shutil.copytree(
-        procutil / "src" / "agent_procutil",
-        Path(site_dir) / "agent_procutil",
-        dirs_exist_ok=True,
-    )
+    from concurrent.futures import ThreadPoolExecutor
+    pending = []
+    with ThreadPoolExecutor(max_workers=16) as copies:
+        def queue_copy(source, destination):
+            pending.append(copies.submit(shutil.copy2, source, destination))
+            return destination
+        for source, package in (
+            (plugin, "budget_guidance"), (procutil, "agent_procutil"),
+        ):
+            shutil.copytree(
+                source / "src" / package, Path(site_dir) / package,
+                dirs_exist_ok=True, copy_function=queue_copy,
+            )
+        for future in pending:
+            future.result()
     raise SystemExit(0)
 raise SystemExit(2)
 """.lstrip(),
@@ -171,6 +196,7 @@ raise SystemExit(2)
         "TEST_BASE_PYTHON": sys._base_executable,
         "TEST_UV_DRIVER": str(driver),
         "COPILOT_EXTENSIONS_TEST_CONTAINED": "1",
+        "POWERSHELL_TELEMETRY_OPTOUT": "1",
         "COMPUTERNAME": "TEST-HOST",
     }
     env.pop("COPILOT_PLUGIN_INSTALL_STAGED", None)
@@ -186,6 +212,14 @@ def native_failed_install_state(tmp_path_factory, request):
     tmp_path = tmp_path_factory.mktemp("budget-failure")
     previous = request.param
     fake_bin, env = _fake_uv_environment(tmp_path)
+    powershell_home = Path(PWSH).resolve().parent
+    git = shutil.which("git")
+    assert git is not None, "native installer fixture requires Git"
+    system = Path(os.environ["SystemRoot"])
+    env["PATH"] = os.pathsep.join(str(path) for path in (
+        fake_bin, powershell_home, Path(git).parent, system / "System32", system,
+    ))
+    env["PSModulePath"] = str(powershell_home / "Modules")
     (fake_bin / "uv").unlink()
     for name in ("python", "python3", "py"):
         (fake_bin / name).unlink()
@@ -216,10 +250,12 @@ def native_failed_install_state(tmp_path_factory, request):
     )
     driver.write_text(source, encoding="utf-8")
     (fake_bin / "uv.cmd").write_text(
-        f'@echo off\n"{sys._base_executable}" "{driver}" %*\nexit /b %errorlevel%\n',
+        f'@echo off\n"{sys._base_executable}" -I -S "{driver}" %*\nexit /b %errorlevel%\n',
         encoding="utf-8",
     )
     root = tmp_path / "runtime with spaces"
+    payload = tmp_path / "payload" / "budget-guidance"
+    _copy_payload(payload)
     old = root / "versions" / "0.0.1"
     if previous:
         old.mkdir(parents=True)
@@ -231,7 +267,7 @@ def native_failed_install_state(tmp_path_factory, request):
         (root / "current-version").write_text("0.0.1")
     command = [
         PWSH, "-NoProfile", "-NonInteractive", "-File",
-        str(PLUGIN / "scripts" / "install.ps1"),
+        str(payload / "scripts" / "install.ps1"),
         "install", "-InstallDir", str(root),
     ]
     before = (root / "current-version").read_bytes() if previous else None
@@ -420,16 +456,33 @@ def test_posix_installer_bootstraps_with_uv_and_no_ambient_python(tmp_path: Path
 
 
 @pytest.mark.skipif(BASH is None or os.name == "nt", reason="POSIX installer coverage")
+@pytest.mark.parametrize("manifest_layout", ["canonical", "materialized"])
 def test_posix_stamp_uses_owned_versioned_snapshot_without_marketplace_fallback(
-    tmp_path: Path,
+    tmp_path: Path, manifest_layout: str,
 ):
     _, env = _fake_uv_environment(tmp_path)
     install_dir = Path(env["HOME"]) / ".budget-guidance"
+    source = tmp_path / "source" / "plugins" / "budget-guidance"
+    _copy_payload(source)
+    manifest = source / "pyproject.toml"
+    local_ref = b'agent-procutil = { path = "libs/agent-procutil" }'
+    canonical_ref = b'agent-procutil = { path = "../../libs/agent-procutil", editable = true }'
+    original_manifest = manifest.read_bytes()
+    assert local_ref in original_manifest
+    if manifest_layout == "canonical":
+        library = source / "libs" / "agent-procutil"
+        shutil.copytree(library, source.parents[1] / "libs" / "agent-procutil")
+        shutil.rmtree(library)
+        original_manifest = original_manifest.replace(local_ref, canonical_ref)
+        manifest.write_bytes(original_manifest)
+        assert canonical_ref in original_manifest
+    expected_manifest = original_manifest.replace(canonical_ref, local_ref)
+    assert (expected_manifest != original_manifest) is (manifest_layout == "canonical")
 
     result = subprocess.run(
         [
             BASH,
-            str(PLUGIN / "scripts" / "install.sh"),
+            str(source / "scripts" / "install.sh"),
             "stamp",
             "--install-dir",
             str(install_dir),
@@ -446,18 +499,12 @@ def test_posix_stamp_uses_owned_versioned_snapshot_without_marketplace_fallback(
     assert result.returncode == 0, result.stdout
     snapshot = Path((install_dir / "payload-dir").read_text(encoding="utf-8").strip())
     assert snapshot == install_dir / "snapshots" / VERSION
-    assert snapshot != PLUGIN
+    assert snapshot != source
     assert (snapshot / "scripts" / "install.sh").is_file()
     assert (snapshot / "libs" / "agent-procutil" / "pyproject.toml").is_file()
-    original_manifest = (PLUGIN / "pyproject.toml").read_bytes()
-    expected_manifest = original_manifest.replace(
-        b'agent-procutil = { path = "../../libs/agent-procutil", editable = true }',
-        b'agent-procutil = { path = "libs/agent-procutil" }',
-    )
-    assert expected_manifest != original_manifest
     assert (snapshot / "pyproject.toml").read_bytes() == expected_manifest
     assert (snapshot / ".payload-source").read_text(encoding="utf-8").strip() == str(
-        PLUGIN
+        source
     )
 
     wrapper = Path(env["HOME"]) / ".local" / "bin" / "budget-guidance"

@@ -516,10 +516,6 @@ def _payload_root(repo_dir: str | Path | None = None) -> Path:
         candidate = Path(explicit).expanduser()
         if (candidate / "plugin.json").is_file():
             return candidate.resolve()
-    if repo_dir is not None:
-        candidate = find_package_source(repo_dir).parent.parent
-        if (candidate / "plugin.json").is_file():
-            return candidate.resolve()
     manifest = install_dir() / "deploy-manifest.json"
     try:
         source = json.loads(manifest.read_text(encoding="utf-8"))["source"]["path"]
@@ -528,6 +524,10 @@ def _payload_root(repo_dir: str | Path | None = None) -> Path:
             return candidate.resolve()
     except (OSError, KeyError, TypeError, ValueError):
         pass
+    if repo_dir is not None:
+        candidate = find_package_source(repo_dir).parent.parent
+        if (candidate / "plugin.json").is_file():
+            return candidate.resolve()
     candidate = Path(__file__).resolve().parents[2]
     if (candidate / "plugin.json").is_file():
         return candidate
@@ -785,7 +785,8 @@ def _project_binstub_specs(
     return [
         (local_bin() / name, content)
         for name, content in render(
-            project, _payload_root(repo_dir), windows=platform.system() == "Windows"
+            project, _payload_root(repo_dir), windows=platform.system() == "Windows",
+            user_bin=local_bin() if registry_paths.installation_context() is None else None,
         ).items()
     ]
 
@@ -1247,11 +1248,12 @@ def deploy_binstubs(repo_dir: str | Path, project: str) -> bool:
         if (_alt / "agent-worktrees.cmd").exists():
             _bin_assets = _alt
     if is_windows:
-        src = _bin_assets / "agent-worktrees.cmd"
-        if src.exists():
-            dst = lb / "agent-worktrees.cmd"
-            _write_binstub_if_changed(dst, src.read_text(encoding="utf-8"))
-            output.ok(f"Binstub: {dst}")
+        for name in ("agent-worktrees.ps1", "agent-worktrees.cmd"):
+            src = _bin_assets / name
+            if src.exists():
+                dst = lb / name
+                _write_binstub_if_changed(dst, src.read_text(encoding="utf-8"))
+                output.ok(f"Binstub: {dst}")
     else:
         src = _bin_assets / "agent-worktrees"
         if src.exists():

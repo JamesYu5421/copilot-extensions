@@ -151,7 +151,6 @@ if expected_sources and args[:2] == ["pip", "install"]:
     private_root = config.parent
     assert config.is_file() and not config.is_symlink()
     assert private_root.name == "inputs"
-    assert private_root.parent.parent.samefile(Path(os.environ["TEMP"]))
     if os.name != "nt":
         assert private_root.stat().st_uid == os.getuid()
         assert private_root.stat().st_mode & 0o077 == 0
@@ -167,6 +166,13 @@ if expected_sources and args[:2] == ["pip", "install"]:
         for member in original.rglob("*.py"):
             assert (source / member.relative_to(original)).read_bytes() == member.read_bytes()
         args[index] = str(original)
+    if os.name == "nt" and "--editable" in args:
+        expected_parents = {Path(value).resolve().parent for value in expected_sources.values()}
+        assert any(private_root.parent.parent.samefile(parent) for parent in expected_parents)
+    else:
+        assert private_root.parent.parent.samefile(Path(os.environ["TEMP"]))
+    assert not any(private_root.resolve().is_relative_to(Path(value).resolve())
+                   for value in expected_sources.values())
 log = Path(os.environ["TEST_UV_LOG"])
 history = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 with log.open("a") as stream:
@@ -252,6 +258,8 @@ def _prelude(ext: str, engine: Path = ENGINE) -> str:
             '_warn() { echo "$*" >&2; }\n_fail() { echo "$*" >&2; }\n'
             "_step() { :; }\n_ok() { :; }\nsleep() { :; }\n"
             f'. "{engine / "installer-engine.sh"}"\n'
+            f'PLUGIN_DIR="{PLUGIN}"\n'
+            f'. "{PLUGIN / "scripts" / "source-runtime.sh"}"\n'
         )
     return (
         "$ErrorActionPreference = 'Stop'\n"
@@ -261,6 +269,9 @@ def _prelude(ext: str, engine: Path = ENGINE) -> str:
         "function Write-Warn { param($Msg) Write-ServiceWarn $Msg }\n"
         "function Write-Ok { param($Msg) }\nfunction Start-Sleep { param($Seconds) }\n"
         f". '{engine / 'installer-engine.ps1'}'\n"
+        f". '{PLUGIN / 'scripts' / 'versioned_runtime_native.ps1'}'\n"
+        f"$PluginDir = '{PLUGIN}'\n"
+        f". '{PLUGIN / 'scripts' / 'source-runtime.ps1'}'\n"
     )
 
 
@@ -508,6 +519,7 @@ def _attributed_library_sources(tmp_path: Path, layout: str):
     sys.path.insert(0, str(REPO / "tools"))
     try:
         import materialize_main as mm
+        import uv_editable_ref as uer
     finally:
         sys.path.pop(0)
     repository = tmp_path / "publisher-repo"
@@ -528,6 +540,7 @@ def _attributed_library_sources(tmp_path: Path, layout: str):
             for member in scripts.iterdir():
                 if member.name in (
                     "install.sh", "install.ps1",
+                    "installer-human-output.ps1", "install.human-output.json",
                     "installer-engine.sh", "installer-engine.ps1",
                     "installer_dependency_policy.py", "installer_dependency_config.py",
                 ):
@@ -552,8 +565,14 @@ def _attributed_library_sources(tmp_path: Path, layout: str):
         skipped = [line for line in logs if line.startswith("SKIP")]
         assert not skipped, "\n".join(skipped)
     shutil.copytree(payload / "libs", repository / "libs")
+    # The fixture now owns canonical libraries, regardless of whether its
+    # input was authored with canonical or already-materialized metadata.
+    project_path = payload / "pyproject.toml"
+    project = tomllib.loads(project_path.read_text(encoding="utf-8"))
+    for spec in project["tool"]["uv"]["sources"].values():
+        lib = Path(spec["path"]).name
+        uer.rewrite_uv_source_to_editable(project_path, lib, f"../../libs/{lib}")
     shutil.rmtree(payload / "libs")
-    shutil.copyfile(PLUGIN / "pyproject.toml", payload / "pyproject.toml")
     engine = repository / "libs" / "installer-engine"
     engine.mkdir(parents=True, exist_ok=True)
     for name in (
@@ -665,10 +684,21 @@ def test_codespaces_canonical_reference_registration_and_release_materialization
     finally:
         sys.path.pop(0)
     assert "agent-codespaces" in ier.ADOPTERS
+    layouts = set()
     for ext in ("sh", "ps1"):
         ref = ier.find_engine_ref(PLUGIN / "scripts" / f"install.{ext}", ext)
-        assert ref is not None and ier.is_canonical_ref(ref, PLUGIN)
-        assert not (PLUGIN / "scripts" / ref.file_name).exists()
+        assert ref is not None
+        assert ier.source_match_count(PLUGIN / "scripts" / f"install.{ext}", ext) == 1
+        if ier.is_canonical_ref(ref, PLUGIN, repo_root=REPO):
+            layouts.add("canonical")
+            assert not ref.local_path.exists()
+        else:
+            layouts.add("local")
+            assert ier.is_local_ref(ref, PLUGIN)
+        assert ref.resolved().read_bytes() == (ENGINE / ref.file_name).read_bytes()
+        for name in ier.support_files(ENGINE):
+            assert (ref.resolved().parent / name).read_bytes() == (ENGINE / name).read_bytes()
+    assert len(layouts) == 1, "both language variants must select the same layout"
     payload = tmp_path / "release" / "plugins" / PLUGIN.name
     shutil.copytree(PLUGIN, payload, ignore=shutil.ignore_patterns("tests", "__pycache__"))
     logs = mm.materialize_uv_editable_refs(tmp_path / "release", canonical_root=REPO)
@@ -682,6 +712,68 @@ def test_codespaces_canonical_reference_registration_and_release_materialization
     project = tomllib.loads((payload / "pyproject.toml").read_text())
     for spec in project["tool"]["uv"]["sources"].values():
         assert (payload / spec["path"]).resolve().is_relative_to(payload)
+        assert (payload / spec["path"] / "pyproject.toml").is_file()
+        assert not spec.get("editable", False)
+
+
+def test_codespaces_explicit_canonical_fixture_materializes(tmp_path):
+    sys.path.insert(0, str(REPO / "tools"))
+    try:
+        import installer_engine_ref as ier
+        import materialize_main as mm
+    finally:
+        sys.path.pop(0)
+    engine, sources = _attributed_library_sources(tmp_path / "input", "canonical")
+    plugin = sources[-1]
+    repository = plugin.parents[1]
+    shutil.copytree(ENGINE, engine, dirs_exist_ok=True)
+    # The ordering fixture retains generated transitive metadata. A canonical
+    # publisher must instead declare those sibling libraries editable too.
+    for library in (repository / "libs").iterdir():
+        if library != engine:
+            shutil.copyfile(
+                REPO / "libs" / library.name / "pyproject.toml", library / "pyproject.toml",
+            )
+    # Construct canonical input explicitly, including when this test itself
+    # is collected from a generated release whose wrappers are already local.
+    for ext in ("sh", "ps1"):
+        script = plugin / "scripts" / f"install.{ext}"
+        ref = ier.find_engine_ref(script, ext)
+        assert ref is not None
+        if ier.is_local_ref(ref, plugin):
+            text = script.read_text(encoding="utf-8")
+            assert text.count(ier.local_line(ext)) == 1
+            script.write_text(
+                text.replace(ier.local_line(ext), ier.canonical_line(ext)), encoding="utf-8",
+            )
+            ref.local_path.unlink()
+        ref = ier.find_engine_ref(script, ext)
+        assert ref is not None and ier.is_canonical_ref(ref, plugin, repo_root=repository)
+        assert not ref.local_path.exists()
+    script = plugin / "scripts/install.ps1"
+    script.with_suffix(".human-output.json").write_text(
+        ier.human_output_json(script), encoding="utf-8",
+    )
+    payload = tmp_path / "release/plugins" / PLUGIN.name
+    shutil.copytree(plugin, payload)
+    logs = mm.materialize_uv_editable_ref_into(
+        source_consumer_dir=plugin, dest_consumer_dir=payload,
+        canonical_root=repository, dest_root=tmp_path / "release",
+    )
+    logs += mm.materialize_installer_engine_ref_into(
+        source_consumer_dir=plugin, dest_consumer_dir=payload,
+        canonical_root=repository, dest_root=tmp_path / "release",
+    )
+    assert not any(line.startswith("SKIP") for line in logs), "\n".join(logs)
+    for ext in ("sh", "ps1"):
+        ref = ier.find_engine_ref(payload / "scripts" / f"install.{ext}", ext)
+        assert ref is not None and ier.is_local_ref(ref, payload)
+        assert ref.resolved().read_bytes() == (ENGINE / ref.file_name).read_bytes()
+    assert (payload / "scripts/install.human-output.json").read_text(
+        encoding="utf-8",
+    ) == ier.human_output_json(payload / "scripts/install.ps1")
+    project = tomllib.loads((payload / "pyproject.toml").read_text(encoding="utf-8"))
+    for spec in project["tool"]["uv"]["sources"].values():
         assert (payload / spec["path"] / "pyproject.toml").is_file()
         assert not spec.get("editable", False)
 
@@ -764,6 +856,8 @@ def codespaces_stamped_snapshot(tmp_path_factory, request):
         "versioned_runtime.py",
         "versioned_runtime_leases.py",
         "versioned_runtime_construction.py",
+        "versioned_runtime_source.py",
+        "versioned_runtime_native.ps1",
     ):
         assert (snapshot / "scripts" / name).read_bytes() == (PLUGIN / "scripts" / name).read_bytes()
     for name in ("installer_dependency_policy.py", "installer_dependency_config.py"):
@@ -937,6 +1031,7 @@ def test_codespaces_manifest_shared_writer_preserves_slot_and_source(tmp_path, e
     if ext == "sh" and os.name == "nt":
         pytest.skip("POSIX harness")
     env = _env(tmp_path)
+    version = tomllib.loads((PLUGIN / "pyproject.toml").read_text())["project"]["version"]
     root = tmp_path / "runtime"
     root.mkdir()
     if marketplace:
@@ -950,6 +1045,8 @@ def test_codespaces_manifest_shared_writer_preserves_slot_and_source(tmp_path, e
             + f"""
 INSTALL_DIR='{root}'
 PLUGIN_DIR='{PLUGIN}'
+SRC_VERSION='{version}'
+_initialize_source_runtime
 VENV_DIR='{root}/versions/test'
 _git_info() {{ echo 'abc dev true'; }}
 _write_codespaces_deploy_manifest
@@ -962,6 +1059,8 @@ _write_codespaces_deploy_manifest
             + f"""
 $InstallDir='{root}'
 $PluginDir='{PLUGIN}'
+$SrcVersion='{version}'
+Initialize-SourceRuntime
 $RepoRoot='original-root'
 $VenvDir='{root}/versions/build'
 $LinkDir='{root}/versions/selected'
@@ -1101,7 +1200,10 @@ def test_native_dev_generation_dependency_failure_preserves_working_runtime(tmp_
     root = tmp_path / "runtime"
     env = _env(tmp_path)
     base, helper = Path(sys._base_executable), PLUGIN / "scripts/versioned_runtime.py"
-    for name in ("versioned_runtime_leases.py", "versioned_runtime_construction.py", "versioned_runtime.py"):
+    for name in (
+        "versioned_runtime_leases.py", "versioned_runtime_construction.py",
+        "versioned_runtime_source.py", "versioned_runtime.py", "versioned_runtime_native.ps1",
+    ):
         shutil.copyfile(helper.with_name(name), tmp_path / name)
     if ext == "ps1":
         # The extracted Windows entry point must consume the real host venv layout.
@@ -1318,6 +1420,10 @@ def test_installer_engine_adoption_environment_excludes_host_tools(tmp_path):
         ("Register-ScheduledTask", "register scheduled task"),
         ("Start-ScheduledTask", "start scheduled task"),
         ("Start-Process -FilePath 'host.exe' -ArgumentList 'owner'", "start host process"),
+        ("Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList '-File', $PSCommandPath",
+         "start host process"),
+        ("""Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList ('"-NoProfile" "-ExecutionPolicy" "Bypass" "-File" "' + $PSCommandPath + '"')""",
+         "start host process"),
     ],
 )
 def test_installer_engine_adoption_guards_reject_host_effects(tmp_path, command, effect):

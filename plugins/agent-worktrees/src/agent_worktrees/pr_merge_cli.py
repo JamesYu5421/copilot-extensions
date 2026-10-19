@@ -7,6 +7,7 @@ The functions below were moved verbatim, with no behavior change.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -119,6 +120,7 @@ def _pr_merge_now(
     from . import pr_contract as pc
     from .providers import (
         ProviderError,
+        PullResult,
         account_token_for_slug,
         actor_viewer_permission,
         get_provider,
@@ -215,7 +217,7 @@ def _pr_merge_now(
             # head behind: adopt the provider's head when it is that HEAD.
             try:
                 live = provider.get_pull(args.repo, args.pr, api_base=base, token=tok).head_sha
-            except (ProviderError, OSError, ValueError, AttributeError):
+            except (ProviderError, OSError, ValueError, TypeError, AttributeError):
                 live = ""  # unreadable: merge against the recorded head, as before
             if live and live != expected_head_sha:
                 expected_head_sha = _pr_cli._adopt_pushed_head(
@@ -299,6 +301,8 @@ def _pr_merge_now(
                             "pr": args.pr,
                             "action": "auto-complete",
                             "applied": False,
+                            "merged": False,
+                            "completion_verified": None,
                             "error": err,
                             "flow_profile": flow.profile,
                             "reminder": rem.as_dict(),
@@ -321,6 +325,7 @@ def _pr_merge_now(
                         "action": "auto-complete",
                         "applied": True,
                         "merged": False,
+                        "completion_verified": None,
                         "flow_profile": flow.profile,
                         "reminder": rem.as_dict(),
                     }
@@ -388,6 +393,7 @@ def _pr_merge_now(
                         "action": "auto-merge",
                         "applied": True,
                         "merged": False,
+                        "completion_verified": False if getattr(provider, "name", "") == "github" else None,
                         "flow_profile": flow.profile,
                         "reminder": rem.as_dict(),
                     }
@@ -402,19 +408,34 @@ def _pr_merge_now(
             print(rem.text(), file=sys.stderr)
         return 0
 
-    try:
-        err = provider.merge_pull(
-            args.repo,
-            args.pr,
-            squash=True,
-            admin=bypass_review_gate or not flow.review_blocking,
-            delete_source_branch=getattr(prcfg, "delete_source_branch", True),
-            api_base=base,
-            token=tok,
-            expected_head_sha=expected_head_sha,
-        )
-    except ProviderError as exc:
-        err = str(exc)
+    err = ""
+    if getattr(provider, "name", "") == "github" and not expected_head_sha:
+        try:
+            observed = provider.get_pull(args.repo, args.pr, api_base=base, token=tok)
+            if (
+                not isinstance(observed, PullResult)
+                or not isinstance(observed.head_sha, str)
+                or not re.fullmatch(r"[0-9a-f]{40}", observed.head_sha)
+            ):
+                err = "GitHub merge head is unavailable or invalid; no merge was requested"
+            else:
+                expected_head_sha = observed.head_sha
+        except (ProviderError, OSError, ValueError, TypeError, AttributeError) as exc:
+            err = f"GitHub merge head lookup failed ({type(exc).__name__}); no merge was requested"
+    if not err:
+        try:
+            err = provider.merge_pull(
+                args.repo,
+                args.pr,
+                squash=True,
+                admin=bypass_review_gate or not flow.review_blocking,
+                delete_source_branch=getattr(prcfg, "delete_source_branch", True),
+                api_base=base,
+                token=tok,
+                expected_head_sha=expected_head_sha,
+            )
+        except ProviderError as exc:
+            err = str(exc)
 
     if err:
         rem = pc.pr_reminder(
@@ -428,6 +449,8 @@ def _pr_merge_now(
                         "pr": args.pr,
                         "action": "merge",
                         "applied": False,
+                        "merged": False,
+                        "completion_verified": False if getattr(provider, "name", "") == "github" else None,
                         "error": err,
                         "flow_profile": flow.profile,
                         "reminder": rem.as_dict(),
@@ -439,6 +462,39 @@ def _pr_merge_now(
             print(rem.text(), file=sys.stderr)
         return 1
 
+    if getattr(provider, "name", "") == "github":
+        merge_confirmed = False
+        observation_error = ""
+        try:
+            confirmation = provider.get_pull(args.repo, args.pr, api_base=base, token=tok)
+            if not isinstance(confirmation, PullResult) or type(confirmation.merged) is not bool:
+                observation_error = "GitHub merge completion returned invalid lifecycle data"
+            elif expected_head_sha and confirmation.head_sha != expected_head_sha:
+                observation_error = "GitHub merge completion returned a different or unavailable head"
+            else:
+                merge_confirmed = confirmation.merged
+        except (ProviderError, OSError, ValueError, TypeError, AttributeError) as exc:
+            observation_error = (
+                "GitHub accepted the merge request but completion lookup failed "
+                f"({type(exc).__name__})"
+            )
+        if observation_error or not merge_confirmed:
+            rem = pc.pr_reminder(flow, "pr-watch", ok=not observation_error)
+            message = observation_error or "GitHub accepted the merge request; completion is still pending"
+            if args.json:
+                print(_json.dumps({
+                    "repo": args.repo, "pr": args.pr, "action": "merge-pending",
+                    "applied": True, "merged": False, "flow_profile": flow.profile,
+                    "completion_verified": False, "reminder": rem.as_dict(),
+                    **({"error": observation_error} if observation_error else {}),
+                }))
+            else:
+                (output.err if observation_error else output.ok)(
+                    f"pr-merge --now: {message}. Use pr-watch before finalizing."
+                )
+                print(rem.text(), file=sys.stderr)
+            return 1 if observation_error else 0
+
     rem = pc.pr_reminder(flow, "pr-merge", state=pc.PR_STATE_MERGED, ok=True)
     if args.json:
         print(
@@ -448,6 +504,8 @@ def _pr_merge_now(
                     "pr": args.pr,
                     "action": "merge",
                     "applied": True,
+                    "merged": True,
+                    "completion_verified": True if getattr(provider, "name", "") == "github" else None,
                     "bypassed_review_gate": bypass_review_gate,
                     "flow_profile": flow.profile,
                     "reminder": rem.as_dict(),

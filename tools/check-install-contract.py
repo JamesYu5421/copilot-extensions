@@ -49,10 +49,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import installer_engine_ref as ier
+from update_machine_gate_contract import check_machine_gate
 
 from install_contract_guard import (
     PERSISTENT_ENV_END,
     PERSISTENT_ENV_START,
+    declares_stamp_provision as _declares_stamp_provision,
     is_ignored_scan_path,
     persistent_environment_violations,
 )
@@ -69,7 +71,11 @@ INSTALLER_ENGINE_SYNC = Path(__file__).resolve().parent / "sync-installer-engine
 # docs/patterns/README.md § "Runtime installs are immutable and versioned".
 VERSIONED_MARKER = "install-contract:v3 versioned-venv"
 VERSIONED_RUNTIME_FILE = "versioned_runtime.py"
-VERSIONED_RUNTIME_COMPONENTS = ("versioned_runtime_leases.py", "versioned_runtime_construction.py")
+VERSIONED_RUNTIME_COMPONENTS = (
+    "versioned_runtime_leases.py", "versioned_runtime_construction.py",
+    "versioned_runtime_native.ps1",
+    "versioned_runtime_source.py",
+)
 # The one canonical source of the primitive. Every Python runtime plugin's
 # scripts/versioned_runtime.py is vendored byte-identically from here by
 # tools/sync-versioned-runtime.py; this check enforces it (drift => run sync).
@@ -118,19 +124,6 @@ EXEMPT_SESSION_HOOK: frozenset[str] = frozenset()
 # EMPTY: all Thread-B service runtimes (agent-dispatch, agent-vault, agent-index,
 # agent-bridge) are ported -- their install.ps1 now declares stamp/provision.
 BASELINE_NO_STAMP_PS1: frozenset[str] = frozenset()
-
-
-def _declares_stamp_provision(text: str, ext: str) -> bool:
-    """True if an entrypoint declares BOTH a `stamp` and a `provision` action.
-
-    ps1: the tokens ``'stamp'`` / ``'provision'`` appear (ValidateSet + switch).
-    sh:  ``stamp`` / ``provision`` appear as a case label -- immediately followed
-    by ``)`` or ``|`` -- so a combined ``stamp|provision|init)`` label and the
-    incidental phrase "stamp build info" are handled correctly.
-    """
-    if ext == "ps1":
-        return ("'stamp'" in text) and ("'provision'" in text)
-    return bool(re.search(r"\bstamp[)|]", text)) and bool(re.search(r"\bprovision[)|]", text))
 
 
 def _session_hook_problem(plugin: Path) -> str | None:
@@ -746,6 +739,7 @@ def check() -> int:
         return 1
 
     violations.extend(_runtime_scope_violations(PLUGINS_DIR))
+    violations.extend(check_machine_gate(PLUGINS_DIR / "agent-worktrees" / "src" / "agent_worktrees"))
     violations.extend(_exec_stderr_swallow_violations(PLUGINS_DIR))
     violations.extend(_mark_complete_result_violations(PLUGINS_DIR))
 

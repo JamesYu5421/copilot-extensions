@@ -23,10 +23,35 @@ source admission, completion and activation primitives. Explicit optional-profil
 failure leaves the active selector intact, never a successful base-only downgrade.
 See the plugin README's **Optional restricted SSH runtime** for provisioning.
 
-The canonical Python and native shell recovery resolvers order qualified slots
-by the package-version portion before the profile qualifier. A completed final
-release therefore outranks its development versions even when selectors are
-missing and legacy unqualified slots coexist with profiled slots.
+Prepared source deployments retain this independent profile dimension:
+`<package-version>+<profile>.source.<commit>.<assembly>`. The coordinator validates
+the full source receipt before admission, after acquiring construction ownership,
+before completion and before activation. Its deploy manifest retains the original
+package version in `source.version`, the profiled slot in `runtime_version`, and
+the original source receipt in `runtime_source`. Source-qualified deferred stamps
+copy and verify the complete prepared assembly, so first use does not depend on
+the original source location.
+The native installer pins the complete receipt before waiting for its transaction
+lock and passes that same receipt into profile construction or deferred stamping.
+A valid receipt-only change is refused even when its runtime generation is unchanged.
+
+Source-qualified generations require an exact `current-version` or
+`last-known-good` selector. If neither resolves and source-qualified slots exist,
+Python and native shell resolvers refuse recovery rather than ordering opaque
+hashes or silently selecting an older plain package slot. Ordinary package-only
+recovery retains its existing version ordering.
+
+The root `snapshot-provenance.json` installation-cell receipt is published after
+assembly and is validated independently by the cell contract; it is not a runtime
+source-hash input. It must still be an ordinary file. Nested files with that name
+remain hashed runtime inputs, and source preparation rejects a checkout that
+already supplies this reserved deployment sidecar.
+
+When no source-qualified slots exist, the canonical Python and native shell
+recovery resolvers order profiled slots by the package-version portion before
+the profile qualifier. A completed final release therefore outranks its
+development versions even when selectors are missing and legacy unqualified
+slots coexist with profiled slots.
 
 ## Core agent service installation-cell contract
 
@@ -76,6 +101,23 @@ of another installation.
    Non-cell hosts retain supported user-global plugin commands, but consumers
    still invoke the selected installation's exact command. Installers never
    compete for a global generic plugin command last-writer-wins.
+   Legacy project shortcuts call the exact installed user-side `agent-worktrees`
+   binstub under the same resolved local-bin directory, carrying `--project`
+   and the caller's arguments. They do not embed a checkout or payload path.
+   Receipt-gated registration and update reconciliation migrate unchanged
+   historical payload-pinned shortcuts automatically. Checkout-to-marketplace
+   adoption additionally requires the same legacy runtime, plugin/repository,
+   project identity, and a deploy manifest naming the selected payload and
+   version; matching repository URLs alone do not authorize a transfer.
+   Edited, foreign, and ambiguous launchers remain protected. Cell-scoped
+   shortcuts continue to use their selected payload-local command.
+   User-side shortcut bytes contain no payload identity and therefore require an
+   ownership receipt; receipt-free recognition is limited to historical
+   payload-bearing templates. Native installers publish the successfully
+   activated runtime's manifest before shortcut registration or reconciliation.
+   Intact interrupted journals for either supported resolver complete against
+   their recorded owner and matching payload/user template after lineage
+   admission, before reconciliation migrates the recovered shortcut.
 7. Missing, ambiguous, or mismatched provenance fails closed. Same-cell sibling
    discovery is explicit, and a same-named peer from another cell is never
    selected through `PATH`, a wildcard installed-plugin scan, or a shared
@@ -1221,12 +1263,62 @@ a wrapped state-read error. It reuses the original activation snapshot, not the
 post-install state, and never replays the command. Partial settings restoration
 is retained while inventory restoration is retried. Permission errors, malformed
 state and exhausted restoration still propagate as failures.
-A command timeout also stops: the
-payload subprocess path does not prove descendant cleanup, so starting another
-writer would be unsafe. Retried failures remain advisory attempt history;
-the final required outcome decides the run. This is in-run recovery, not a
-persistent acquisition checkpoint, a payload process-tree cleanup guarantee
-or permission to retry combined runtime activation.
+Windows payload updates and inventory installs run in a required, non-breakaway
+Job through the existing process owner. On every exit, including an owner
+deadline, that owner terminates the Job and positively queries zero active processes, then drains
+and reaps the root within one thirty-second cleanup grace. That grace is
+reserved inside the remaining acquisition budget. Only an update's confirmed
+owner timeout may retry, within the same two-attempt limit; captured authority or
+integrity refusals still stop. A CLI exit code 124 alone is not proof of an
+owner deadline. Failed termination, accounting or output drain is an explicit
+cleanup failure and cannot license replay. Native spawn errors retain their
+codes and existing diagnostic/retry handling.
+The strict child receives the auth session's exact command-scoped environment,
+including an explicitly empty environment; it never substitutes global state
+for that snapshot. Auth usage is retained for a launched child even when
+cleanup fails, but a refused launch does not claim credential use. Post-launch
+I/O errors are cleanup failures, not retryable spawn contention.
+
+Windows inventory installs additionally retain their original activation
+snapshot through canonical `plugin-activation` preservation, under one
+operation-scoped shared lease for the resolved Copilot home. A durable
+quiescence witness follows positive Job cleanup and root reap/drain before
+restoration begins. Later invocations finish only witnessed restoration,
+verify both activation postconditions and clear the record before capturing
+another snapshot or launching a command. A partial restoration retains the
+original snapshot, refreshed inventory and unrelated settings. A pre-witness
+interruption stays blocked even if its parent PID is gone. Invalid or foreign
+records and unverified cleanup never authorize another writer.
+Every Windows acquisition enters this custody before auth refusal or
+update/install selection and holds it through the target's attempts. A payload
+already copied by the interrupted install therefore cannot bypass restoration
+by selecting update. Original-state recovery itself needs no remote credentials.
+Update-only custody does not capture a new install snapshot.
+Snapshot and settlement-witness publication retry explicit Windows lock errors
+32/33 once, against the same transition and original snapshot. The possible
+witness-publication delay and final restoration backoff are reserved inside the
+existing target budget; prior recovery time reduces the remaining command
+allowance. This coordinates participating preservation calls, not unrelated CLI/user writers, and provides
+process-interruption recovery rather than universal power-loss durability.
+
+Install timeouts still stop: confirmed cleanup may permit restoration but
+automatic install replay remains disabled. An install's watchdog exit 124
+cannot retry even when its output also contains a transient marker; captured
+timeout refusals retain precedence. POSIX timeouts also stop: the current
+session owner intentionally permits detached daemons to survive and cannot attest
+the entire payload writer tree. Existing runtime-installer daemon/breakaway behavior
+is unchanged; the strict contract is opt-in for Windows payload acquisition.
+Retried failures remain advisory attempt history; the final required outcome
+decides the run. This is in-run recovery, not a persistent acquisition
+checkpoint or permission to retry combined runtime activation.
+
+From a source checkout on an interactive Windows desktop, run
+`python tools/run-plugin-tests.py agent-worktrees --test-file tests/test_update_payload_windowless.py`
+for the opt-in live launch regression. It observes two `pythonw.exe` parent
+cycles with real console descendants, requires no new visible windows or
+foreground transitions, forces owner deadlines and checks native child handles
+are signalled. A missing observable desktop is reported as unavailable, not
+headlessness proof. This host-dependent case is outside the fast guard lane.
 
 ### What the marketplace vendors (copied vs loaded)
 
@@ -1304,12 +1396,24 @@ A plugin declares whether — and where — its runtime should be reconciled via
 | `universal` | Reconcile the runtime on **every** machine that enables the plugin (e.g. `agent-worktrees`, `agent-ssh`). |
 | `machine-gated` | Reconcile the runtime only on machines in the plugin's allowed set (e.g. `agent-bridge`, `agent-codespaces`, `agent-containers`, `agent-mcp`). |
 
+The unified updater resolves machine identity from layered local configuration,
+then canonicalizes that identity against the enabling repository's registry.
+It does not replace an explicitly configured execution space with hostname-only
+inference; missing required configuration or failed detection blocks preflight.
+
 The same scope governs the unified `update` flow: `update` rebuilds a
 `machine-gated` runtime only where the machine gate described below permits it
 (the same `runtime_allowed` decision), resolving the gate from the repository
 that enables the plugin, and
 reports any other machine as `SKIPPED (not allowed on this machine)` -- even
 under `--force`, which re-deploys only runtimes this machine may run.
+
+The install-contract guard exercises the real policy, gate, registered/module
+planners and execution barrier with isolated configuration and installer
+boundaries. It covers both platform plans, forced updates, enabling-repository
+selection, missing manifests and detection failures without importing an
+installed runtime or executing an installer. Source-mutation regressions in
+the existing guard suite prove that bypassing these decisions fails the guard.
 
 The reusable installer/readiness contract for `machine-gated` plugins is defined
 by [`patterns/installer-readiness-modules.md`](patterns/installer-readiness-modules.md)
@@ -1562,6 +1666,117 @@ carry the adapter itself; a non-installer script may instead pass an explicit
 depth: it snapshots the real User and Machine registry environment keys and
 fails the test flow if drift is observed. It never rolls back the whole key,
 because doing so could overwrite a legitimate concurrent edit.
+
+## Update-source authentication
+
+`agent-worktrees update` reports authentication before acquiring its configured
+GitHub marketplaces and HTTPS repo anchors. `update --auth-report` performs only
+that read-only report; it does not update payloads, install runtimes, write
+telemetry, or change saved credentials. `--json` returns the sanitized report.
+Sources and account mappings come from effective user/repository settings and
+the repository registry, not an updater-specific credential configuration.
+User `settings.local.json` overrides `settings.json` before repository overrides;
+an exact registered repository keeps its own account override, not a sibling's.
+Repository-account matching retains the remote host and port across HTTPS, SSH
+and SCP spellings; an enterprise source never inherits a public-host sibling's account.
+Default network ports are canonicalized consistently across registry lookup,
+token discovery, helper replay and API selection: `github.com:443` is public
+GitHub, while a non-default enterprise port remains a distinct authority.
+The report resolves ancestor or transported marketplace settings through the same
+context selection as normal update, including its active-project fallback.
+Bare and non-bare anchors on detached or non-default branches are excluded from
+preflight. Branch selection is isolated from caller Git repository selectors
+and shared with synchronization rather than inventing an auth requirement.
+
+Public probes clear source-scoped HTTP headers as well as disabling helpers.
+When a clean public probe succeeds, an effective-header diagnostic avoids
+another network request unless configured headers exist. Working configured
+headers remain untouched; a failing configured path can use an anonymous,
+source-scoped header-clearing overlay, without acquiring credentials.
+Other sources first exercise the
+caller's configured credentials through a read-only router, then try an
+environment token, the mapped `gh` account, and `git credential fill`. A candidate
+uses case-insensitive host matching; enterprise environment tokens require the
+matching explicit `GH_HOST`, and discovery and replay share token selection. It
+must pass both its mapped-account check and a read-only Git contents probe;
+repository metadata permission alone does not establish fetch permission. Each
+subprocess is bounded, non-interactive, headless on Windows, and retains at
+most 1 MiB per output stream. Windows requires a no-breakaway Job; POSIX probes
+own their session and nested helper children remain inside that boundary.
+Owned sessions are swept after success too, including redirected descendants;
+inherited sessions are never swept by an inner helper.
+Contained tests retain their test runner's ownership instead of detaching.
+Reachability does not require an advertised `HEAD`: an unborn or dangling default
+branch is not an authentication failure.
+
+A working setup gets no environment overlay. Only failed sources acquire an
+environment-only Git command-scope overlay, appended after inherited command
+configuration so local helpers cannot override it. Overrides use counted Git
+entries and, when inherited, appended `GIT_CONFIG_PARAMETERS`; the original
+parameter bytes are retained for original-configuration replay. Routes are qualified by
+host and repository: fixing or denying one repository must not change another
+working repository under the same owner. Other requests delegate to Git under
+the caller's original configuration at the child's actual working directory,
+preserving native helper matching, ordering, resets, and includes. Credential
+discovery and replay use the source URL's actual path without adding a `.git`
+suffix. Tokens are never written into the overlay. Read-only probes suppress
+credential approval and rejection; no path switches the active `gh` account.
+Discovery negotiates native `authtype`/`credential` responses as well as password
+credentials. Native identity validation preserves the helper's HTTP scheme,
+uses an isolated, bounded stdlib probe with credential input over stdin rather
+than argv, refuses redirects, and still checks the mapped principal and Git
+contents access. The resulting fallback stores only the fill route, never the
+credential; acquisition replays the original helper response.
+The slot-interpreter helper runs in isolated Python mode so checkout-local
+modules and inherited Python import paths cannot replace its code or standard library.
+Marketplace contexts and individual anchors have separate reports and overlays,
+even when they reference the same URL with different local credentials.
+
+Unresolved required sources are denied without retrying a stalled helper and
+contribute `auth_required` (exit 4, unless a worse failure applies). The shared
+exit remains 4 for auth-only acquisition failures even without telemetry; another
+required command failure still wins. The shared
+Manager result retains that precedence with or without telemetry; a recorded
+Manager authentication failure cannot hide an independent engine command failure.
+The shared
+status includes `auth.report` and `auth.fallback_used`; helper command values
+are not included. Preflight reports fallback availability separately from use.
+A source enters `fallback_used` only after its acquisition child receives the
+overlay, including a child that later times out. Failed spawns, activation
+preconditions, ordinary anchor inspection, and unattempted anchors do not count;
+activation restoration failures after launch do not erase the usage evidence.
+`CE_UPDATE_AUTH=report-only` applies no credential fix, so
+fixable sources remain unresolved. `CE_UPDATE_AUTH=off` skips this preflight.
+There is no persistent configuration cleanup or cleanup-consent flag.
+
+The Worktree Manager consumes the same report through its existing engine JSON
+process seam before its own Git fetch. Its engine environment preserves an
+overlay when present while still discarding parent Python runtime variables.
+Reused staging checkouts supply their own acquisition cwd to the report, so
+local helpers and conditional includes are observed in the right checkout.
+First clones use an empty staging directory with a discovery ceiling for both
+preflight and acquisition, retaining global/command credentials without reading
+the caller's repository-local configuration. Relative install roots and local Git
+sources are anchored before changing cwd; URLs and SCP-style sources stay intact.
+The machine report transports
+explicit environment removals as well as additions. Local-only anchors without
+a configured remote produce no HTTPS auth source.
+The internal `--auth-source`/`--auth-environment` report options transport only
+child environment differences over that pipe; never persist or publish that
+environment. Explicit-source reports can run from an unadopted directory without
+a selected project; ordinary updates still require their normal project context.
+Repository-isolated engine Git calls continue to discard arbitrary
+inherited Git selectors, including inherited updater snapshots, and receive only
+the updater's explicitly scoped auth overlay. Anchor preflight uses that same
+isolation. Every anchor operation is isolated even for local/SSH sources or when
+auth preflight is disabled; isolation alone does not suppress the legacy account
+policy. Auth-managed anchors suppress legacy injected headers even when
+configured credentials passed, so acquisition cannot override the report's
+credential authority.
+The Manager's own updater remains independently usable: a missing/older engine
+or a source outside this reporter's supported shape produces an explicit notice
+and retains the existing Git authentication path, not a false auth refusal.
+Known failed credentials reported by a capable engine still block that fetch.
 
 ## Update-flow robustness — self-stage, watchdog, completion markers (#935)
 
@@ -1821,31 +2036,86 @@ reconcile, `update`, a session-start bootstrap, and a binstub's first-use
 `provision`. An adopting installer (`agent-pull-requests`, `agent-logger`,
 `agent-vault`, `agent-mcp`, `agent-containers`, `agent-ssh`) therefore holds one exclusive
 lock on `<install-dir>/.install.lock` for every mutating action
-(`stamp`/`install`/`update`/`provision`) across its whole
+(`stamp`/`install`/`update`/`provision`, plus `uninstall` where provided) across its whole
 build + publish transaction (Windows: a `FileShare.None` handle; POSIX: `flock` on
-fd 8 (fd 7 for `agent-ssh`), or an atomic pid symlink
-`<install-dir>/.install.lock.pid` where `flock` is unavailable, whose dead owner is
-reaped under a pid-bearing `.install.lock.pid.reap` mutex so two contenders can
-never both reap and then delete each other's live lock. The reaper re-derives
-staleness from the link's current value while holding that mutex, and a link that
-reads empty -- absent (just released or reaped) or not a symlink -- is never
-unlinked: lock creators are not serialized by the mutex, so such an unlink could
-delete a live lock taken in the meantime; an unattributable lock path fails
-closed at the deadline. A `.reap` link left by a
-reaper that died mid-reap is deliberately never reclaimed automatically (that
-would reintroduce the same race); runs fail closed at their deadline until it is
-removed by hand). It is
+fd 8 (fd 7 for `agent-ssh`), or a PID-bearing fallback entry
+`<install-dir>/.install.lock.pid` where `flock` is unavailable). In the matching
+agent-vault, agent-mcp, agent-containers and agent-ssh fallback blocks, every
+acquisition and stale-owner cleanup holds the short, PID-bearing
+`.install.lock.pid.reap` admission mutex. The owner is read and checked while
+that mutex is held, and a confirmed stale link is removed and replaced before
+admission is released. An empty or malformed owner read never authorizes
+deletion; an absent link is retried as acquisition, not erased by path.
+This prevents a delayed reaper from removing a newly admitted live owner.
+A `.reap` link left by a process that died during admission is deliberately
+never reclaimed automatically, even when the main PID link is absent: runs
+fail closed at their deadline until the stale mutex is explicitly repaired.
+The four matching fallback bodies retain one identical protocol. Creation uses
+the POSIX `link` utility with a privately staged regular receipt, never bare
+`ln -s` at either shared lock pathname. `link` calls `link(2)` for the exact
+destination: an existing directory or directory symlink fails rather than
+receiving a child link. This remains atomic when the destination appears
+immediately before creation; a check-then-`ln` sequence is not sufficient.
+The receipt is one newline-terminated ASCII line of at most 64 bytes, including
+the newline: `copilot-extensions.install-lock-pid:v1:<pid>`. Owner reads capture
+a private hard-link snapshot and reject non-regular nodes before opening them,
+including a raced FIFO. A single bounded, NUL-delimited Bash read accepts only
+EOF within that byte bound, rejecting NUL anywhere (including after the newline)
+before Bash can discard it. Missing or extra newlines and malformed records
+never authorize admission, stale deletion or owner-checked EXIT cleanup. Older
+dangling numeric PID symlinks remain readable; symlinks resolving to filesystem
+nodes are refused, not erased as stale PID evidence. Legacy `readlink` output is
+captured in a private file, never normalized by command substitution before
+validation. It must contain one digit-only target of at most 63 bytes followed
+by exactly the utility's one newline terminator. Embedded or trailing newlines,
+carriage returns, NUL, oversized output, missing terminators and utility errors
+are refused without deleting the original link or authorizing EXIT cleanup.
+
+The fallback requires Bash, `mktemp` and the standard `link` utility and
+same-filesystem hard-link support; missing utilities fail closed before
+admission. It adds no runtime library/interpreter or GNU-only `ln -T` option.
+The exact-path utility contract is defined by
+[POSIX link(1)](https://pubs.opengroup.org/onlinepubs/9799919799/utilities/link.html)
+and is also documented by the
+[macOS ln/link manual](https://keith.github.io/xcode-man-pages/ln.1.html) and
+[FreeBSD ln/link manual](https://man.freebsd.org/cgi/man.cgi?query=link&sektion=1&format=html).
+Regular receipts avoid the platform-dependent handling of a symbolic-link
+source by `link(2)`. Native macOS/BSD execution remains a separate validation
+lane; the Linux tests do not claim to have exercised those kernels.
+As with the admission-race correction, incompatible pre-repair installer
+processes must not be run concurrently with a repaired transaction; this
+source repair neither quiesces nor deploys host runtimes.
+The transaction lock is
 acquired **after** the self-stage
 re-exec (the staging parent never holds it) and released in `finally` / an `EXIT`
-trap; the OS releases it if the process dies.
+trap. The OS releases kernel lock handles on process death; fallback entries
+retain the dead-owner recovery and dead-admission explicit-repair rules above.
 
 The lock is **fail-closed**: a run that cannot acquire it within its timeout
 (300s; overridable for `agent-vault`, `agent-mcp`, `agent-containers`, and `agent-ssh` via
 `COPILOT_PLUGIN_INSTALL_LOCK_TIMEOUT_SEC`) reports that it could not acquire the
 install transaction lock and exits non-zero — it never proceeds unlocked.
-Read-only actions (`status`), service controls, and `uninstall` do not take it.
-`agent-logger` differs only in also locking `uninstall` (everything except
-`status`).
+Read-only actions (`status`) and service controls do not take it.
+`agent-vault`, `agent-ssh`, and `agent-pull-requests` also serialize uninstall
+against the same install/update lock. Vault and SSH uninstall previews do not
+acquire or create the transaction lock or remove runtime/config contents.
+The normal transient payload self-staging protocol still applies.
+`agent-logger` already locks uninstall and keeps its state directory.
+
+For those three uninstallers, removing runtime/config contents must **not**
+remove the lock inode or in-flight staged sources. The canonical
+`Remove-InstallRuntimeContent` / `remove_install_runtime_content` helper keeps
+`.install.lock`, `.install.lock.pid`, `.install.lock.pid.reap`, and
+`.install-stage` in place; the install root may therefore remain after purge.
+Dead-owner staging reap remains with the self-staging protocol on subsequent
+invocations, not with purge. Moving the lock to a new
+path would not exclude an older installer holding the original lock, so purge
+preserves the existing identity instead. Removal errors stop that purge rather
+than reporting success. Nested links are unlinked, never traversed; filesystem
+roots, user homes, and linked install roots are refused. This changes no
+uninstaller's config-retention default and introduces no uninstall action for
+init-only plugins.
+
 `agent-bridge` holds the same fail-closed lock for `install` and `update` (POSIX:
 `flock` on fd 8; without a `flock` binary, the same `flock(2)` lock taken through
 Python, so it still excludes PowerShell and `flock` holders of `.install.lock`;
@@ -2112,6 +2382,17 @@ Run the installer from the marketplace plugin dir → marketplace takes over;
 takes over. Switching is an explicit act: invoke the installer from the other
 location. `status` always reports the current `source.kind`.
 
+An explicitly prepared merged-source payload may additionally carry
+`runtime-source.json`. Agent Bridge's native installers consume this optional
+identity to select a distinct immutable generation while retaining the
+original package version in `source.version`; `runtime_version` and
+`runtime_source` identify its deployed source assembly. Source-kind inference
+and installation ownership are unchanged. Other installers retain their
+ordinary package-version behavior until they adopt this boundary.
+See the [source preparation tool](../tools/prepare_runtime_source.md) for the
+single owner of preparation syntax and metadata semantics. Preparing this
+payload does not change Copilot's plugin-content source or disable hooks.
+
 > **Self-stage caveat (#935).** When the `install-contract:v4 self-stage` prologue
 > re-execs out of the marketplace payload, the installer's *live* path is a
 > throwaway `~/.<name>/.install-stage/…` dir — which would read as `local`. The
@@ -2308,6 +2589,18 @@ configured resolver, including index order/authentication, TLS, workspace
 constraints and stricter package cutoffs; an unsupported merge or mismatch
 refuses installation. `prepare_uv_install` is only a preflight API, not an
 installation boundary.
+
+Absolute, non-editable source-only installations retain the common source/resource
+layout without reproducing unrelated caller-directory or staging ancestry.
+An unrelated caller uses a separate private working directory; its effective
+configuration and target interpreter are still captured before relocation.
+Relative operands, requirement files, dependency groups, explicit project
+contexts, source-bearing configuration/metadata and editable installations
+retain their existing relative layout. This includes relative source traversals
+that leave and re-enter a project, rather than rewriting those declarations.
+This reduces backend build-path depth without relocating the checkout or
+weakening source attribution, seasoning or resolver-equivalence checks.
+
 Agent SSH's deferred-runtime snapshots materialize development source pointers
 to the libraries copied inside the snapshot before publication. Both stamp
 implementations keep this metadata transformation runtime-free; first use must
@@ -2362,6 +2655,24 @@ preserves the prior dependency tree. A concurrent manifest, lock or configuratio
 change refuses publication rather than installing an unaudited closure.
 Inputs are rechecked after the candidate tree's rename, before retiring the
 previous tree; a mismatch at that linearization point rolls publication back.
+
+### Inert exact-profile preparation
+
+`tools/runtime_profile.py` provides a repository-only versioned exact-record
+validator and pure selector. It is not shipped in runtime payloads or invoked
+by an installer. Its [reviewed contract](../efforts/active/governed-python-artifact-promotion/exact-profile-contract.md)
+defines the schema and explicit boundary: canonical whole-record identities,
+release/target/mode compatibility, complete asserted wheel metadata graphs
+with extras/markers, and externally supplied whole-record approval references.
+It does not authenticate approvals, verify a source release, inspect/download
+wheels, detect hardware, resolve dependencies or activate a generation.
+
+Actual consumers still need adapters from the existing installation authority
+and verified release/configuration channels, followed by admitted byte/metadata
+checks and immutable construction. Candidate release-input generation is a
+separate concern (#6941); neither constraints nor this inert record prove an
+approved, available CPU/accelerator closure. The current constructors and their
+retained slots remain unchanged by this preparation seam.
 
 ### Shared engine delivery
 

@@ -247,10 +247,11 @@ def test_runtime_metadata_cannot_change_candidate_install_behavior(tmp_path, mon
             artifacts.validate_wheel(archive, manifest["wheels"][0], source_dir=source)
 
 
-def test_validator_provisioning_never_exposes_release_authority(monkeypatch):
+def test_validator_provisioning_never_exposes_release_authority(monkeypatch, tmp_path):
     import yaml
     from seasoned_uv import prepare_uv_install
     import installer_dependency_policy as policy
+    from _promotion_workflow_test_support import source_owned
 
     root = Path(__file__).resolve().parent.parent
     jobs = yaml.safe_load((root / ".github" / "workflows" / "validate-and-promote.yml").read_text())["jobs"]
@@ -265,7 +266,10 @@ def test_validator_provisioning_never_exposes_release_authority(monkeypatch):
         }, }""", "")
 
     monkeypatch.setattr(policy.subprocess, "run", settings_probe)
-    prefix = "python tools/seasoned_uv.py --registry-only --uv uv --"
+    prefix = (
+        "python reviewed-helpers/tools/seasoned_uv.py --registry-only --uv uv --"
+        if source_owned(jobs) else "python tools/seasoned_uv.py --registry-only --uv uv --"
+    )
     for job in ("build-python-artifacts", "python-artifacts", "promote", "publish-python-artifacts"):
         provision = next(
             step for step in jobs[job]["steps"]
@@ -279,7 +283,15 @@ def test_validator_provisioning_never_exposes_release_authority(monkeypatch):
         assert '--index-url "${ARTIFACT_VALIDATION_INDEX_URL:-https://pypi.org/simple}"' in provision["run"]
         invocation = provision["run"].replace("\\\n", "").split(prefix, 1)[1]
         arguments = shlex.split(invocation)
-        admitted = prepare_uv_install("uv", arguments, cwd=root)
+        relative = (
+            "reviewed-helpers/tools/artifact_validation_requirements.txt" if source_owned(jobs)
+            else "tools/artifact_validation_requirements.txt"
+        )
+        assert arguments[arguments.index("-r") + 1] == relative
+        requirements = tmp_path / relative
+        requirements.parent.mkdir(parents=True, exist_ok=True)
+        requirements.write_bytes((root / "tools/artifact_validation_requirements.txt").read_bytes())
+        admitted = prepare_uv_install("uv", arguments, cwd=tmp_path)
         assert "--exclude-newer" in admitted and "--reinstall" in admitted
         assert "--require-hashes" in admitted and "--only-binary" in admitted
         assert "secrets." not in json.dumps(provision)
@@ -290,6 +302,7 @@ def test_validator_provisioning_never_exposes_release_authority(monkeypatch):
 
 def test_promotion_actions_never_receive_or_persist_the_release_pat():
     import yaml
+    from _promotion_workflow_test_support import assert_source_owned_boundary, source_owned
     root = Path(__file__).resolve().parent.parent
     jobs = yaml.safe_load(
         (root / ".github" / "workflows" / "validate-and-promote.yml").read_text(),
@@ -304,6 +317,19 @@ def test_promotion_actions_never_receive_or_persist_the_release_pat():
         "Publish and read back exact-candidate artifacts before enabling merge",
         "Land the candidate branch on main via PR + squash-merge",
     }
+    current = source_owned(jobs)
+    publishing = jobs["publish-python-artifacts"]
+    late_pr = current and publishing.get("outputs", {}).get("pr_number") == "${{ steps.land.outputs.pr_number }}"
+    if late_pr:
+        allowed.remove("Land the candidate branch on main via PR + squash-merge")
+        land = next(step for step in publishing["steps"] if step.get("id") == "land")
+        assert "uses" not in land
+        assert land["env"]["GH_TOKEN"] == "${{ secrets.APERTURE_RELEASE_TOKEN }}"
+        assert "APERTURE_RELEASE_TOKEN" not in json.dumps(publishing.get("env", {}))
+        assert all(
+            "APERTURE_RELEASE_TOKEN" not in json.dumps(step)
+            for step in publishing["steps"] if "uses" in step
+        )
     writers = set()
     for step in job["steps"]:
         if "APERTURE_RELEASE_TOKEN" in json.dumps(step):
@@ -321,7 +347,11 @@ def test_promotion_actions_never_receive_or_persist_the_release_pat():
     wait = next(step for step in merger["steps"] if step.get("id") == "merged")
     assert wait["env"]["PROMOTION_MERGE_TOKEN"] == "${{ github.token }}"
     assert 'merge_token = os.environ.pop("PROMOTION_MERGE_TOKEN")' in wait["run"]
-    assert wait["run"].count("env=read_env") == 3
+    if current:
+        assert_source_owned_boundary(jobs)
+        assert 'qualified_run = json.loads(qualification.stdout)' in wait["run"]
+        assert 'qualified_run.get("conclusion") != "success"' in wait["run"]
+    assert wait["run"].count("env=read_env") == (4 if current else 3)
     assert wait["run"].count("env=merge_env") == 1
     assert '"pr", "view"' in wait["run"] and '"pr", "checks"' in wait["run"]
 

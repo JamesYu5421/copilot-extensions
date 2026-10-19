@@ -123,8 +123,14 @@ fulfilling that direction, not additional operator requirements.
   history, and stop authority/policy/integrity refusals.
 - [ ] Preserve verified prepared-candidate progress across retries and resume
   incomplete runtime/local-finishing work through canonical contracts.
-- [ ] Establish payload process-tree and activation-restoration recovery
-  custody before automatically retrying timeouts or restoration failures.
+- [x] Recover explicit transient activation-restoration contention against the
+  original snapshot without replaying installation.
+- [x] Recover Windows payload-update timeouts only after positive non-breakaway
+  Job cleanup, preserving refusal precedence and the existing attempt budget.
+- [ ] Retain and recover witnessed Windows activation restoration across
+  interruption through canonical operation custody, without install replay.
+- [ ] Establish portable payload process-tree cleanup and interrupted-command
+  settlement before enabling unsupported timeout-replay lanes.
 - [ ] Adopt reuse and bounded independent preparation only where measured
   benefit and existing isolation/resource contracts justify them.
 
@@ -747,3 +753,338 @@ achieved by rearranging today's combined installer invocations.
   timeout cleanup, so timeout replay remains blocked. Durable interrupted
   restoration, preparation/readiness, release and actual running-state
   acceptance remain open; the broad custody Plan item is not complete.
+
+### 2026-10-15 - Original-snapshot recovery source merge
+- #6916 squash-merged into `dev` at
+  `c7dd55a69d2cb0437d47d519809717cd838837c2`. Exact-head Copilot review
+  5542276395 Approved `25ebe2e9a69b7176089228f53f7e8cb81e96f27b` with no
+  open findings. CI 38839564402 succeeded, including hosted lint, POSIX and
+  native Windows lanes. No retry or gate bypass was needed.
+- Re-read the Plan and Validation Plan. Marked only original-snapshot
+  restoration-contention recovery complete. Timeout cleanup proof and durable
+  interrupted restoration remain separately open rather than being implied by
+  this bounded recovery. Preparation/readiness still has no accepted handoff
+  from #6707; that draft and the handed-over #6867 remain at their prior heads.
+- Next independent slice: make the existing process owner positively confirm
+  cleanup before payload state restoration or command replay. Reuse the
+  existing Windows Job termination-and-wait primitive and POSIX session owner,
+  preserve test containment, and retain an explicit failure on unproven cleanup.
+  Source merge is not release promotion or installed-state acceptance.
+
+### 2026-10-15 - Windows-first timeout recovery boundary
+- The operator explicitly selected verified Windows payload-update recovery
+  first, retaining POSIX and install timeout blockers until their independent
+  recovery custody is established. A POSIX session census cannot be presented
+  as full descendant proof because the existing owner preserves detached daemons.
+- Added an opt-in strict Windows lane to the existing process owner, not a
+  second runner: require a Job, prohibit breakaway, confirm zero active
+  processes through the existing termination-and-wait API, then drain/reap the
+  root within one shared cleanup grace. Default runtime installer behavior is
+  unchanged. Failed cleanup raises an explicit error rather than a timeout
+  result that could authorize another writer.
+- Windows payload updates consume that lane and reserve cleanup time inside
+  the existing total budget. Only confirmed owner timeouts may retry; captured
+  refusals retain precedence, and CLI exit 124 alone is not proof. Native spawn
+  errors retain their numeric codes. Install and POSIX timeout behavior remains
+  explicitly blocked.
+- Regression-first reproduced all three missing strict-owner cases. Real
+  native children cover normal exit, owner deadline and watchdog exit, plus
+  end-to-end timeout replay after the first grandchild is dead and refusal
+  after timeout with no replay. No late synthetic writes may appear.
+- Documentation impact: updated the unified-update install contract and design
+  admission boundary. This closes another bounded piece of the reviewed
+  installer convergence vision, not preparation/readiness, durable interruption
+  recovery, release or running-state acceptance.
+- The complete eight-file native process/retry/runtime portfolio passes 307
+  cases with seven platform skips. Failure-injection covers Job termination
+  and output-drain refusal, native spawn-code retention, finite attempts and
+  reservation of cleanup time inside the total budget. Existing acquisition,
+  telemetry, whole-set preflight, runtime deadline and anchor behavior remain
+  covered. All thirteen install contracts pass.
+- Existing subprocess-double fixtures needed explicit routing for classification
+  and planning tests; real Job-owner tests bypass those doubles. The final
+  combined portfolio verifies that boundary rather than faking an empty Job
+  for a subprocess double. No production containment guard was disabled.
+- Fresh synthetic Jobs and native child processes exercise the changed
+  first-touch process boundary; no dependency or installer-construction code
+  changes require a full clean-room build. Hosted POSIX/lint, exact-head review
+  and CI remain publication gates. Live rollout is not authorized by this
+  source slice and remains a separate running-state obligation.
+
+### 2026-10-16 - Timeout recovery review corrections
+- #6932's first review identified one high and three medium issues. Replaced
+  the raw Windows creation flag with the shared headless helper, as required
+  by the actual failing CI guard. Local headless admission passes for all
+  thirteen adopters; no exemption or rule change was introduced.
+- Extended explicit subprocess-double routing to quick-skip and pivot-pruning
+  consumers. The embedded native preflight process now stubs the acquisition
+  adapter directly, pins a synthetic CLI and requires the actual required
+  preflight diagnostic, not just exit 1 and an absent activation marker.
+  Its fresh interpreter resolves the declared canonical process helper rather
+  than an older already-installed test helper.
+- Added an opt-in live desktop regression using the existing Win32 window and
+  foreground observer: two windowless-parent cycles, real console descendants,
+  forced deadlines and native process-handle exit checks. The install contract
+  names the exact command and prerequisites. The current host has no observable
+  foreground window, so that lane reports unavailable rather than claiming
+  headlessness proof; it stays outside the fast required lane.
+- Current-head review and hosted CI remain required. Unsupported POSIX/install
+  timeout recovery, canonical preparation/readiness, release and running-state
+  acceptance remain open.
+- Final eleven-file review-corrected coverage passes 340 cases with eight
+  explicit platform/desktop skips. The enlarged selection exceeded the
+  existing 300-second single-sub-suite budget, so the existing runner partitions
+  exactly the same files into disjoint six- and five-file groups: 133 passed
+  with seven skips in 201.94 seconds, then 207 passed with one skip in 220.56
+  seconds. Per-test, 300-second sub-suite and 900-second aggregate limits are
+  unchanged; no assertion, case or required CI lane was dropped.
+
+### 2026-10-16 - Current-base authentication contract integration
+- Exact-head review 5544132183 Approved `2bc9efb9b2186316e1fa235c1989f1bf7abad44f`
+  with no open findings, but concurrent #6876 changed acquisition's auth
+  environment and actual-use observation contract, producing one real conflict.
+  Preserved an owned backup and reconciled both behaviors rather than dropping
+  the auth gate or the confirmed-cleanup boundary.
+- Windows updates now receive the auth session's exact child environment,
+  including an explicitly empty mapping, through its existing acquisition
+  wrapper. Install restoration retains the canonical injected-runner path.
+  Cleanup failures after launch retain actual credential-use evidence;
+  containment refusals before execution do not claim use.
+- Regression-first exposed a post-launch pipe error escaping as an OS spawn
+  error. It now becomes an explicit unverified-cleanup failure, so a sharing
+  code cannot authorize replay without proof. Actual spawn errors still retain
+  their original native codes and policy.
+- The complete auth/probe/usage/Windows-owner selection passes 169 cases with
+  two platform skips. Focused coverage preserves scoped routes, unchanged parent
+  environment, actual-use versus availability, empty environments, refusal
+  precedence and finite retry. Current-base consumer integration, fresh review
+  and required CI remain before merge; no deployed state was changed.
+- A cold native fixture timed out before publishing its grandchild witness.
+  Synthetic installers and acquisition children now establish bounded readiness
+  before exercising the same command deadlines; the desktop observer binds
+  native child handles before acknowledging readiness. The assertions, command
+  deadlines and harness limits remain unchanged.
+- Current-base runtime/acquisition/telemetry coverage passes 336 cases with
+  seven platform/desktop skips, in the runner's existing one-file sub-suites.
+  Together with the auth selection, all fourteen selected files pass 505 cases
+  with nine explicit skips. Every file stays below its 300-second limit and the
+  invocation retains its 900-second aggregate bound; the largest files took
+  174.49 and 207.44 seconds. No timeout was widened to hide a failure.
+- The externally stewarded #6867 is now confirmed merged into `main` at
+  `ad7376904b0e622f7f44abf516cbef560b322f36`, from head
+  `332c6fd5e4d89b0cb7b7cce5b0409ab3ebd034aa`; its source attribution names the
+  operator-selected recipient. This resolves the source bootstrap dependency,
+  not containing-release consumption, installed acceptance or retained local
+  worktree/claim cleanup. #6707 remains unchanged with its canonical owner.
+
+### 2026-10-16 - Windows timeout recovery source merge
+- #6932 squash-merged into `dev` at
+  `e4d423748e9453e1127d54c27b543f6db31b83dc`. Exact-head review 5545098715
+  Approved `7dd9d63f42b3713152b99b84a651225b41261cb3` with zero open
+  findings. Both current-head CI runs succeeded; the later run 38872721613
+  completed before merge. No pending check was bypassed.
+- Re-read the complete Plan and Validation Plan. Marked only confirmed Windows
+  payload-update timeout recovery complete. POSIX/install timeout replay and
+  durable interrupted restoration remain blocked; preparation, readiness,
+  retained-candidate reuse and installed-state acceptance remain open.
+- Managed pull-forward refused replaying the three already-squashed commits.
+  Preserved an owned backup and verified identical stable patch IDs for their
+  complete cumulative diff and the actual merge before advancing onto `dev`;
+  no unmerged change was dropped.
+- #6707 remains draft at its unchanged canonical head, without an accepted
+  preparation/retention handoff. Keep that owner's construction boundary.
+  Continue independent durable-recovery coordination and containing-release
+  tracking; a source merge does not authorize rollout or prove running health.
+- The next independent slice first reviews the durable activation-restoration
+  boundary in `design.md`. Recovery requires the original snapshot and a
+  durable positive child-settlement witness; a dead parent or missing PID cannot
+  authorize another writer. The first lane restores witnessed interruptions
+  without enabling install-timeout replay. Selection of an applicable canonical
+  home-wide custody primitive is an explicit pre-implementation design gate.
+
+### 2026-10-16 - Durable recovery design reviewed; custody selection next
+- #6989 squash-merged into `dev` at
+  `6e6c5e46c8d2f4af46f950b549bc6d184578630b`. Exact-head Copilot review
+  5545906362 Approved `73c69788f6ce58a9d3d47188389f0bc5d0263c35` with no
+  open findings; required CI 38881676280 succeeded before merge.
+- Re-read the Plan and Validation Plan. This is a reviewed protocol, not a
+  completed implementation or a running-state claim. The next gate is selecting
+  canonical operation-scoped, crash-releasing home-wide custody. Existing
+  installation-context directory locks retain dead-owner reservations for
+  explicit repair; the daemon-oriented single-instance lease and ZDD's
+  cutover-specific lock have different scopes. Do not silently repurpose those
+  contracts or add an updater-local mutex.
+- Containing promotion 38874649872 failed only Worktrees job 116899383732 at
+  `6b2fa0ac2887a8fda669dfb8356e5c6083f6729d`. Sixteen complete sub-suites
+  passed; the final seven-file group was stopped with exit 124 after receiving
+  only 5.86083 seconds of the unchanged aggregate budget. This is the existing
+  #6919/#5694 portfolio-performance boundary, not an assertion failure or an
+  accepted flake. Routed the newer witness to #6919 in comment 6212960680.
+  No competing optimization, budget increase, coverage deletion, forced retry
+  or release waiver was started.
+- #6707 retains preparation ownership and has not accepted the adapter request.
+  The parent remains Active. Canonical custody selection, durable recovery,
+  preparation/readiness/reuse, legitimate promotion and separately authorized
+  local healthy-current proof remain open.
+
+### 2026-10-16 - Canonical operation custody and witnessed restoration
+- The operator selected the shared operation-custody extension, not an
+  updater-local lock or a repurposed daemon lease. The canonical lease library
+  now provides process/thread-owned, crash-releasing custody using its existing
+  OS locking primitive. Same-process Windows handles are also serialized;
+  ownership checks retain file identity without deleting or PID-reaping locks.
+- The canonical activation-state owner persists the original snapshot before
+  launch, and permits recovery only after a positive process-owner witness.
+  Interrupted settings/inventory restoration reuses that snapshot and verifies
+  both postconditions before clearing the record. Unproven command settlement,
+  invalid records, cleanup failures and failed verification retain explicit
+  blockers rather than recapturing enabled post-install state.
+- Windows inventory installs compose this opt-in protocol with the existing
+  strict Job owner and scoped-auth wrapper. Install timeouts still fail without
+  replay. Prior recovery consumes the command allowance, and final restoration
+  backoff plus Job cleanup remain reserved inside the existing target budget.
+  Legacy standalone preservation and runtime daemon behavior are unchanged.
+- Complete canonical coverage passes 177 cases with six ordinary platform
+  skips. Real native tests kill the actual owning process before/after witness
+  publication and between restoration writes. They bind a grandchild's native
+  handle before Job cleanup, proving no writer remains before witnessed
+  restoration. Windows consumer/auth coverage passes 26 cases; existing
+  retry/registered/quick-skip/pruning consumers pass 133 with one platform skip.
+- The standalone activation CLI passes eight cases. An isolated import using
+  only bundled library roots proves its new dependency closure without
+  canonical source paths; nested materialization and canonical/transitive
+  admission contracts pass 28 cases. Source/copy parity, all thirteen install
+  contracts and headless-launch admission pass.
+- Fresh synthetic homes and actual native children exercise first-touch and
+  interruption directly. No constructor or external dependency was added, so
+  a full fresh-machine installer build is not repeated. Hosted POSIX coverage,
+  targeted lint and exact-head review/CI remain publication gates. Local
+  governed Ruff is unavailable; its required hosted check is not waived.
+  Live rollout is still separately authorized and blocked on legitimate
+  containing promotion, not claimed from these fixtures.
+- Documentation impact: updated canonical and standalone library contracts,
+  the unified-update installation contract and the selected design. All eleven
+  direct consumer identities carry patch intent; no source versions were
+  hand-edited. Preparation stays with #6707, performance stays with #5694/#6919,
+  and the parent completion gate remains open.
+- Final consumer inspection caught a resume-path defect before publication:
+  an interrupted install may already have copied its payload, causing a later
+  update verb to bypass install-only restoration. Every Windows acquisition
+  now enters canonical custody before auth or verb selection. Native tests
+  resume through the real acquisition entry point with the payload present,
+  prove restoration precedes update, and prove an auth refusal still leaves
+  original activation restored without launching a command. A pre-witness
+  transaction blocks both verbs. The complete updated four-file consumer
+  portfolio passes 89 cases with one platform skip, including ten native
+  preservation/budget cases; no cleanup proof or retry admission was weakened.
+- Rebuilt the actual declared Worktrees test environment from scratch through
+  governed `--reinstall --prepare-only`, then exercised the native consumer
+  again. A subsequent validation failure exposed error masking: an exception
+  before durable witness publication was replaced by a generic unproven-state
+  error. The original triggering cause was not recoverable from that run.
+  The canonical context now retains the record while propagating the actual
+  body failure; confirmed timeout/restoration exceptions keep their contract.
+- Added bounded publication recovery for explicit Windows sharing/lock errors
+  32/33, with custody and previous-record revalidation before the same transition
+  is retried. It neither recaptures activation nor replays a command; permission
+  and exhaustion cases stay terminal. Witness-publication and final-restoration
+  delays are both reserved inside the original budget. A separate presence flag
+  ensures a disappeared inventory record cannot be mistaken for an originally
+  absent activation flag. Fault-injection covers all these boundaries; the
+  final canonical 177/6 and consumer 89/1 selections above pass unchanged
+  time/resource limits.
+- The final timeout-policy check also covers the inner watchdog's exit 124:
+  an install cannot replay merely because that output contains a transient
+  marker. Captured refusals precede timeout reporting after verified cleanup.
+  The native preservation selection now passes twelve cases, and the Windows
+  payload-owner selection passes seventeen with one platform skip.
+
+### 2026-10-16 - Source review custody corrections
+- #7033's exact-head review identified two high-severity defects in the new
+  generic operation primitive: forked children retained descriptors after the
+  parent released custody, and concurrent acquire attempts on the same
+  instance could clear the successful owner's fields.
+- Descriptor setup, ownership publication and release now share one process
+  guard, including the fork boundary. Child callbacks close inherited raw
+  file objects without explicitly unlocking the parent's open-file description;
+  inherited objects still reject child execution. Only the attempt that
+  reserved custody may clear fields while the guard is held.
+- A deterministic two-thread gate reproduces the same-instance interleaving
+  and checks actual independent-process kernel exclusion while the winner
+  stays active. Its native Windows selection passes five cases with three
+  POSIX skips. A new real-fork case keeps the child alive after parent release;
+  required hosted Linux CI must execute it before merge.
+- The separate failed CI step was literal F401 for a now-unused
+  `SimpleNamespace` import in the updated auth fixture. Removed that import;
+  required lint is rerun normally, not bypassed. Fresh review and all
+  exact-head checks remain open.
+
+### 2026-10-16 - Transitive release fixtures and native budget evidence
+- The next exact-head CI run passed the shared-library and real POSIX fork
+  lanes, but Logger's two fresh-release tests failed because their synthetic
+  canonical root omitted plugin-activation's newly declared lease dependency.
+  Added that library to the fixture and a direct materialization regression.
+  Production context staging already copies the full canonical library root.
+- The staged Worktrees import fixture had the same incomplete closure, hidden
+  by importing the missing package from the development environment. It now
+  stages the declared dependency and verifies activation, preservation, lease
+  and operation modules all load from the installed copy after source cleanup.
+  The complete staged-install file passed four cases with one platform skip.
+- Actual Windows Logger provisioning passed in 291.00 seconds within the
+  unchanged 300-second group budget. The separate snapshot-only first-use
+  test exhausted that budget without an assertion failure. Native inspection
+  observed signed-Python venv/ensurepip construction before offline package
+  effects; avoiding fixture cache copies or selecting the real offline-UV
+  venv route did not establish a passing first-use result. Those experiments
+  and diagnostic instrumentation were removed, not shipped as speculative
+  performance fixes.
+- Retain the native first-use discrepancy with the existing #5694/#6919
+  performance owner. No deadline increase, omitted coverage, competing
+  constructor, retry waiver or installed update is authorized. Current-head
+  review/CI, native budget closure and the parent running-state gate remain open.
+
+### 2026-10-16 - Offline package-effect closure corrected
+- The next hosted Logger run reached the snapshot-only CLI invocation and
+  reported `ModuleNotFoundError: single_instance_lease`; 482 other cases
+  passed with twenty-nine platform skips. This confirms a second fixture
+  defect, not a production UV dependency-resolution failure: the offline
+  double copied only each explicitly requested project's sources, ignoring
+  its declared local transitive dependencies.
+- The double now copies the declared local runtime dependency closure, with
+  fixture-root bounds and cycle protection. Real canonical package code,
+  constructor, admission, health, snapshot-only invocation and existing
+  assertions remain intact. No production installation loop was changed.
+- A focused native regression constructs a real fresh venv without pip,
+  invokes the actual offline-UV executable for plugin-activation and verifies
+  isolated imports and installed origins for activation, preservation, lease
+  and operation. It and the materialization regression pass in 49.09 seconds
+  combined under unchanged thirty-second item and 300-second group limits.
+  The first broader regression shape exceeded its item cap; reduced only its
+  redundant fixture/launcher preparation, not the package-effect/import checks.
+- The earlier Windows first-use deadline evidence does not prove the later
+  import succeeds; hosted end-to-end verification must cover that separately.
+  Existing native budget and running-state obligations remain open. The
+  preceding exact-head Copilot review reported no open issues, but the next
+  source head still owes its own review and CI.
+
+### 2026-10-16 - Fork cleanup error isolation
+- The subsequent exact-head review's full agentic lane did not start before
+  its runner deadline. Its fallback raised two portability findings and one
+  fork-cleanup finding; none was treated as passing merely because the verdict
+  was a Comment.
+- Both portability findings assume `stat.FILE_ATTRIBUTE_REPARSE_POINT` is
+  absent on POSIX. The supported CPython standard library defines it
+  unconditionally, including Python 3.10; native hosted POSIX custody and
+  preservation tests also execute that expression. Replied with that source
+  and execution evidence rather than silently disabling the reparse mask.
+- A native close error could stop the child callback before it processed other
+  inherited descriptors. Cleanup now attempts every descriptor, resets the
+  child registry/guard and only then reports the first native error through
+  Python's unraisable fork-callback path. Errors are not silently suppressed.
+  The standalone source copy is regenerated from the canonical library.
+- A portable injected-close regression verifies later handles close, registry
+  and guard reset, and original error identity. The real live-child fork
+  regression now covers two independent held locks, with and without an
+  injected error. Native Windows focused coverage passes six cases with four
+  POSIX skips; hosted POSIX must execute the faulted fork case before merge.
+  Required current-head CI/review and the parent running-state gate remain open.
