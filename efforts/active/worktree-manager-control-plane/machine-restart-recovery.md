@@ -98,6 +98,8 @@ means of fulfilling the operator's request. They require normal source review.
 - [x] Preserve recovery evidence independently of current reachability and
   display tombstones. Store only necessary metadata in private local state,
   not transcripts, secrets, environment dumps or untrusted executable commands.
+  The evidence foundation landed in [#7230](https://github.com/ThomasMichon/copilot-extensions/pull/7230);
+  lifecycle producers and restoration remain separate open items.
 - [ ] Record reasoned intentional-exit evidence durably; delayed observations
   from an older incarnation must not retire a replacement.
 - [ ] Handle native restart/shutdown notification by checkpointing the eligible
@@ -246,3 +248,171 @@ The umbrella effort remains Active independently of this slice's completion.
   enrollment/admission, exact-conversation cold Resume, acknowledged status-first
   seed delivery and remaining native qualification are still open. No live
   recovery, host configuration, daemon restart or rollout was performed.
+
+### 2026-10-19 - Evidence foundation merged; lifecycle slice next
+
+- [#7230](https://github.com/ThomasMichon/copilot-extensions/pull/7230) merged to
+  `dev` at `62b095042dbc1c143635bb813fe7986e6e35081b` after independent Copilot
+  approval of exact head `c76c40e81868acb314051084d1d3fde297cbfab6`, with no open
+  findings, and the actual required PR gate passing in
+  [CI run 39222700357](https://github.com/ThomasMichon/copilot-extensions/actions/runs/39222700357).
+  The initial canonical merge refusal while that gate was missing was respected.
+- The final bounded, network-disconnected regression receipt is tied to source
+  tree `71cda78cdd58f66c40dcb56cf477ff5cd60cd080`: 229 Manager tests passed with
+  three native-platform skips, and 226 Worktrees tests passed. The selected lane
+  includes the journal/observer, native ownership proof, existing mux daemon,
+  attachment, binding and session contracts. Private raw logs are retained with
+  the implementation record, not published.
+- Canonical post-merge completion initially stopped on already-landed incremental
+  replays. The documented owning-branch conflict continuation preserved current
+  upstream content and its documentation additions; only inspected empty replays
+  were skipped. The original full recovery reference remains retained. The
+  resulting branch and every tracked path matched fresh `origin/dev`, then
+  canonical `pr-complete` succeeded.
+- Only independent evidence persistence is closed by this foundation. #4564 and
+  the umbrella effort remain open. Next is the bounded reasoned-exit/lifecycle
+  producer contract: bind observations to their original native generation,
+  preserve shutdown interruption versus explicit closure, and keep unavailable
+  or ambiguous cause unconfirmed. Native notification/startup, enrollment,
+  owner-authorized exact-conversation Resume, acknowledged status-first seed
+  delivery and remaining platform qualification still follow.
+- This records a source merge, not a verified release, installation or running
+  recovery. No live enrollment, host configuration, shared-daemon restart,
+  production-session operation or rollout was authorized or performed.
+
+### 2026-10-19 - Source-bound lifecycle producer
+
+- Extended the existing owner activation intervals with optional opaque source,
+  reasoned End and persistent ambiguity metadata. Qualified Linux/WSL Start
+  evidence requires the actual original UUID's open native hold, captured with
+  original ancestor process birth and boot/environment metadata. It does not
+  create a second registry, invent a source during periodic observation, or
+  alter launch environment/authority.
+- Both lifecycle writes require the version-3 owner verb, even for legacy
+  requests. Source rejection precedes self-session claim acquisition. A new
+  physical source opens a new interval; a true same-source bind is idempotent.
+  Delayed old Start delivery cannot reactivate an ended claim. End matches a
+  unique canonical historical source under the registration lock; historical
+  facts cannot close a replacement or release its claim/fsmonitor. Ambiguity
+  from repeated logical intervals in one physical CLI survives history pruning.
+- The warm End path now processes the original hook context instead of
+  acknowledging an unhandled event. It never probes/attaches a terminal or
+  recaptures resident ancestry. Its compatibility capability and source-bound
+  fallback flag prevent silent old-runtime downgrades. Start likewise requires
+  source-aware acknowledgement and never falls back to older startup writers;
+  original binding environment is transported rather than inherited from the
+  resident. Windows native source
+  capture remains visibly unqualified without a new warm-path helper spawn.
+- One read-only owner query supplies current hosting and an explicitly requested
+  prior native conversation's bounded lifecycle. The Manager samples retained
+  journal subjects even after display tombstones. Qualified source and ordinal
+  corroboration are required for reasoned native closure. Shutdown precedence is
+  checked inside the journal transaction; delayed End after cancellation stays
+  uncertain rather than guessing cause from wall-clock order.
+- The first historical-End/current-claim regression failed on the old behavior.
+  The final integrated bounded, disconnected lane passed 456 Worktrees tests
+  with 12 platform-specific skips and 232 Manager tests with three native skips.
+  This selected lane also covers real old-daemon refusal, unchanged hook/daemon
+  boundaries and resident-to-canonical historical End.
+  This is source/fixture evidence, not native restart or seed-acknowledgement
+  qualification. Publication and actual merge are recorded separately.
+- `automatic_eligible` remains false. Native shutdown notification, startup and
+  enrollment, recovery admission/attempt reconciliation, exact native Resume,
+  acknowledged status-first seed and platform qualification remain open. The
+  full plan and #4564 are not completed by this producer slice.
+- The actual PR module-size guard rejected growth in three existing modules.
+  Extracted the generic activation model, locked title capture and captured
+  lifecycle subprocess transport along their responsibility boundaries.
+  Compatibility aliases and the source-string transport guard follow those
+  owners. The tracking baseline only shrank; no ceiling was widened. The final
+  targeted run above also covers the original title-capture contracts.
+- Provider review found three concrete compatibility gaps. Source-aware warm
+  Start and End now require the selected rendezvous to advertise their capability
+  before a packet is sent, retaining the response check as well. Real legacy
+  TCP peers prove that refusal leaves their mutation handler uncalled. All three
+  installer paths deploy lifecycle transport and the canonical stdlib
+  source-capture helper beside the client; disposable installed-bin fixtures
+  cover source loading without the payload's package tree.
+- The Manager now accepts the owner's full 256-interval retained lifecycle,
+  without confusing that count with its monotonic activation ordinal. The
+  boundary regression accepts 256, rejects 257, and observes a latest-source
+  End at ordinal 1000. These regressions failed before the fixes. The subsequent
+  bounded isolated lane passed 478 Worktrees tests with 12 platform skips and
+  234 Manager tests with three native skips. This remains pre-merge fixture
+  evidence, not permission to enroll or claim live restoration.
+- A fresh review identified two additional Medium findings in its overview,
+  despite an empty inline-open count. Unknown/inferred End observations now
+  preserve the execution's cancelled-shutdown marker before a delayed
+  `user_exit`; an explicit operator stop still closes it. Retained intentionally
+  closed subjects without live mappings no longer consume periodic owner probes,
+  while a fresh live mapping re-admits its subject through the existing revision
+  fence. All five new regression cases failed first. The targeted isolated
+  Manager lane then passed 239 tests with three native skips; the unchanged
+  Worktrees slice retains the preceding 478-test receipt.
+- The next review found PID-only catalog reconciliation replacing a qualified
+  activation with a source-less interval. The shared activation helper now
+  refuses source-less lifecycle changes once source-bound history exists, while
+  the catalog can still fill PID metadata. Both matching and changed catalog
+  timestamps reproduced the failure. The regression follows canonical Start,
+  actual catalog refresh, matching End, claim release and fsmonitor cleanup,
+  then proves another catalog pass cannot reopen the ended interval. The
+  expanded isolated Worktrees lane passed 505 tests with 12 platform skips;
+  Manager sources remain unchanged from their 239-test receipt.
+- A further review identified replay side effects: duplicate historical End
+  could capture a replacement's title, and a timestamp-less source-bound Start
+  could reacquire an ended interval's released claim. Title capture now runs
+  only for an actual current End or the legacy closure shape. Hook reactivation
+  of a previously ended physical source requires a usable event timestamp and
+  is refused before claim acquisition when uncertain. Timestamped logical
+  resumes retain their explicit ambiguity. The title regression now patches its
+  actual leaf owner and proves redelivery is side-effect free; all three
+  missing/invalid-timestamp cases failed before the fix. The expanded isolated
+  Worktrees lane passed 509 tests with 12 platform skips; Manager remains at
+  its unchanged 239-test receipt.
+- Review then exposed a distinct title-persistence interleaving after current
+  End had already released its lock. The source-bound End result now carries
+  the exact activation source and ordinal. The title writer rechecks that
+  receipt against the latest ended interval under the record lock, alongside
+  current-head authority. Missing receipts cannot authorize source-bound title
+  writes. Both same-UUID replacement windows failed before the fix: replacement
+  before title input and replacement after the old input had been read. The
+  unchanged-generation positive control still captures its title. The expanded
+  isolated Worktrees lane passed 512 tests with 12 platform skips; Manager
+  remains unchanged from its 239-test receipt.
+- Review found two remaining compatibility branches: source-aware End had
+  bypassed legacy cleanup before reaching the authoritative writer, and a new
+  activation reusing an already-linked handoff token had not advanced lifecycle
+  revision. End now always delegates to the version-3 writer, which decides
+  legacy versus protected history under its lock without inventing source
+  proof. The reused-token branch advances revision only when activation changes
+  without a new handoff transition. Three failing-first cases cover both
+  resident and cold legacy cleanup plus replacement revision; negative controls
+  retain bound-source protection. A stale save cannot erase the replacement,
+  and idempotent rebinding does not advance revision. The isolated Worktrees
+  lane passed 517 tests with 12 platform skips; Manager remains at 239.
+- Review identified that warm End had not transported its original scoped
+  bare-resume binding. End now carries only the three project/worktree/session
+  binding variables, alongside native source metadata, without a terminal probe
+  or environment dump. A real resident-IPC regression uses two records with the
+  same native UUID, outside-worktree cwd and an explicit binding to the later
+  record; it first failed by selecting the earlier record and leaving the
+  intended claim open. The repaired path closes only the bound activation and
+  leaves the unrelated record byte-for-byte unchanged. The isolated Worktrees
+  lane passed 518 tests with 12 platform skips; Manager remains at 239.
+- Review exposed lost source authority after every interval for a still-live
+  physical source had been pruned. Each session now retains a separate bounded
+  discarded-source fence; superseded source re-registration is refused before
+  claim mutation, and discarded sources cannot regain End or owner-proof
+  authority. The fence survives stale and equal-revision saves. Overflow becomes
+  a sticky explicit refusal, not forgotten history. Legacy activation parsing
+  and serialization moved to the existing lifecycle leaf, reducing the tracking
+  module ceiling from 4108 to 4030 lines without widening a budget.
+- The same review found unknown-cause definitive hook Ends still diluting owner
+  polling. A strict backward-compatible journal marker records consumption
+  separately from cause. Consumed unmapped subjects remain retained but leave
+  the rotation; live mappings re-admit them. Inferred Ends remain probeable, and
+  shutdown/cancellation uncertainty is preserved. Marker persistence is fenced
+  to the execution generation. The two original regressions failed before these
+  fixes. The expanded isolated lane passed 763 Worktrees tests with 12 platform
+  skips and 249 Manager tests with three native skips. This is still source and
+  fixture validation, not released or deployed recovery.

@@ -53,6 +53,64 @@ def test_positive_survives_independent_reader_and_reasonless_loss(tmp_path, reco
     assert row["automatic_eligible"] is False
 
 
+def test_consumed_end_is_monotonic_until_execution_generation_changes(tmp_path, recovery):
+    journal = recovery.RecoveryJournal(tmp_path)
+    evidence = positive(recovery)
+    journal.observe(evidence)
+    journal.record_exit(evidence, reason="unknown", end_consumed=True)
+    journal.record_exit(evidence, reason="unknown")
+    assert journal.snapshot()[0]["end_consumed"] is True
+    journal.observe(dataclasses.replace(evidence, observation_sequence=2, observed_at=110.0))
+    assert journal.snapshot()[0]["end_consumed"] is True
+    assert journal.snapshot()[0]["disposition"] == "unknown"
+    replacement = dataclasses.replace(
+        evidence, native_incarnation="native:replacement", owner_revision=2,
+        observation_sequence=3, observed_at=120.0,
+    )
+    assert journal.observe(replacement)["applied"]
+    assert journal.snapshot()[0]["end_consumed"] is False
+    assert journal.record_exit(
+        evidence, reason="unknown", end_consumed=True,
+    ) == {"applied": False, "reason": "superseded"}
+    assert journal.snapshot()[0]["end_consumed"] is False
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_consumed_end_preserves_shutdown_uncertainty(tmp_path, recovery, cancelled):
+    journal = recovery.RecoveryJournal(tmp_path)
+    evidence = positive(recovery)
+    journal.observe(evidence)
+    journal.shutdown_pending(
+        "linux", "example-environment", "boot-one", notification_id="one",
+    )
+    if cancelled:
+        journal.shutdown_cancelled(
+            "linux", "example-environment", "boot-one", notification_id="one",
+        )
+    journal.record_exit(evidence, reason="unknown", end_consumed=True)
+    row = journal.snapshot()[0]
+    assert row["end_consumed"] is True
+    assert row["disposition"] == ("unknown" if cancelled else "shutdown-interrupted")
+    assert row["notification_id"] == ("" if cancelled else "one")
+    if cancelled:
+        assert row["detail"] == "shutdown-cancelled"
+
+
+def test_legacy_end_consumption_defaults_false_and_rejects_unknown_metadata(recovery):
+    row = {
+        "last_positive": dataclasses.asdict(positive(recovery)),
+        "disposition": "unknown", "detail": "", "notification_id": "",
+    }
+    assert recovery._decode(json.dumps(row))["end_consumed"] is False
+    assert recovery._decode(json.dumps({**row, "end_consumed": True}))["end_consumed"] is True
+    for changes in (
+        {"end_consumed": 1}, {"end_consumed": None}, {"end_consumed": "true"},
+        {"other": False}, {"end_consumed": False, "other": False},
+    ):
+        with pytest.raises(ValueError):
+            recovery._decode(json.dumps({**row, **changes}))
+
+
 def test_explicit_close_is_durable_and_periodic_refresh_cannot_reopen(tmp_path, recovery):
     journal = recovery.RecoveryJournal(tmp_path)
     evidence = positive(recovery)
@@ -62,6 +120,52 @@ def test_explicit_close_is_durable_and_periodic_refresh_cannot_reopen(tmp_path, 
         evidence, observation_sequence=2, observed_at=110.0,
     )) == {"applied": False, "reason": "closed"}
     assert recovery.RecoveryJournal(tmp_path).snapshot()[0]["disposition"] == "intentional"
+
+
+def test_activation_identity_not_capability_controls_generation(recovery):
+    first = positive(recovery, activation_ordinal=1, source_identity="native:source")
+    qualified = dataclasses.replace(first, lifecycle_qualified=True)
+    assert first.identity() == qualified.identity()
+    replacement = dataclasses.replace(qualified, activation_ordinal=2)
+    assert replacement.identity() != first.identity()
+    assert replacement.provider_identity() == first.provider_identity()
+
+
+def test_legacy_positive_has_no_invented_activation_proof(recovery):
+    evidence = positive(recovery)
+    assert evidence.activation_ordinal == 0
+    assert evidence.source_identity is None
+    assert evidence.lifecycle_qualified is False
+
+
+@pytest.mark.parametrize("changes", [
+    {"activation_ordinal": True}, {"activation_ordinal": -1},
+    {"source_identity": "native:source"}, {"activation_ordinal": 1},
+    {"lifecycle_qualified": True}, {"lifecycle_qualified": "true"},
+])
+def test_invalid_activation_proof_is_rejected(recovery, changes):
+    with pytest.raises(ValueError):
+        positive(recovery, **changes)
+
+
+def test_cancelled_shutdown_keeps_delayed_native_exit_uncertain(tmp_path, recovery):
+    journal = recovery.RecoveryJournal(tmp_path)
+    evidence = positive(recovery)
+    journal.observe(evidence)
+    journal.shutdown_pending(
+        "linux", "example-environment", "boot-one", notification_id="one",
+    )
+    journal.shutdown_cancelled(
+        "linux", "example-environment", "boot-one", notification_id="one",
+    )
+    journal.observe(dataclasses.replace(evidence, observation_sequence=2, observed_at=110.0))
+    for _ in range(2):
+        assert journal.record_exit(
+            evidence, reason="intentional", detail="native-session-end",
+        )["applied"]
+        row = journal.snapshot()[0]
+        assert row["disposition"] == "unknown"
+        assert row["detail"] == "native-end-after-cancel-unconfirmed"
 
 
 def test_positive_corroboration_clears_unknown_not_shutdown(tmp_path, recovery):
@@ -74,6 +178,29 @@ def test_positive_corroboration_clears_unknown_not_shutdown(tmp_path, recovery):
     journal.shutdown_pending("linux", "example-environment", "boot-one", notification_id="one")
     journal.observe(dataclasses.replace(evidence, observation_sequence=3, observed_at=120.0))
     assert journal.snapshot()[0]["disposition"] == "shutdown-pending"
+
+
+@pytest.mark.parametrize("native_first", [False, True])
+def test_unknown_exit_preserves_cancelled_shutdown_uncertainty(tmp_path, recovery, native_first):
+    journal = recovery.RecoveryJournal(tmp_path)
+    evidence = positive(recovery)
+    journal.observe(evidence)
+    journal.shutdown_pending(
+        "linux", "example-environment", "boot-one", notification_id="one",
+    )
+    journal.shutdown_cancelled(
+        "linux", "example-environment", "boot-one", notification_id="one",
+    )
+    if native_first:
+        journal.record_exit(evidence, reason="intentional", detail="native-session-end")
+    marker = journal.snapshot()[0]["detail"]
+    for _ in range(2):
+        journal.record_exit(evidence, reason="unknown", detail="native-end-cause-unconfirmed")
+        assert journal.snapshot()[0]["detail"] == marker
+    journal.record_exit(evidence, reason="intentional", detail="native-session-end")
+    assert journal.snapshot()[0]["disposition"] == "unknown"
+    journal.record_exit(evidence, reason="intentional", detail="operator-stop")
+    assert journal.snapshot()[0]["disposition"] == "intentional"
 
 
 @pytest.mark.parametrize("reason", ["intentional", "unknown", "shutdown-interrupted"])
