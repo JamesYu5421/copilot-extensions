@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -250,29 +249,24 @@ class TestStandaloneCoverage:
         assert "python -m pytest -q" in invocation
         assert not any(step.get("continue-on-error") for step in job["steps"])
 
-    def test_stage_one_does_not_activate_or_trigger_the_per_pr_fleet_lane(self):
+    def test_stage_one_does_not_activate_required_fleet_coverage_selection(self):
+        import yaml
+
         root = Path(__file__).resolve().parents[1]
-        workflow = (root / ".github/workflows/ci.yml").read_text()
-        patterns = re.findall(r"'(\^\(fleet-manager/[^'\n]+)'; then", workflow)
-        assert len(patterns) == 2
-        stage_one_paths = [
-            "tools/coverage_guided_selection/baseline.py",
-            "tools/coverage_guided_selection/standalone.py",
-            "tools/coverage_guided_selection/child_stream.py",
-            "tools/coverage_guided_selection/child_stream_parent.py",
-            "tools/coverage_guided_selection/child_audit.py",
-            "tools/test_coverage_guided_selection.py",
-            "tools/test_coverage_standalone.py",
-            "tools/test_child_stream.py",
-            ".github/workflows/validate-and-promote.yml",
-            "docs/standalone-coverage-baselines.md",
-            "docs/pipelines.md",
-        ]
-        assert all(not re.search(pattern, path) for pattern in patterns for path in stage_one_paths)
-        assert workflow.count(
-            "run-standalone-tests.py fleet-manager --prepare --admission-wait 60 "
-            "--timeout ${{ github.event_name == 'workflow_dispatch' && 600 || 120 }}"
-        ) == 2
+        jobs = yaml.safe_load((root / ".github/workflows/ci.yml").read_text())["jobs"]
+        for platform in ("linux", "windows"):
+            job = jobs[f"fleet-native-{platform}"]
+            assert job["needs"] == "discover"
+            assert "needs.discover.outputs.fleet_contracts == 'true'" in job["if"]
+            run = next(
+                step["run"] for step in job["steps"]
+                if "run-standalone-tests.py fleet-manager" in step.get("run", "")
+            )
+            assert (
+                "--timeout ${{ github.event_name == 'workflow_dispatch' && "
+                "inputs.promotion_run == '' && 600 || 120 }}"
+            ) in run
+            assert "--selection-file" not in run and "run-coverage-selected-tests.py" not in run
 
     @pytest.mark.parametrize("initially_compatible", [False, True])
     def test_reused_environment_checks_and_provisions_parent_context_capability(
