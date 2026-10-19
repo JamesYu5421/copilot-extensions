@@ -468,6 +468,17 @@ profile-folder API (Windows). It never redirects HOME or USERPROFILE in this
 lane. The hosted job discards the whole account afterward, while each test
 gracefully stops only its own original, natively captured owners.
 
+The Windows normal-upgrade scenario also runs the opt-in bootstrap admission
+visibility/cleanup probe for Windows PowerShell and PowerShell 7. It launches
+the actual wrapper from a real `pythonw.exe` parent, exercises an unflagged
+local console descendant across two invocations, and uses the shared live
+Win32 window observer plus stricter foreground tracking. A separate forced
+timeout proves all four native participants belong to the caller's Job and
+exit when that Job is terminated, with zero active processes confirmed.
+The probe is restricted to the disposable hosted-account lane, not the
+operator's desktop or fast required CI. It creates no daemon or remote route
+and does not test or authorize deployment.
+
 These are manual acceptance jobs, not additions to required fast CI. Each
 composite case runs separately under a 1,200-second group and 1,800-second
 aggregate bound; actual service cutover and native-exit deadlines remain
@@ -862,6 +873,11 @@ and 900 seconds across the plugin. Each sub-suite also defaults to 128
 processes, 4096 MiB of process-tree memory, and 2048 MiB of temporary storage.
 The pytest group parent is created with mode `0700` on POSIX, so an inherited
 shared-write umask cannot expose the fixture namespace.
+Changed-plugin selection always includes both `copilot-extensions-harness` and
+`customizing-copilot`, whose suites inspect other plugins' session-context
+contracts. An admission-wrapper change must therefore pass the real whole-suite
+hook-composition consumer before merge, not first encounter it in post-merge
+CI. This scheduling adds no new policy exception or scanner allowlist.
 
 Full dispatch execution in the CI smoke matrix (push, manual and promotion)
 distributes its complete file inventory across three independent jobs.
