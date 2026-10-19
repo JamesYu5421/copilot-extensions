@@ -13,15 +13,25 @@ of — link here rather than restating any of it.
 
 The existing CI discovery job runs `tools/ci_job_admission.py` against explicit
 PR base/head commits before allocating fleet's twelve partition runners and
-the standalone Manager/Dispatch runners. Shared libraries, repository tooling
+the standalone Manager/Dispatch/Chat runners. Shared libraries, repository tooling
 and workflow changes widen admission conservatively; unknown inputs run all
-three families. Missing/malformed Git evidence fails discovery instead of
+four families. Missing/malformed Git evidence fails discovery instead of
 claiming an empty selection.
 
 Manager also consumes engine sources and plugin-owned pivot data. Plugin changes
 therefore conservatively admit Manager; Dispatch plugin changes admit its
 standalone service too. This first slice does not assume those distribution
 boundaries isolate their source dependencies.
+
+Chat source changes select separate, statically routed Linux and Windows jobs
+for the bounded conversation-core contracts. No dynamic runner route or policy
+exception is used. This does not qualify hosted transport or managed service lifecycle.
+Materialized-consumer qualification includes both Chat platforms when the
+validated standalone roster registers `services/chat`; the supported older
+roster remains usable without it. Each row runs the same bounded standalone
+recipe. Trusted Main-owned validator support must be delivered through the
+existing release owner's qualified tooling path before promoting the expanded
+roster; a Dev source merge alone does not activate that trusted support.
 
 An effort/document-only selection can skip those jobs without omitting the
 fixed `PR gate (required check)`. That aggregate requires successful discovery,
