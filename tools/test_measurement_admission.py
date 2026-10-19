@@ -204,7 +204,7 @@ class TestMeasurementAdmission:
         assert result.returncode==0,result.stderr
         assert result.args==argv and argv.count("--no-config")==1
         mapping,hashes=s.verified_source_mapping(s.REPO,target/"fleet_manager",target)
-        assert mapping and len(hashes)==17
+        assert mapping and set(mapping.values()) == set(hashes)
         with pytest.raises(ValueError,match="outside the closed|not admitted|no parent-issued"):
             registry.verify()
 

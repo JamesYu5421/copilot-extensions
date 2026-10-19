@@ -120,6 +120,8 @@ def test_generated_source_extension_identity_is_strict(evidence,corruption):
     (["script.py", "--help", "-S"], "instrumented"),
     (["--", "--version"], "instrumented"),
     (["-S", "-c", "pass", "--version"], "site-disabled"),
+    (["-I", "-S", "-", "--help"], "site-disabled"),
+    (["-I", "-", "--version"], "instrumented"),
 ])
 def test_interpreter_options_do_not_exempt_site_disabled_code(arguments, expected):
     assert child_audit.python_mode(["python", *arguments]) == expected
@@ -324,6 +326,48 @@ def test_untraceable_native_lifecycle_fails_closed(tmp_path, monkeypatch, event)
     monkeypatch.setenv(stream.ENV, "opted-in")
     child_audit._event(event, ())
     assert (tmp_path / "status").read_bytes() == b"E"
+
+
+@pytest.mark.parametrize("event", ["subprocess.Popen", "os.fork", "os.forkpty", "os.exec", "os.system"])
+def test_active_parent_context_survives_environment_marker_removal(tmp_path, monkeypatch, event):
+    from tools.coverage_guided_selection import child_stream_parent
+
+    (tmp_path / "audit").mkdir()
+    (tmp_path / "manifests").mkdir()
+    (tmp_path / "hits").mkdir()
+    (tmp_path / "status").write_bytes(b"R")
+    source = tmp_path / "source.py"
+    source.write_text("pass\n")
+    monkeypatch.setattr(child_stream_parent, "_control", str(tmp_path))
+    monkeypatch.setattr(child_stream_parent, "_nonce", "a" * 64)
+    monkeypatch.setattr(child_stream_parent, "_contexts", {})
+    monkeypatch.setattr(child_stream_parent, "_inventory", stream.source_inventory({str(source): "source.py"}))
+    monkeypatch.setattr(child_audit, "_control", str(tmp_path))
+    monkeypatch.setattr(child_audit, "_nonce", "a" * 64)
+    monkeypatch.setattr(child_audit, "_python", child_audit.key(os.sys.executable))
+    monkeypatch.setattr(child_audit, "_failed", False)
+    monkeypatch.setattr(child_audit, "_child", False)
+    monkeypatch.setattr(child_audit, "_own_context", None)
+    monkeypatch.setenv(stream.ENV, "temporary")
+    child_stream_parent.register_context("tests/test_source.py::test_parent")
+    monkeypatch.delenv(stream.ENV)
+    arguments = (os.sys.executable, [os.sys.executable, "-I", "-S", "-", "--help"], None, {})
+    child_audit._event(event, arguments if event == "subprocess.Popen" else ())
+    assert (tmp_path / "status").read_bytes() == b"E"
+    assert child_audit._own_context
+    with pytest.raises(ValueError, match="audit failure"):
+        child_audit.verify(tmp_path, nonce="a" * 64, contexts={}, producers=[])
+
+
+def test_unavailable_posix_process_query_is_not_confirmed_exit(monkeypatch):
+    if os.name == "nt":
+        pytest.skip("POSIX process-query error boundary")
+
+    def denied(*_args):
+        raise PermissionError("process visibility denied")
+
+    monkeypatch.setattr(os, "kill", denied)
+    assert child_audit.live(1) is True
 
 
 def test_fork_reset_never_reuses_inherited_fd_seen_set_or_locked_mutex(tmp_path):
@@ -562,6 +606,7 @@ def test_zero():
     @pytest.mark.parametrize("failure", [
         "bootstrap", "audit-disabled", "missing", "unknown", "write", "trace", "thread-trace", "live",
         "site-disabled", "site-disabled-bundled",
+        "parent-context-stripped", "site-disabled-stdin",
     ])
     def test_opted_in_failure_never_emits_successful_result(self, failure):
         source = r'''
@@ -601,10 +646,17 @@ def test_expected_application_behavior():
                            stdout=subprocess.PIPE,**FLAGS)
         assert p.stdout.readline().strip()==b'READY'
         return
+    elif CASE=='parent-context-stripped':
+        os.environ.pop('_CGS_CHILD_MANIFEST')
+        environment.pop('_CGS_CHILD_MANIFEST')
     elif CASE.startswith('site-disabled'):
         package=str(Path(os.environ['CGS_TEST_INSTALLED']).parent)
         code="import sys;sys.path.insert(0,"+repr(package)+");"+code
         arguments=[sys.executable,*(['-IS'] if CASE.endswith('bundled') else ['-I','-S']),'-c']
+        if CASE=='site-disabled-stdin':
+            assert subprocess.run([sys.executable,'-I','-S','-','--help'],
+                                  input=code,text=True,env=environment,**FLAGS).returncode==0
+            return
     assert subprocess.run([*arguments,code],env=environment,**FLAGS).returncode==0
 '''
         status, data, _, _ = self._run(source.replace("CASE_VALUE", repr(failure)))

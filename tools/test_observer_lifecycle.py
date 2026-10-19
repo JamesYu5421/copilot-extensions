@@ -273,18 +273,19 @@ def test_phase_diagnostics_do_not_replace_an_unprintable_original_exception():
     assert phases.rows[0]["outcome"]=="failed"
 
 
-def test_worst_case_failure_text_is_bounded_below_control_message_limit():
+@pytest.mark.parametrize("character", ["\0", "\U0001f680", "\\", '"'])
+def test_worst_case_failure_text_is_bounded_below_control_message_limit(character):
     import json
     phases=SetupPhaseAccounting()
     class OutputError(RuntimeError):
-        stdout="\0"*10_000
-        stderr="\0"*10_000
+        stdout=character*10_000
+        stderr=character*10_000
         returncode=1
-    error=OutputError("\0"*10_000)
+    error=OutputError(character*10_000)
     def failed():
         raise error
     def cleanup(session):
-        raise OSError("\0"*10_000)
+        raise OSError(character*10_000)
     for name in sorted(phases.NAMES-{"native-build"}):
         phases.run(name,lambda:None)
     lifecycle=OwnedObserverLifecycle(lambda:phases.run("native-build",failed),

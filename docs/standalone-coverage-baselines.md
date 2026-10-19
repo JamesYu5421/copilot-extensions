@@ -53,6 +53,10 @@ exactly one dead producer by run, known test context, argv digest, audited owner
 and creation/birth order. Children validate their auditor ancestry, including the
 Windows venv redirector. Audit registration is self-tested. Empty-source-hit
 producers remain distinguishable from missing producers.
+The auditor retains the active parent test context independently of mutable
+environment variables. Removing the parent's context marker cannot exempt later
+child launches, fork/exec or opaque system commands. Stdin `-` ends interpreter
+option parsing, so a following program `--help` never exempts site-disabled code.
 
 The parent validates every manifest against its source inventory and context map,
 rechecks installed bytes, rejects a filename-bound live writer **before** reading
@@ -199,6 +203,10 @@ observations. Unknown kernel exit times remain null; no extra polling, waits or
 process-authority claims are introduced. Keys, argv, environments and absolute
 private paths are not exported. Failure paths retain reports too. These records
 do not grant native zero/multiple-child completeness or baseline authority.
+Failure fields are budgeted for their serialized size, including the second
+escaping layer around `phases_json`. Non-BMP text, control characters, quotes and
+backslashes cannot expand a bounded diagnostic past the existing completion
+reply limit; truncation is explicit and the original failure remains primary.
 
 The bounded native-entry proof represents runtime-generated sources separately:
 actual native compile-event bytes are matched to the executing code object and

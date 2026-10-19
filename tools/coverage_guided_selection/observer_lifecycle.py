@@ -4,6 +4,8 @@ import time
 
 
 def _error_evidence(error, *, output=True):
+    import json
+
     record = {"error_type": type(error).__name__, "truncated_fields": []}
     for name, maximum in (("message", 512), ("stdout", 1024), ("stderr", 2048)):
         try:
@@ -14,9 +16,19 @@ def _error_evidence(error, *, output=True):
                 value = None
         except BaseException:
             value = None
-        if value is not None and len(value) > maximum:
-            record["truncated_fields"].append(name)
-            value = value[:maximum]
+        if value is not None:
+            candidate = value[:maximum]
+            low, high = 0, len(candidate)
+            # Completion embeds phases_json inside JSON; charge both escaping layers.
+            while low < high:
+                middle = (low + high + 1) // 2
+                if len(json.dumps(json.dumps(candidate[:middle]))) <= maximum * 2:
+                    low = middle
+                else:
+                    high = middle - 1
+            if low < len(value):
+                record["truncated_fields"].append(name)
+            value = candidate[:low]
         record[name] = value
     try:
         code = getattr(error, "returncode", None)

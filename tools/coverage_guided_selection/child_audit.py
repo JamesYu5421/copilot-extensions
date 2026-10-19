@@ -55,6 +55,8 @@ def native_argv(arguments):
 
 
 def _context_digest():
+    if _own_context:
+        return _own_context
     name = os.path.basename(os.environ.get(ENV, ""))
     token = name.removesuffix(".manifest")
     return token if len(token) == 64 and all(c in "0123456789abcdef" for c in token) else "unknown"
@@ -144,7 +146,7 @@ def python_mode(arguments):
     arguments = iter(arguments[1:])
     for argument in arguments:
         argument = os.fsdecode(argument)
-        if argument in {"-c", "-m", "--"} or not argument.startswith("-"):
+        if argument in {"-", "-c", "-m", "--"} or not argument.startswith("-"):
             break
         if argument in {"-X", "-W", "--check-hash-based-pycs"}:
             next(arguments, None)
@@ -175,11 +177,11 @@ def _event(event, arguments):
             _probe = arguments[0]
             return
         if event in {"os.fork", "os.forkpty", "os.exec"}:
-            if _child or os.environ.get(ENV):
+            if _child or _own_context or os.environ.get(ENV):
                 error("unsupported fork/exec coverage lifecycle")
             return
         if event == "os.system":
-            if _child or os.environ.get(ENV):
+            if _child or _own_context or os.environ.get(ENV):
                 error("unsupported opaque system command coverage lifecycle")
             return
         if event == "sys.settrace" and _child:
@@ -204,7 +206,7 @@ def _event(event, arguments):
             executable, argv, _, environment = arguments
         environment = os.environ if environment is None else environment
         if not environment.get(ENV):
-            if _child or os.environ.get(ENV):
+            if _child or _own_context or os.environ.get(ENV):
                 argv = native_argv(argv)
                 if key(executable or argv[0]) == _python and python_mode(argv) == "information":
                     return
@@ -223,8 +225,8 @@ def _event(event, arguments):
             error("site-disabled Python code execution context=" + context(environment))
             return
         token = context(environment)
-        if _child and token != _own_context:
-            error("child attempted to change its test context")
+        if _own_context and token != _own_context:
+            error("instrumented process attempted to change its test context")
             return
         if environment.get(OWNER) != str(os.getpid()):
             error("child auditor ownership marker missing or stale")
@@ -342,8 +344,10 @@ def live(pid):
         try:
             os.kill(pid, 0)
             return True
-        except ProcessLookupError:
-            return False
+        except OSError as exc:
+            if isinstance(exc, ProcessLookupError):
+                return False
+            return True
     import ctypes
     from ctypes import wintypes
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)

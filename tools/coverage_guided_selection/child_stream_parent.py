@@ -191,6 +191,7 @@ def register_context(node):
     if token in _contexts and _contexts[token] != node:
         raise ValueError("test-context digest collision")
     _contexts[token] = node
+    _auditor()._own_context = token
     path = Path(_control) / "manifests" / (token + ".manifest")
     write_manifest(
         path, nonce=_nonce, context=token, directory=Path(_control) / "hits", inventory=_inventory,
