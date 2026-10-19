@@ -295,7 +295,10 @@ def test_generated_seed_disables_maintenance_before_copy(
         Path(__file__).resolve().parents[1], "rev-parse", "--path-format=absolute", "--git-path", "objects",
     ).decode().strip())
     assert not objects.is_symlink() and objects.resolve() != source_objects.resolve()
-    assert (objects / "info/alternates").read_text().strip() == source_objects.as_posix()
+    alternate = (objects / "info/alternates").read_bytes()
+    assert alternate.endswith(b"\n") and alternate.count(b"\n") == 1
+    assert b"\r" not in alternate
+    assert Path(os.fsdecode(alternate[:-1])).resolve() == source_objects.resolve()
     before = {
         path.relative_to(seed): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in seed.rglob("*") if path.is_file()
