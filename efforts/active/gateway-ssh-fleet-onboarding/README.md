@@ -274,13 +274,13 @@ onboarded merely because its source is published.
 
 ## Validation Plan
 
-- [ ] Pair/schema: explicit roles, matching legacy projection, malformed and
+- [x] Pair/schema: explicit roles, matching legacy projection, malformed and
   conflicting declarations, unchanged legacy scalar/project-only behavior,
   and no knowledge-only executable target.
-- [ ] Fresh native setup with registered repositories but no local harness
+- [x] Fresh native setup with registered repositories but no local harness
   config; actual binding/pair creation, matching-binding no-op and
   conflicting-binding refusal through the existing owner.
-- [ ] Old/new consumer compatibility: an older daemon reads the same scalar
+- [x] Old/new consumer compatibility: an older daemon reads the same scalar
   harness target, while new consumers retain the knowledge companion and
   separately report unsupported binding/projection capabilities.
 - [ ] Unit/schema: controller/provider selection, mutually exclusive canonical
@@ -352,3 +352,72 @@ takeover or implementation completion is asserted.
 - Reserved #7195 for the additive declaration and binding-projection contract.
   This amendment must clear the normal review gate before implementation;
   existing routing, configuration, lifecycle and operation owners remain.
+
+### 2026-10-19 - Paired declaration implementation qualification
+
+- The operator-authorized continuation reconciled the retained Configuration
+  context and verified #6725's actual merge. The narrow #7205 overlap now reuses
+  the existing shared execution-root classifier in `repos._current_platform`;
+  inherited WSL labels cannot select a different registry path from the binding
+  reader. Ordinary registry mutation, serialization, preferences, accounts and
+  routing writers remain unchanged. Broader Configuration and installed
+  acceptance stay with the canonical Manager workbench plan.
+- The platform-reader follow-through passes 228 selected native tests:
+  first-touch binding/pair creation (2), ordinary registry behavior (135),
+  all Configuration cases (83), and registry transactions (8). Windows
+  Configuration validation uses disjoint selections within unchanged item and
+  group limits; a combined group exceeded its wall-clock budget and was not
+  treated as a pass. First-touch Git fixtures now have ordinary fetched origin
+  refs and explicit remote HEAD, avoiding repeated missing-ref fallback probes;
+  the native creation call defers unrelated empty instruction projection work.
+  Actual registration, installed CLI binding, pair writes, tracked resolution
+  and common-dir checks remain real. Hosted Linux must exercise the inherited
+  label with a Linux-only registration before merge.
+- The next current-head review identified the coupled explicit-name binding
+  path, which still chose a platform independently. The existing native
+  inventory now reports additive `platform` metadata; both binding modes consume
+  and validate that owner result, and contradictory/malformed values refuse
+  before registration. Inventories from older owners without that field retain
+  their legacy behavior. All 146 binding tests pass, including native platform
+  selection and invalid-metadata negatives. All four real first-touch cases
+  pass: declared-pair and explicit missing-registration flows, each with ordinary
+  and conventional bare anchors. Both ordinary cases participate in the same
+  existing hosted guard; no topology is required by explicit registration.
+- Subsequent review found that a changed companion registration between pair
+  preflight and the writer could still leave a pointer after reporting failure.
+  The preserving flow now rejects its fresh non-ready inspection before any
+  binding write. Removed/repointed registration cases cover fresh and existing
+  configuration, including bytes and timestamp preservation. All 150 binding
+  tests and 35 selected native inventory/first-touch cases pass. The additive
+  inventory platform is included in all exact strict/legacy output snapshots;
+  a red hosted snapshot assertion was fixed, not bypassed.
+- Amendment #7198 actually merged as
+  `1e313d5ee1f3cd688c95d53de56d7548878ee878` before implementation.
+  The shared typed reader retains the legacy scalar launch target and both
+  repository roles. Bridge derives only the executable harness.
+- The new native read-only front door works without local binding state and
+  reports the shared native execution platform. The existing binding writer
+  consumes it, validates canonical classes, Git roots and the native config
+  namespace, refuses inherited or local binding conflicts, and preserves a
+  matching pointer's bytes and timestamp. Ambiguous YAML names remain strings.
+- Contained qualification: shared-library suite 321 passed, Bridge selection
+  and legacy regression 223 passed, binding suite 113 passed, native reader
+  and actual first-touch integration 15 passed. The latter uses actual local
+  Git repositories, the installed native CLI entry point, the normal binding
+  script, actual harness creation and companion common-dir checks. It covers
+  ordinary and conventional `.git`-backed bare anchors with worktree-local
+  `core.bare`; no AI process is launched.
+- Unit and simple native consumer tiers ran. Fresh temporary configuration
+  provides a first-touch integration lane, not a full stock-OS installation
+  proof. No Linux container engine or admitted live external target is
+  available in this source workspace; hosted Linux CI and separately owned
+  live adoption remain explicit gates. No target runtime update, service
+  restart or fleet configuration deployment is implied.
+- One independent read-only implementation review found no high-confidence
+  defect. Its bare-anchor qualification question led to the additional
+  actual conventional bare-anchor consumer lane. The unchanged item timeout
+  remains enforced; native registry setup uses its real owner API rather than
+  paying for repeated setup-only CLI startups.
+- Implementation publication and release remain pending. These focused
+  validation items do not complete the parent integration, provider, setup,
+  admission, lifecycle or controlled-adoption plans.
