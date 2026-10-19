@@ -73,11 +73,15 @@ def test_real_matrix_cli_single_job_mode_is_explicit():
 
 
 def test_candidate_qualification_requires_exactly_the_actual_smoke_matrix_names():
+    from candidate_complete_once import complete_once_plan
     from candidate_qualification_inventory import required_jobs
     from materialized_candidate_inventory import python_suites
 
-    plugins = python_suites(REPO) - {"agent-worktrees"}
-    workflow = yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    suites = python_suites(REPO)
+    text = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    plan = complete_once_plan(text, suites)
+    plugins = suites - {"agent-worktrees"} if plan is None else set(plan["smoke"])
+    workflow = yaml.safe_load(text)
     name = workflow["jobs"]["smoke"]["name"]
     if name == "${{ matrix.name }}":
         actual = {row["name"] for row in smoke_matrix(sorted(plugins))}
@@ -86,7 +90,11 @@ def test_candidate_qualification_requires_exactly_the_actual_smoke_matrix_names(
         actual = plugins
     required, _, _ = required_jobs(REPO)
     assert required & (actual | plugins) == actual
-    assert len(actual) == len(plugins) + (3 if name == "${{ matrix.name }}" else 0)
+    extra = (
+        (2 if "agent-dispatch" in plugins else 0)
+        + (1 if "agent-pull-requests" in plugins else 0)
+    ) if name == "${{ matrix.name }}" else 0
+    assert len(actual) == len(plugins) + extra
 
 
 @pytest.mark.parametrize("plugins", [None, "agent-dispatch", [False], ["../outside"], ["same", "same"]])

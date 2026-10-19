@@ -16,9 +16,10 @@ import pytest
 import yaml
 
 from _promotion_workflow_test_support import source_workflow
+from _promotion_artifact_fixture import copy_fixture_seed, source_workflow_snapshot
 from test_promotion_artifact_readiness import (
     _materializer_git,
-    generated_materializer_checkout as generated_materializer_checkout,
+    generated_materializer_checkout as _generated_materializer_checkout,
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -126,13 +127,29 @@ def test_ci_dependency_policy_changes_trigger_age_guard(changed):
 
 
 def _artifact_scope(job_name: str, root: Path | None = None) -> tuple[dict, str]:
-    root = root if root is not None else Path(__file__).resolve().parents[1]
-    jobs = source_workflow(root, "ci.yml")["jobs"]
+    document = (
+        source_workflow_snapshot(Path(__file__).resolve().parents[1], "ci.yml")
+        if root is None else source_workflow(root, "ci.yml")
+    )
+    jobs = document["jobs"]
     detector = next(step for step in jobs[job_name]["steps"]
                     if step.get("id") == "python-artifact-builder")
     expression = re.search(r"grep -Eq -e '([^']+)' -e\s*\\\n\s*'([^']+)'", detector["run"])
     assert expression is not None
     return jobs, "|".join(f"(?:{part})" for part in expression.groups())
+
+
+def test_workflow_preparation_seed_tracks_bytes_and_isolates_mutations(tmp_path: Path) -> None:
+    workflows = tmp_path / ".github/workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "validate-and-promote.yml").write_text("jobs: {}\n", encoding="utf-8")
+    controller = workflows / "ci.yml"
+    controller.write_text("jobs:\n  checks:\n    timeout-minutes: 5\n", encoding="utf-8")
+    first = source_workflow_snapshot(tmp_path, "ci.yml")
+    first["jobs"]["checks"]["timeout-minutes"] = 999
+    assert source_workflow_snapshot(tmp_path, "ci.yml")["jobs"]["checks"]["timeout-minutes"] == 5
+    controller.write_text("jobs:\n  checks:\n    timeout-minutes: 10\n", encoding="utf-8")
+    assert source_workflow_snapshot(tmp_path, "ci.yml")["jobs"]["checks"]["timeout-minutes"] == 10
 
 
 def test_windows_source_contracts_keep_separate_budgets_without_dropping_cases():
@@ -182,9 +199,23 @@ def _assert_windows_source_contracts(jobs):
 
 
 @pytest.fixture
-def generated_source_controller(generated_materializer_checkout):
-    return _retain_main_ci(
-        generated_materializer_checkout, Path(__file__).resolve().parents[1],
+def generated_materializer_checkout(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, pytestconfig: pytest.Config,
+) -> Path:
+    return copy_fixture_seed(
+        pytestconfig, tmp_path_factory, _generated_materializer_checkout.__wrapped__,
+        tmp_path / "generated-checkout",
+    )
+
+
+@pytest.fixture
+def generated_source_controller(
+    generated_materializer_checkout, tmp_path_factory: pytest.TempPathFactory,
+    pytestconfig: pytest.Config,
+) -> Path:
+    return copy_fixture_seed(
+        pytestconfig, tmp_path_factory, _prepare_source_controller,
+        generated_materializer_checkout.parent / "source-controller",
     )
 
 
@@ -204,6 +235,13 @@ def _retain_main_ci(root: Path, original: Path) -> Path:
         "commit", "-qm", "retain actual Main CI controller",
     )
     return root
+
+
+def _prepare_source_controller(directory: Path) -> Path:
+    return _retain_main_ci(
+        _generated_materializer_checkout.__wrapped__(directory),
+        Path(__file__).resolve().parents[1],
+    )
 
 
 def test_source_contracts_retain_main_from_actions_checkout_without_local_main(

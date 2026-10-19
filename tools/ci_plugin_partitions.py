@@ -9,6 +9,8 @@ import math
 from pathlib import Path
 import re
 
+from materialized_candidate_inventory import CandidateValidationError
+
 _PLUGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 _FILES_PER_GROUP = 25
 _SMOKE_PARTITIONS = {"agent-dispatch": 3, "agent-pull-requests": 2}
@@ -175,6 +177,10 @@ def main() -> int:
         "--single-job-plugin", action="append", default=[],
         help="emit one row for this plugin (repeatable; default partitions stay unchanged)",
     )
+    candidate = commands.add_parser("candidate-smoke")
+    candidate.add_argument("plugins_json")
+    for name in ("event", "promotion-run", "phase", "profile"):
+        candidate.add_argument(f"--{name}", required=True)
     files = commands.add_parser("files")
     files.add_argument("--plugin", required=True)
     files.add_argument("--partition", type=int, required=True)
@@ -185,13 +191,21 @@ def main() -> int:
             print(json.dumps(smoke_matrix(
                 json.loads(args.plugins_json), single_job_plugins=frozenset(args.single_job_plugin),
             ), separators=(",", ":")))
+        elif args.command == "candidate-smoke":
+            from candidate_complete_once import candidate_smoke
+
+            print(json.dumps(candidate_smoke(
+                Path(__file__).resolve().parents[1], json.loads(args.plugins_json),
+                event=args.event, promotion_run=args.promotion_run,
+                phase=args.phase, profile=args.profile,
+            ), separators=(",", ":")))
         else:
             for path in partition_files(
                 Path(__file__).resolve().parents[1], args.plugin, args.partition, args.partitions,
             ):
                 print("--test-file")
                 print(path)
-    except ValueError as exc:
+    except (ValueError, CandidateValidationError) as exc:
         parser.error(str(exc))
     return 0
 
