@@ -267,9 +267,11 @@ def environment() -> dict[str, str]:
         "QUALIFIED_CANDIDATE": CANDIDATE, "QUALIFIED_DEV": DEV, "QUALIFIED_MAIN_BEFORE": BASE,
         "QUALIFIED_CONTROL": CONTROL, "QUALIFIED_TREE": TREE, "QUALIFICATION_RUN": "789",
         "QUALIFICATION_ATTEMPT": "2", "QUALIFICATION_DIGEST": "1" * 64,
+        "QUALIFICATION_PROMOTION_RUN": "123-4",
         "PUBLICATION_DIGEST": "2" * 64, "SOURCE_RELEASE": f"python-artifacts-{DEV}",
         "GH_TOKEN": "synthetic-read-token", "PROMOTION_MERGE_TOKEN": "synthetic-nonadmin-token",
         "GITHUB_OUTPUT": "fixture-output",
+        "ADMITTED_MAIN": BASE,
     }
 
 
@@ -450,12 +452,18 @@ class BoundaryTests(_ShellFixture):
                     contextlib.redirect_stdout(io.StringIO()),
                 ):
                     exec(compile(code, "<literal-early-pause>", "exec"), {})
+                state_ref = BASE if "main_base=" in code else "refs/remotes/origin/main"
                 read.assert_called_once_with(
-                    ["git", "show", "refs/remotes/origin/main:.github/release-pipeline-state.json"],
+                    ["git", "show", f"{state_ref}:.github/release-pipeline-state.json"],
                     check=True, capture_output=True, text=True, timeout=30,
                 )
                 expected = str(paused and qualification == "false").lower()
-                self.assertEqual(output.getvalue(), f"normal_paused={expected}\n")
+                expected_output = f"normal_paused={expected}\n"
+                if "released_source=" in code:
+                    expected_output += "released_source=\n"
+                if "main_base=" in code:
+                    expected_output += f"main_base={BASE}\n"
+                self.assertEqual(output.getvalue(), expected_output)
         invalid = [
             None, [], {}, {**state, "schema": "other"}, {**state, "version": True},
             {**state, "version": 2}, {**state, "paused": "true"}, {**state, "paused": None},

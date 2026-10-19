@@ -102,6 +102,105 @@ Postmerge work may record the actual landing; it is not the first publication,
 consumer test or availability check. A Main promotion PR merging means the
 release is already qualified for marketplace consumption.
 
+## Promotion PR ownership and recovery
+
+The qualified-before-PR controller opens its generated PR only **after** complete
+candidate CI, immutable source publication and raw-byte readback succeed.
+Candidate preparation alone emits a branch/SHA, not a PR number or a completed
+release. The already credentialed publisher opens the ready PR; the separate
+checkout-free merger retains only its existing non-administrator Actions
+authority. No second publisher or merge writer is introduced.
+
+`promotion_lifecycle.py` reads the complete open-Main-PR inventory before a new
+generation starts. It uses creation-ordered stable cursors, not page offsets
+that can skip a surviving promotion when an earlier PR closes. Changed totals,
+duplicate identities or invalid cursors refuse admission rather than claiming
+the inventory is idle. A failed, cancelled or interrupted producing run does not
+release its open promotion PR. The source-owned trigger declines another
+dispatch, and the trusted Main admission gate independently refuses new source
+validation. Incomplete or ambiguous inventory, an unexpected same-repository
+publisher, or malformed promotion identity fails closed. Foreign PRs cannot
+claim the same-repository release namespace.
+
+Deferred CI events are not discarded: terminal promoter completion and
+owner-authored Main PR closure wake the same trusted dispatcher. It re-reads
+Main pause/source state and current successful Dev CI before scheduling pending
+advances. A cancelled or failed promoter may have already merged using the
+Actions token; recovery requires the PR's actual verified merge, not a
+successful run conclusion. Failed or cancelled runs without that merge cannot
+retry qualification through this path. A merged resume/control transaction can
+drain already-green changes without another push. Successful no-ops with no merged PR cannot form a
+dispatch loop; an unmerged retired candidate does not automatically retry its
+unchanged source. Stale completion events do not take responsibility back from
+a newer generation, including one whose real failure still needs recovery.
+The trusted Gate issues one immutable admission artifact for the exact Dev SHA
+and freshly admitted Main base after ancestry and ownership checks. Its name
+binds those inputs; provider workflow identity and the successful trusted Gate
+upload step bind the original attempt and creation window. The artifact is an
+ownership record, not a substitute for qualification or publication proof.
+Existing repository artifact inventory discovers only the selected input pair,
+without scanning every historical workflow run.
+
+CI, closure, completion and queued automatic admission all consult that same
+record. A failed publication before PR creation still retains its admitted
+inputs; a delayed older CI event cannot start their full qualification again.
+Changed Dev or Main-base inputs remain eligible. A queued run, failed admission
+or paused no-op has no successful record and does not own progress. Legacy
+source-job uploads cannot manufacture the trusted Gate's admission authority.
+Resume/control wakes remain eligible behind a finishing paused no-op.
+
+Deferred CI discovery accepts both push and manual CI for the exact current Dev
+SHA and trusted repository/workflow. The latest eligible run wins by creation
+time, then run ID; its current attempt must succeed. A newer failed or pending
+run blocks an older green one. The triggering run is included when the provider
+index has not caught up, so index lag does not discard direct evidence.
+Successful manual CI can drain after resume or merge without requiring another
+push or selecting an arbitrary older green run.
+
+Retirement is read from the complete closed-promotion history and the immutable
+candidate's recorded source, independent of the waking event. A delayed green
+CI event cannot retry the same retired source. The trusted admission gate
+rechecks that policy for automatic dispatches after resolving the live Dev tip,
+so events already queued before retirement cannot bypass it. Explicit manual
+qualification remains an operator action, not an automatic retry.
+Known non-owner authors are excluded before requiring fork provenance, so
+deletion of an unrelated foreign fork cannot block automatic promotion;
+owner-authored candidates still require complete repository identity.
+Admission artifacts are not overwritten on a full Gate replay. Recover the
+existing publication/merge job with its original qualification owner, or use a
+genuinely changed-input generation; do not replace the record to retry unchanged
+qualification automatically.
+Normal admission also declines duplicate validation of a source already
+recorded on Main; an explicit qualification-only request remains distinct.
+
+The publisher rechecks ownership after qualification. It can reuse exactly one
+existing PR only for the same generated branch and SHA, allowing recovery after
+an ambiguous PR-creation response without opening another PR. Closed, replaced,
+cross-repository or differently authored PRs are not silently revived.
+
+Recover a publication or merge failure by resuming the **existing failed job**,
+not rerunning full qualification or dispatching another generation. The
+qualifier's `qualification_promotion_run` output retains its original owning
+run-attempt; publication and merge retries use that recorded key even when the
+current job attempt advances. Foreign or future qualification ownership, moved
+Main/head, changed CI attempts and failed required checks still refuse.
+Explicit retirement is required when the old candidate cannot be recovered.
+An uncertain merge-command response is reconciled through bounded readback,
+never another blind merge write. Confirmed policy refusal preserves the
+original error and the active PR's recovery obligation.
+
+The existing whole-workflow concurrency slot remains held until exact Main
+merge is read back. Only the required Main checks gate that write; already
+completed full candidate qualification is not dispatched again after opening
+the PR. An Actions-token landing suppresses automatic Main-push CI; only the
+bounded attribution refresh described below is dispatched afterward. Ordinary
+Main control/rollback validation is not removed by this release contract.
+
+The helper and controller contracts do not activate themselves. Main's reviewed
+workflow/pin change must be proven against its exact prepared control data before
+the next qualification; the legacy Dev workflow is not the authority for that
+independently owned Main controller.
+
 The checkout-free merge waiter needs explicit job-level `actions: read` for
 that final qualification-run lookup; its own permission map replaces the
 workflow-level grant. After landing, a separate bounded dispatch refreshes

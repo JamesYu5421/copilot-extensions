@@ -1049,6 +1049,110 @@ proposal.
 
 ## Journal
 
+### 2026-10-18 - Repair lifecycle event ordering before control activation
+
+The current-head review of #7201 identified four real scheduling gaps. A
+newer run that merely queued and failed admission must not suppress deferred
+work after an older merge-only retry succeeds. Delayed promotion closure must
+use the same ordering rule as completion, including newer admitted failures.
+A finishing paused no-op must not discard a resume/control wake. Recorded
+retirement must block unchanged-source automatic retries from every event,
+including delayed CI and dispatches already queued before closure.
+
+The repair uses complete, authenticated Gate/source-job attempt history to
+distinguish actual admission from queued, declined and skipped runs. Retirement
+uses GitHub's closed-unmerged connection rather than REST's combined
+closed/merged inventory, with paginated readback and immutable candidate-source
+verification. Live compatibility exposed the merged-history pagination limit
+before activation; the corrected reader consumes the actual current history
+in one inventory page and fourteen total API reads. It permits the new Dev
+source without weakening the retirement check.
+
+The prepared Main gate independently rechecks retirement after resolving
+automatic source admission. Its literal workflow test executes the real CLI
+for both an allowed advance and a retired unchanged source. No additional
+permission, writer, workflow, CI waiver or qualification retry is introduced.
+Main activation and all parent release/client acceptance gates remain pending.
+
+A subsequent review found two related boundary cases. Known non-owner authors
+are now excluded before requiring repository provenance for a deleted fork.
+Terminal promoter events reconcile an actual merged PR even if the run was
+cancelled or failed after the Actions-token merge; that token suppresses the
+ordinary PR-closure event. Source CI still requires success, and no merged PR
+means no deferred retry. Focused unit and literal dispatcher regressions retain
+strict owner provenance and cover both successful recovery and refusal.
+
+The next review identified offset-pagination drift in active-PR admission.
+Open and closed-unmerged Main inventories now share a stable cursor reader;
+open traversal is creation-ascending, preserving surviving entries when an
+earlier PR closes. Inconsistent totals or cursor/identity ambiguity refuse
+admission. A regression closes the first ordinary PR between page reads and
+proves that the following promotion cannot be mistaken for an idle inventory.
+
+Two later findings exposed the limit of job-only generation ordering. Delayed
+CI must obey the same ownership decision as closure/completion, while changed
+sources remain eligible; deferred discovery must also retain successful manual
+CI rather than consider only a failed push. The prepared Gate now issues a
+small immutable admission artifact named by exact Dev and freshly admitted Main
+base, using the existing artifact action and no additional permissions. The
+reader verifies canonical Main execution, the original successful Gate upload
+attempt and its creation window. All automatic event paths and queued Gate
+admission share that source/base ownership check. Original qualification
+receipts remain independently required.
+
+Deferred CI selection now covers eligible push and manual runs of the exact
+current source. The latest run by creation time/ID wins, with its current
+attempt; a newer failure or pending run blocks an older success. Direct event
+evidence survives run-index lag. Tests cover delayed old CI after a newer
+publication failure, changed source/base eligibility, queued admission,
+successful manual CI after resume/merge, latest-failure refusal and immutable
+record provenance. Main control data still requires separate reviewed
+activation and fresh release acceptance.
+
+### 2026-10-18 - Reviewed lifecycle charter implemented locally; Main activation pending
+
+Plan amendment #7199 merged as
+`fd9294796fa9164bbea105a39a16ca5dae18e632` after current-head Copilot approval
+and all three original required checks passed. The local source slice adds a
+complete read-only active-PR inventory, deferred-advance scheduling and stable
+qualification-origin output. The existing trusted dispatcher handles successful
+CI/promoter completions and owner-authored Main closures without executing PR
+code or creating another workflow/job.
+
+Prepared Main control data is derived from the actual preserved controller, not
+the legacy Dev template. It prepares a branch without opening a PR, qualifies
+the complete generated consumer, publishes and reads back immutable source
+assets, then opens the ready PR inside the already credentialed publisher.
+The separate merger remains checkout-free, secret-free and nonadministrative.
+Publication/merge-job recovery retains the original qualification owner; an
+uncertain merge response is reconciled by bounded readback without another
+blind write. Normal already-current sources avoid duplicate source validation;
+explicit qualification-only operation remains available.
+
+Deferred CI while a PR is active is recovered after actual merge or explicit
+retirement/resume. Successful no-ops cannot recursively dispatch; unchanged
+retired sources are not retried automatically, and stale completion events do
+not take progress back from a newer generation. Source/generated/native
+coverage and all nine baseline requirements are unchanged. Full-suite/baseline
+coalescing remains a separately measured follow-through item, not an excuse to
+drop a required execution profile.
+
+The exact prepared controller passes the existing 24 publication/freshness
+boundary cases and 11 lifecycle cases, including literal PR-opening negative
+controls, stable-origin retry, uncertain-write readback and real admission-CLI
+trigger transport. Broader source policy checks exposed coupled event-condition
+test assumptions; their restricted evaluator is retained with explicit new
+closed-event contexts. No local independent-review verdict is claimed when its
+prepared-data inputs are inaccessible. Normal source and actual Main PR review
+remain mandatory before activation.
+
+Main itself is still unchanged and paused. The prepared helper pin is not an
+activation receipt; it must select the actual reviewed merged source that
+contains these helpers. Candidate-only Main CI enrollment preserves bootstrap
+operation before those test files ship, and Bridge keeps the same two-worker
+policy and unchanged eight-minute bound. Fresh qualification, actual Main merge,
+publication/resume, two natural cycles and client acceptance remain open.
+
 ### 2026-10-18 - Candidate repair merged; retain promotion ownership beyond run lifetime
 
 Source repair #7187 merged as
