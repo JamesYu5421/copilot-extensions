@@ -844,6 +844,15 @@ _(Agent-recommended implementation and validation decomposition of the
       CRLF, export, integrity or subprocess witnesses. Prove the retained
       portfolio fits its existing five-minute job with meaningful headroom;
       Linux timings alone do not close this validation.
+- [ ] _(Agent-recommended integration of newly reviewed Source coverage.)_
+      Carry the standalone chat consumer's required Linux/Windows witnesses
+      into the independently preserved Main CI through its normal control
+      review, retaining the reviewed six-minute jobs and 120-second contained
+      commands. Older released payloads lacking that consumer must remain
+      valid for ordinary checks; an owned candidate missing it must refuse.
+      Both required aggregates and exact qualification must demand the two
+      successful rows. Do not replace Main CI wholesale or omit unique
+      assurance to meet the time budget.
 - [ ] _(Agent-recommended mechanism.)_ Prove existing publication/event
       authority reliably delivers the required Main gate and a nonadministrator
       exact-head merge. Missing checks, API ambiguity, moved Main, unqualified
@@ -1085,6 +1094,25 @@ The separately governed control-preservation policy is not changed by this
 proposal.
 
 ## Journal
+
+### 2026-10-19 - Current-Dev integration retains newly reviewed unique coverage
+
+The first Source publication attempt safely aborted on three genuine conflicts
+after Dev advanced. The tested source was retained unchanged and integrated
+once in a fresh managed checkout. Conflict resolution preserves chat source
+closure and native coverage, the newly declared PR-owner smoke partitions,
+and the complete-once recipe/fingerprint cases. No branch history was reset
+or rewritten by hand. The source implementation is submitted as #7249;
+production Main remains paused.
+
+The newly reviewed standalone chat component adds two unique platform
+obligations, not duplicate plugin runs. The bounded Main CI proposal retains
+its reviewed checkout/setup/contained-command recipe and original limits,
+gates old-payload absence without loading unshipped helpers, and requires
+both rows for a qualifying candidate. The existing release owner retains this
+integration; no competing writer was established in the retained coordination
+record, which is not a fleet-wide absence claim or activation permission.
+The proposal still needs normal Main review and the covering qualification.
 
 ### 2026-10-19 - Complete-once source and control implementation rehearsed
 

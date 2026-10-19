@@ -156,7 +156,10 @@ def rehearse(
         commit_fixture(fixture, "preserved control compatibility fixture; not a release")
         git(fixture, "update-ref", "refs/remotes/origin/main", control_sha)
         git(fixture, "update-ref", "refs/remotes/origin/dev", source_sha)
-        names = selected_tests(data[".github/workflows/ci.yml"].decode("utf-8"), tests)
+        declarations = data[".github/workflows/ci.yml"] + b"\n" + blob(
+            fixture, source_sha, ".github/workflows/ci.yml",
+        )
+        names = selected_tests(declarations.decode("utf-8"), tests)
         for name in names:
             target = fixture / name
             if target.is_symlink() or not target.resolve().is_relative_to(fixture.resolve()):

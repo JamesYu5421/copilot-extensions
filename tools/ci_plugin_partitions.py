@@ -9,8 +9,6 @@ import math
 from pathlib import Path
 import re
 
-from materialized_candidate_inventory import CandidateValidationError
-
 _PLUGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 _FILES_PER_GROUP = 25
 _SMOKE_PARTITIONS = {"agent-dispatch": 3, "agent-pull-requests": 2}
@@ -192,20 +190,28 @@ def main() -> int:
                 json.loads(args.plugins_json), single_job_plugins=frozenset(args.single_job_plugin),
             ), separators=(",", ":")))
         elif args.command == "candidate-smoke":
-            from candidate_complete_once import candidate_smoke
+            try:
+                from materialized_candidate_inventory import CandidateValidationError
+                from candidate_complete_once import candidate_smoke
+            except ModuleNotFoundError as exc:
+                parser.error(f"candidate-smoke helper dependency is unavailable: {exc.name}")
 
-            print(json.dumps(candidate_smoke(
-                Path(__file__).resolve().parents[1], json.loads(args.plugins_json),
-                event=args.event, promotion_run=args.promotion_run,
-                phase=args.phase, profile=args.profile,
-            ), separators=(",", ":")))
+            try:
+                selected = candidate_smoke(
+                    Path(__file__).resolve().parents[1], json.loads(args.plugins_json),
+                    event=args.event, promotion_run=args.promotion_run,
+                    phase=args.phase, profile=args.profile,
+                )
+            except CandidateValidationError as exc:
+                parser.error(str(exc))
+            print(json.dumps(selected, separators=(",", ":")))
         else:
             for path in partition_files(
                 Path(__file__).resolve().parents[1], args.plugin, args.partition, args.partitions,
             ):
                 print("--test-file")
                 print(path)
-    except (ValueError, CandidateValidationError) as exc:
+    except ValueError as exc:
         parser.error(str(exc))
     return 0
 

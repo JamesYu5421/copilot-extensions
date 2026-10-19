@@ -81,6 +81,9 @@ def test_pinned_control_and_source_are_distinct():
     assert state["paused"] is True
 """, encoding="utf-8",
     )
+    (root / "tools/test_source_only.py").write_text(
+        "def test_source_only_contract(): assert True\n", encoding="utf-8",
+    )
     control.git(root, "init", "--quiet", "-b", "source")
     control.git(root, "add", ".")
     control.git(
@@ -88,7 +91,9 @@ def test_pinned_control_and_source_are_distinct():
         "commit", "--quiet", "-m", "control fixture",
     )
     control.git(root, "update-ref", "refs/remotes/origin/main", control.revision(root, "HEAD"))
-    (root / ".github/workflows/ci.yml").write_text("# DEV_RECIPE\n", encoding="utf-8")
+    (root / ".github/workflows/ci.yml").write_text(
+        "# DEV_RECIPE\n# tools/test_source_only.py\n", encoding="utf-8",
+    )
     control.commit_fixture(root, "source fixture")
     return root
 
@@ -103,7 +108,9 @@ def test_real_rehearsal_preserves_bytes_lineage_source_and_cleanup(source, tmp_p
     assert control.revision(source, "origin/main") == main
     assert not control.git(source, "status", "--porcelain")
     assert not list(scratch.iterdir())
-    assert "not release qualification" in capsys.readouterr().out
+    record = json.loads(capsys.readouterr().out.splitlines()[0])
+    assert record["evidence"].endswith("not release qualification")
+    assert record["tests"] == ["tools/test_probe.py", "tools/test_source_only.py"]
 
 
 def test_proposed_control_gets_a_distinct_fixture_commit(source, tmp_path, capsys):

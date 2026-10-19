@@ -1750,7 +1750,8 @@ a scheduled or manually dispatched workflow.
   before a provider call. Default legacy-profile results alone do not validate
   a newly preserved Main controller.
 - `python tools/rehearse_promotion_control.py --control-ref origin/main`
-  runs the CI-declared tool portfolio against a disposable, Git-backed pairing
+  runs the union of Source- and control-CI-declared tool modules against a
+  disposable, Git-backed pairing
   of committed source and pinned preserved control. Run it inside normal bounded
   supervision; use `--tests tools/test_fleet_ci_scope.py` for a focused
   composition check. `--workflow-overlay <directory>` rehearses proposed
