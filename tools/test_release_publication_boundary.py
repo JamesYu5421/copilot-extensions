@@ -221,6 +221,7 @@ class PromotionJobAdmissionTests(_ShellFixture):
         validation = [
             "full", "worktree-manager", "agent-index-service-linux",
             "agent-index-service-windows", "guards-full-sweep", "python-artifacts",
+            "fleet-manager-baselines-linux", "fleet-manager-baselines-windows",
         ]
         if "needs.source-units.result" in template:
             validation = ["source-units", "python-artifacts"]
