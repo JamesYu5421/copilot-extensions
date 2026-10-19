@@ -1,5 +1,5 @@
 {
-  "comment": "Keep seasoned editable setuptools metadata private and Windows live-source bindings short during first-touch dependency preparation. Probe only loaded PowerShell construction cleanup functions, omit nested bytecode caches from Worktrees source snapshots, accelerate complete Bridge, Dispatch and Index snapshot copying with shared literal file IO, compile the Vault offline-fixture launcher directly, and accelerate fresh machine-registry parsing with the available safe YAML backend.",
+  "comment": "Keep seasoned editable setuptools metadata private and Windows live-source bindings short during first-touch dependency preparation. Probe only loaded PowerShell construction cleanup functions, omit nested bytecode caches from Worktrees source snapshots, accelerate complete Bridge, CodeSpaces, Dispatch and Index snapshot copying with shared literal file IO, compile the Vault offline-fixture launcher directly, and accelerate fresh machine-registry parsing with the available safe YAML backend.",
   "changes": [
     {
       "plugin": "agent-bridge",

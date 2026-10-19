@@ -471,9 +471,9 @@ optional test tiers, and execute the actual PowerShell copy loop as one command
 rather than an EOF-sensitive interactive stdin block. Registration race fixtures
 require generation-three daemon admission and retain the foreign-record byte
 and no-write assertions.
-Bridge, Dispatch and Index snapshot copying shares literal file IO for ordinary
-files and directories, retains native reparse-point handling and every copied
-byte (including nested caches), and propagates copy errors. Its native
+Bridge, CodeSpaces, Dispatch and Index snapshot copying shares literal file IO
+for ordinary files and directories, retains native reparse-point handling and
+every copied byte (including nested caches), and propagates copy errors. Its native
 compatibility guard covers both PowerShell hosts. Vault's offline UV fixture
 compiles its genuine PE launcher directly with the OS .NET Framework compiler
 instead of starting a PowerShell compilation host; its twenty-second

@@ -745,6 +745,29 @@ _Pending review of this plan._
 
 ## Journal
 
+### 2026-10-19 - Reconcile the private PR and complete the shared-copy seam
+- Provider readback confirms published e022c23e conflicts with the advancing
+  integration branch; there is no CI run for that head to credit. Commit the
+  proven usage-fixture correction, retain both an explicit backup branch and
+  the managed pre-sync recovery ref, and preserve an identical complete tree
+  while consolidating the fourteen owned commits. Reconcile the single owned
+  patch onto936926d7 rather than repeatedly resolve the same overlap. The
+  only conflict is Dispatch's generated human-output declaration; regenerate
+  it from the merged canonical source. Range-diff identifies only that
+  generated hash difference, preserving every owned behavioral hunk.
+- The separate #6909 owner measures CodeSpaces initialization at14ms and
+  lifecycle mutex acquisition at2.4ms, followed by the real native payload
+  and dependency-copy path exhausting its unchanged45-second child deadline.
+  The suspected mutex explanation is disproved. Under the explicit two-call
+  ownership agreement, route only CodeSpaces' payload and dependency copies
+  through the existing canonical shared copier. Preserve all bytes, existing
+  exclusions, real native copy/error/reparse handling and publication checks.
+  No mutex, fixture, guard, lifecycle, planner or selection hunk is absorbed.
+- Source/materialized CodeSpaces consumer verification is pending. Retain the
+  agreed local quiet window for the other owner's complete automatic run;
+  do not treat the timing agreement, the other three copy consumers' evidence,
+  or a published candidate as native CodeSpaces qualification.
+
 ### 2026-10-19 - Close extracted snapshot-helper dependencies without hiding current failures
 - Published ea332516 exposes a real dependent-harness omission in required
   CI39328210087: the source-runtime transaction harness extracts Bridge's
