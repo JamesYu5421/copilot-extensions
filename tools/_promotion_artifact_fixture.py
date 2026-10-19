@@ -15,6 +15,15 @@ import yaml
 from _promotion_workflow_test_support import source_workflow
 
 _SEEDS = pytest.StashKey[dict[Callable[[Path], Path], Path]]()
+_SEED_GIT_CONFIG = (
+    ("gc.auto", "0"),
+    ("maintenance.auto", "false"),
+    ("gc.autoDetach", "false"),
+    ("maintenance.autoDetach", "false"),
+)
+SEED_GIT_OPTIONS = tuple(
+    argument for key, value in _SEED_GIT_CONFIG for argument in ("-c", f"{key}={value}")
+)
 
 
 def copy_fixture_seed(
@@ -28,6 +37,11 @@ def copy_fixture_seed(
         with pytest.MonkeyPatch.context() as environment:
             environment.setenv("GIT_CONFIG_NOSYSTEM", "1")
             environment.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+            count = int(os.environ.get("GIT_CONFIG_COUNT", "0"))
+            for index, (key, value) in enumerate(_SEED_GIT_CONFIG, start=count):
+                environment.setenv(f"GIT_CONFIG_KEY_{index}", key)
+                environment.setenv(f"GIT_CONFIG_VALUE_{index}", value)
+            environment.setenv("GIT_CONFIG_COUNT", str(count + len(_SEED_GIT_CONFIG)))
             seeds[prepare] = prepare(factory.mktemp("artifact-preparation-seed"))
     # Copy objects, refs, index and config too: hardlinks/shared writable metadata
     # would let adversarial mutations escape into the seed or another test.

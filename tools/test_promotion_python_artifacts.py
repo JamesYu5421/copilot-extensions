@@ -149,6 +149,7 @@ def test_repo_preparation_seed_isolates_git_metadata_and_payload(
 ) -> None:
     initial = _git(["rev-parse", "HEAD"], repo)
     tool = (repo / "tools/changefile.py").read_bytes()
+    readme = (repo / "README.md").read_bytes()
     (repo / "README.md").write_text("mutated checkout\n", encoding="utf-8")
     (repo / "tools/changefile.py").write_text("raise RuntimeError('mutated tool')\n")
     _git(["config", "core.autocrlf", "true"], repo)
@@ -163,8 +164,42 @@ def test_repo_preparation_seed_isolates_git_metadata_and_payload(
     assert _git(["config", "core.autocrlf"], fresh) == "false"
     assert _git(["status", "--porcelain"], fresh) == ""
     assert _git(["worktree", "list", "--porcelain"], fresh).startswith(f"worktree {fresh.as_posix()}\n")
-    assert (fresh / "README.md").read_bytes() == b"hello\n"
+    assert (fresh / "README.md").read_bytes() == readme
     assert (fresh / "tools/changefile.py").read_bytes() == tool
+
+
+def test_seed_git_maintenance_policy_is_process_local(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory,
+    pytestconfig: pytest.Config, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "fixture.sentinel")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "preserved")
+    expected = {
+        "gc.auto": "0", "maintenance.auto": "false",
+        "gc.autoDetach": "false", "maintenance.autoDetach": "false",
+    }
+    prepared = []
+
+    def prepare(directory: Path) -> Path:
+        prepared.append(directory)
+        assert {key: _git(["config", "--get", key], directory) for key in expected} == expected
+        assert _git(["config", "--get", "fixture.sentinel"], directory) == "preserved"
+        _git(["init", "-q"], directory)
+        _git(["config", "--local", "gc.auto", "1"], directory)
+        assert _git(["config", "--get", "gc.auto"], directory) == "0"
+        (directory / "payload").write_bytes(b"immutable seed\n")
+        return directory
+
+    first = copy_fixture_seed(pytestconfig, tmp_path_factory, prepare, tmp_path / "first")
+    (first / "payload").write_bytes(b"mutable copy\n")
+    second = copy_fixture_seed(pytestconfig, tmp_path_factory, prepare, tmp_path / "second")
+    assert len(prepared) == 1
+    assert (prepared[0] / "payload").read_bytes() == (second / "payload").read_bytes() == b"immutable seed\n"
+    assert _git(["config", "--local", "--get", "gc.auto"], second) == "1"
+    assert os.environ["GIT_CONFIG_COUNT"] == "1"
+    assert os.environ["GIT_CONFIG_KEY_0"] == "fixture.sentinel"
+    assert os.environ["GIT_CONFIG_VALUE_0"] == "preserved"
 
 
 def test_bundle_and_transfer_roundtrip(tmp_path):

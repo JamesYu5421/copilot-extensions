@@ -1156,7 +1156,7 @@ jobs:
           PYTHONPATH: libs/single-instance-lease/src
           PYTEST_ADDOPTS: ${{ (github.event_name != 'workflow_dispatch' || inputs.promotion_run != '') && '-m "not runner_exhaustive"' || '' }}
         run: >-
-          python tools/seasoned_uv.py --uv uv -- --system pytest pytest-timeout pyyaml "setuptools>=83.0.0" wheel &&
+          python tools/seasoned_uv.py --uv uv -- --system pytest pytest-timeout pyyaml coverage pytest-json-report "setuptools>=83.0.0" wheel &&
           python -m pytest -q
           libs/single-instance-lease/tests/test_lease.py
           libs/single-instance-lease/tests/test_operation.py

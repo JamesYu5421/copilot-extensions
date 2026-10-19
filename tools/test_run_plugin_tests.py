@@ -97,6 +97,7 @@ def test_complete_baseline_uses_prepared_interpreter_and_no_second_pytest(
     assert json.loads(output.read_text())["schema_version"] == 3
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="hardened devcontainer wrapper is Linux-only")
 def test_complete_baseline_hardened_preparation_uses_full_cache_without_tests_or_proof(
     tmp_path, monkeypatch,
 ):
@@ -172,6 +173,63 @@ def test_complete_baseline_hardened_preparation_uses_full_cache_without_tests_or
             prepare_only=True, complete_baseline_out=output, measured_commit="a" * 40,
         )
     assert len(prepared) == 2
+
+
+def test_complete_baseline_prepare_only_retains_portable_no_proof_contract(tmp_path, monkeypatch):
+    from tools.coverage_guided_selection import baseline, completion
+
+    monkeypatch.setattr(runner, "VENV_ROOT", tmp_path / "venvs")
+    monkeypatch.setattr(runner, "_has_suite", lambda _: True)
+    monkeypatch.setattr(runner, "_test_file_groups", lambda *a, **kw: [[]])
+    monkeypatch.setattr(runner.shutil, "which", lambda _: "uv")
+    prepared, leases = [], []
+
+    class Lease:
+        def release(self):
+            pass
+
+    monkeypatch.setattr(
+        runner, "_acquire_admission",
+        lambda wait, path: leases.append(path) or Lease(),
+    )
+    monkeypatch.setattr(
+        runner, "_ensure_venv",
+        lambda *a, **kw: prepared.append((a, kw)) or Path(sys.executable),
+    )
+    monkeypatch.setattr(
+        baseline, "collect_baseline",
+        lambda **kw: pytest.fail("preparation must not collect or execute tests"),
+    )
+    monkeypatch.setattr(
+        completion, "collector_identity",
+        lambda *a, **kw: pytest.fail("preparation must not issue a source completion claim"),
+    )
+    monkeypatch.setattr(
+        runner, "run_contained",
+        lambda *a, **kw: pytest.fail("preparation must not launch pytest"),
+    )
+    output = tmp_path / "fixture.json"
+    assert runner.main([
+        "fixture", "--complete-baseline-out", str(output),
+        "--measured-commit", "a" * 40, "--prepare-only",
+    ]) == 0
+    assert prepared == [(("fixture", "uv"), {"reinstall": False, "complete_baseline": True})]
+    assert leases == [runner._venv_base("fixture", complete_baseline=True).resolve()]
+    assert not output.exists()
+
+
+def test_complete_baseline_linux_wrapper_boundary_retains_portable_witnesses():
+    marks = test_complete_baseline_hardened_preparation_uses_full_cache_without_tests_or_proof.pytestmark
+    assert any(
+        mark.name == "skipif" and mark.kwargs.get("reason") == "hardened devcontainer wrapper is Linux-only"
+        for mark in marks
+    )
+    for witness in (
+        test_complete_baseline_prepare_only_retains_portable_no_proof_contract,
+        test_complete_baseline_uses_prepared_interpreter_and_no_second_pytest,
+        test_complete_baseline_prepared_cache_installs_and_fingerprints_instrumentation,
+    ):
+        assert not any(mark.name in {"skip", "skipif"} for mark in getattr(witness, "pytestmark", []))
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="complete source baseline profile is Linux-only")

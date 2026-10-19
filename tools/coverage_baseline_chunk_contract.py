@@ -365,14 +365,30 @@ def test_workflow_keeps_deadline_enrollment_and_only_two_heavy_opt_ins() -> None
     assert all("coverage_baseline_chunk_contract" not in run for run in selectors)
 
 
-def _assert_coverage_suite_bootstrap(ci: dict) -> None:
-    required = {"coverage", "pytest-json-report", "pytest-timeout", "pyyaml"}
+def _assert_coverage_suite_bootstrap(
+    ci: dict, *, suite: str = "tools/test_coverage_guided_selection.py",
+) -> None:
+    assert suite in {"tools/test_coverage_guided_selection.py", "tools/test_run_plugin_tests.py"}
     consumers = 0
     for job_name, job in ci["jobs"].items():
+        if not any(suite in s.get("run", "") for s in job.get("steps", [])):
+            continue
+        required = {"pytest", "pytest-timeout", "pyyaml"}
+        if suite == "tools/test_run_plugin_tests.py":
+            platform = job.get("runs-on", "")
+            # The real complete-profile CLI and hardened wrapper are Linux-only;
+            # generic runner/cache/preparation witnesses remain native on Windows.
+            assert isinstance(platform, str) and platform.startswith(("ubuntu-", "windows-")), (
+                job_name, "unsupported runner-suite platform",
+            )
+            if platform.startswith("ubuntu-"):
+                required |= {"coverage", "pytest-json-report"}
+        else:
+            required |= {"coverage", "pytest-json-report"}
         previous = []
         for step in job.get("steps", []):
             run = step.get("run", "").replace("\\\n", " ")
-            if "tools/test_coverage_guided_selection.py" in run:
+            if suite in run:
                 consumers += 1
                 assert "python -m pytest" in run, (job_name, "unsupported test interpreter")
                 prefix = run.split("python -m pytest", 1)[0]
@@ -393,7 +409,7 @@ def _assert_coverage_suite_bootstrap(ci: dict) -> None:
                                     installed.add(re.sub(r"[-_.]+", "-", name[0]).lower())
                 assert required <= installed, (job_name, "missing seasoned dependencies", required - installed)
             previous.append(step)
-    assert consumers, "coverage suite has no declared CI consumer"
+    assert consumers, f"{suite} has no declared CI consumer"
 
 
 def test_coverage_suite_bootstraps_its_declared_driver_dependencies() -> None:
@@ -407,6 +423,46 @@ def test_coverage_suite_bootstraps_its_declared_driver_dependencies() -> None:
         _assert_coverage_suite_bootstrap(
             yaml.safe_load((repo / ".github/workflows/ci.yml").read_text("utf-8")),
         )
+
+
+def test_runner_suite_bootstraps_its_platform_driver_dependencies() -> None:
+    import yaml
+    from tools._promotion_workflow_test_support import source_workflow
+
+    repo = Path(__file__).resolve().parents[1]
+    suite = "tools/test_run_plugin_tests.py"
+    _assert_coverage_suite_bootstrap(source_workflow(repo, "ci.yml"), suite=suite)
+    workflow = yaml.safe_load((repo / ".github/workflows/validate-and-promote.yml").read_text("utf-8"))
+    if any("--complete-baseline-out" in s.get("run", "") for s in workflow["jobs"]["full"]["steps"]):
+        _assert_coverage_suite_bootstrap(
+            yaml.safe_load((repo / ".github/workflows/ci.yml").read_text("utf-8")), suite=suite,
+        )
+
+
+@pytest.mark.parametrize("platform", ["ubuntu-latest", "windows-latest"])
+@pytest.mark.parametrize("mutation", [
+    None, "pytest", "coverage", "pytest-json-report", "pytest-timeout", "pyyaml", "unseasoned", "late",
+])
+def test_runner_suite_bootstrap_matches_linux_and_windows_dependencies(
+    platform: str, mutation: str | None,
+) -> None:
+    required = {"pytest", "pytest-timeout", "pyyaml"}
+    if platform == "ubuntu-latest":
+        required |= {"coverage", "pytest-json-report"}
+    packages = required - {mutation}
+    install = "python tools/seasoned_uv.py --uv uv -- --system " + " ".join(sorted(packages))
+    test = "python -m pytest -q tools/test_run_plugin_tests.py"
+    steps = [dict(run=install), dict(run=test)]
+    if mutation == "unseasoned":
+        steps[0]["run"] = install.replace("python tools/seasoned_uv.py --uv uv --", "uv pip install")
+    elif mutation == "late":
+        steps.reverse()
+    ci = {"jobs": {"runner": {"runs-on": platform, "steps": steps}}}
+    if mutation in required or mutation in {"unseasoned", "late"}:
+        with pytest.raises(AssertionError):
+            _assert_coverage_suite_bootstrap(ci, suite="tools/test_run_plugin_tests.py")
+    else:
+        _assert_coverage_suite_bootstrap(ci, suite="tools/test_run_plugin_tests.py")
 
 
 @pytest.mark.parametrize("mutation", [
