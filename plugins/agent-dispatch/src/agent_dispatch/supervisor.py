@@ -123,6 +123,7 @@ from .supervisor_conclusion import (  # noqa: F401 -- re-exported for existing c
     _conclusion_retry_payload,
     _conclusion_state,
     _hold_pending_cleanup,
+    _retired_cleanup_plan,
 )
 from .supervisor_identity import RestrictedStartupMixin
 
@@ -1386,72 +1387,6 @@ class Supervisor(RestrictedStartupMixin):
             outcome = {**outcome, "acp_session_id": session_id}
         return self._conclusion_state(outcome), outcome
 
-    def _retired_cleanup_plan(
-        self,
-        reservation: dict,
-        *,
-        local_session_id: str | None = None,
-        conclusion_session: str | None = None,
-        target_missing: bool = False,
-        cleanup_kind: str = "attempt",
-    ) -> tuple[str, dict]:
-        prior = self._conclusion_retry_payload(reservation)
-        if target_missing:
-            worktree_cleanup = {
-                "state": _CONCLUSION_COMPLETE,
-                "outcome": {
-                    "action": "already-removed",
-                    "reason": "recorded-target-directory-missing",
-                },
-            }
-        elif reservation.get("conclusion_state") in {
-            _CONCLUSION_COMPLETE,
-            _CONCLUSION_HELD,
-        }:
-            worktree_cleanup = {
-                "state": reservation.get("conclusion_state"),
-                "outcome": prior,
-            }
-        elif reservation.get("worktree_ownership") in {"targeted", "reused"}:
-            worktree_cleanup = {
-                "state": _CONCLUSION_COMPLETE,
-                "outcome": {
-                    "action": "preserved",
-                    "reason": (f"{reservation.get('worktree_ownership')}-worktree"),
-                },
-            }
-        elif reservation.get("worktree"):
-            worktree_cleanup = {"state": _CONCLUSION_PENDING}
-        else:
-            worktree_cleanup = {
-                "state": _CONCLUSION_COMPLETE,
-                "outcome": {
-                    "action": "skipped",
-                    "reason": "reservation-has-no-worktree",
-                },
-            }
-        payload: dict[str, object] = {
-            "action": "pending",
-            "reason": "retired-body-cleanup",
-            "cleanup_kind": cleanup_kind,
-            "worktree_cleanup": worktree_cleanup,
-        }
-        states = [worktree_cleanup["state"]]
-        if local_session_id is not None:
-            payload["session_end"] = {
-                "state": _CONCLUSION_PENDING,
-                "session_id": local_session_id,
-            }
-            states.append(_CONCLUSION_PENDING)
-        if conclusion_session:
-            payload["acp_session_id"] = conclusion_session
-        state = (
-            _CONCLUSION_PENDING
-            if _CONCLUSION_PENDING in states
-            else (_CONCLUSION_HELD if _CONCLUSION_HELD in states else _CONCLUSION_COMPLETE)
-        )
-        return state, payload
-
     def _retire_release_for_cleanup(
         self,
         reservation: dict,
@@ -1481,6 +1416,7 @@ class Supervisor(RestrictedStartupMixin):
     _bounded_component_failure = staticmethod(_bounded_component_failure)
     _hold_pending_cleanup = staticmethod(_hold_pending_cleanup)
     _cleanup_envelope_state = staticmethod(_cleanup_envelope_state)
+    _retired_cleanup_plan = staticmethod(_retired_cleanup_plan)
 
     @staticmethod
     def _validated_cleanup_claim(claim: dict) -> tuple[str, dict]:
@@ -1665,10 +1601,15 @@ class Supervisor(RestrictedStartupMixin):
                         )
                         target_dir = None
                     released_target_dir = target_dir
-                    try:
-                        resolved_acp = self.local_acp_session_fn(local_sid)
-                    except Exception:
-                        resolved_acp = None
+                    resolved_acp = None
+                    if not recorded_acp:
+                        try:
+                            resolved_acp = self.local_acp_session_fn(local_sid)
+                        except Exception:
+                            log.exception(
+                                "failed to resolve ACP identity for releasing local body %s",
+                                local_sid,
+                            )
                     conclusion_session = (
                         str(recorded_acp)
                         if recorded_acp
@@ -1709,6 +1650,29 @@ class Supervisor(RestrictedStartupMixin):
                         released += 1
                         continue
                     else:
+                        if conclusion_session:
+                            checkpoint = {
+                                **retry_payload,
+                                "action": "pending",
+                                "reason": "ending-released-body",
+                                "acp_session_id": conclusion_session,
+                            }
+                            try:
+                                self._conclusion_client.record_spawn_conclusion(
+                                    res["key"],
+                                    conclusion_state=(
+                                        res.get("conclusion_state") or _CONCLUSION_PENDING
+                                    ),
+                                    conclusion_detail=json.dumps(
+                                        checkpoint, sort_keys=True, separators=(",", ":"),
+                                    ),
+                                )
+                            except DispatchError:
+                                log.exception(
+                                    "failed to checkpoint ACP identity before ending local body %s",
+                                    local_sid,
+                                )
+                                continue
                         try:
                             can_release = self.local_end_fn(local_sid)
                         except Exception:
