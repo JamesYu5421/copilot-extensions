@@ -203,6 +203,12 @@ canonical assets. Both language variants must use the same layout; materialized
 engines and their required support files must exist locally and match the
 canonical bytes. Missing or modified assets and mixed source/local references
 remain failures, not accepted release-layout variations.
+Its separate synthetic legacy-source transaction fixture carries the complete,
+byte-checked canonical `versioned_runtime*` family rather than unrelated cell
+bootstrap inputs. Native construction/reuse and installed-closure retention
+remain real; full cell payloads stay in their own acceptance lane. Each native
+harness owns its child tree and reaps pipe-inheriting descendants on timeout
+within the unchanged query/item deadlines.
 
 Bridge's native PowerShell/Bash completed-slot admission and serving-reconcile refusal
 matrices use a minimal plugin payload. Both setup and admission still compute
@@ -428,6 +434,58 @@ Native artifact/diagnostic subprocesses and durable planner/ledger tests do not
 consume each other's wall-clock budgets. Gateway TLS/credential tests and
 separate-process acceptance are independently bounded too; none shares the
 unrelated test-runner job's budget.
+
+### Native PR-owner installation acceptance
+
+The manual `installation-context-acceptance.yml` workflow retains its derived
+diagnostic matrix by default. Dispatch it at the candidate ref with
+`watch_owner=true` to run the PR owner's normal full-payload refresh/live upgrade
+and two-shipped-cell isolation, normal PR-owner peer roundtrip, plus
+reachable/unreachable lease-only refusal,
+on separate fresh Linux and Windows hosted
+accounts. Each job explicitly uses `--allow-host-state --allow-explicit-tiers`;
+the test fixture refuses non-hosted runners, existing installation/config state,
+or a home/profile differing from the OS account database (POSIX) or native
+profile-folder API (Windows). It never redirects HOME or USERPROFILE in this
+lane. The hosted job discards the whole account afterward, while each test
+gracefully stops only its own original, natively captured owners.
+
+These are manual acceptance jobs, not additions to required fast CI. Each
+composite case runs separately under a 1,200-second group and 1,800-second
+aggregate bound; actual service cutover and native-exit deadlines remain
+120 and 30 seconds. Ordinary contained Windows invocations still use disposable
+fixture profiles and are not evidence for the native-account lane. The lease-only jobs first perform normal full-payload installation, then
+prove refusal with its already-selected metadata and archived terminal custody
+preserved; they never control or replace the unprovable original. Local Windows
+private-profile coverage for that first-touch path is explicitly selected with
+`--allow-explicit-tiers -k normal_payload_lease_only_owner_preserves_selected_metadata`.
+The `normal_payload_peer_roundtrip` case uses the normally installed PR payload
+as both caller and target peer, with a test-owned Worktrees echo backend and
+canonical adoption/resolver primitives. It proves inherited streams and exit
+status, credential/override scrubbing, explicit same-cell PR health, unchanged
+selection and no bytecode mutation of the immutable bootstrap snapshot.
+
+The same opt-in also runs separate contained owner-boundary jobs on Linux and
+Windows, without host-state admission: actual completed-slot controller death
+at 12 cutover boundaries and a real installer activation amid admitted
+register/unregister requests, a poll result, a slow acknowledged callback and
+queued legacy callbacks. These use disposable fixture profiles and test-owned
+fetch/gate/spawn adapters, not native-account or full-shipped-payload evidence.
+The passive-bind crash regression remains an ordinary smoke case; the other
+crash items and the composite concurrent upgrade are explicit T3 cases. Run the
+full process matrix with `--allow-explicit-tiers` and the selectors
+`actual_controller_death_recovers or bound_passive_endpoint_recovery` and
+`actual_installer_upgrade_drains_handlers_poll_ack` in separate runner calls.
+Production callback, cutover and original-exit deadlines remain unchanged.
+
+The separate native macOS job runs
+`native_macos_governed_watch_refuses_unprovable_identity` in a real completed
+interpreter. Until shared native birth/exit evidence supports macOS, governed
+activation and instance creation refuse; an absent-owner stop stays bounded,
+and cleanup/original-exit recovery refuse without health control, signaling,
+spawning or selected-state mutation. This proves the fail-closed boundary, not
+working macOS governed cutover. The ordinary unsupported-evidence unit case
+injects unavailable primitives and is not native macOS evidence.
 
 ### Derived native installation diagnostics
 
@@ -789,9 +847,17 @@ shared-write umask cannot expose the fixture namespace.
 
 Full dispatch execution in the CI smoke matrix (push, manual and promotion)
 distributes its complete file inventory across three independent jobs.
+The PR owner uses two complete/disjoint jobs. Its default sequential process
+group is ten files rather than twenty-five: the hosted second assignment
+exceeded the unchanged 300-second group budget before completing its last
+cases. Each assigned file still runs exactly once, with no marker/filter
+change. The runner's explicit file-group limit still wins; other plugins keep
+their existing grouping, and all item, group, plugin and job deadlines remain
+unchanged.
 `tools/ci_plugin_partitions.py` assigns
-whole ordinary 25-file groups round-robin and supplies explicit `--test-file`
-arguments to the unchanged contained runner. Every file belongs to exactly one
+whole canonical 25-file cohorts round-robin and supplies explicit `--test-file`
+arguments to the same contained runner, which may subdivide an assigned cohort
+into tighter sequential process groups. Every file belongs to exactly one
 partition, and every full-suite partition remains required by the applicable aggregate;
 a failed or cancelled partition fails the gate. Local unfiltered runs remain
 sequential. Item, sub-suite, plugin and 12-minute job deadlines are unchanged.
