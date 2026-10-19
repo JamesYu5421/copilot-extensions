@@ -198,6 +198,9 @@ if (-not $ContextualInstall -and $Action -in @('install', 'update', 'provision',
         }
         if ($Action -eq 'stamp') { $admissionArgs += '--deferred-runtime' }
         elseif ($Action -eq 'uninstall') { $admissionArgs += '--teardown' }
+        if ($Action -in @('install', 'update')) {
+            $admissionArgs += @('--human-operation', $Action.ToLowerInvariant())
+        }
         $admissionPreviousErrorAction = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
@@ -2603,8 +2606,11 @@ function Deploy-Wrappers {
     if (-not (Deploy-RuntimeResolvers)) { return $false }
 
     # Deploy hook scripts, including the consolidated pre/post client and its fallback modules.
-    foreach ($script in @('session-conduct.ps1', 'session-conduct.sh', 'session-machine.ps1', 'session-machine.sh', 'bootstrap-check.ps1', 'bootstrap-check.sh', 'bootstrap-killswitch-guard.ps1', 'bootstrap-killswitch-guard.sh', 'project-hooks.ps1', 'project-hooks.sh', 'register-nudge.ps1', 'register-nudge.sh', 'register-session.ps1', 'register-session.sh', 'deregister-session.ps1', 'deregister-session.sh', 'anchor-hygiene-check.ps1', 'anchor-hygiene-check.sh', 'provision-check.ps1', 'provision-check.sh', 'statelessness_guard.py', 'cross_repo_guard.py', 'anchor_shell_parser.py', 'anchor_write_guard.py', 'pr_supersede_guard.py', 'registry_root.py', 'nudge_status.py', 'bind_nudge.py', 'hook_runtime.py', 'hook_client.py', 'post-tool-hook.ps1', 'terminal_probe.py', 'bind-nudge.sh', 'bind-nudge.ps1')) {
+    foreach ($script in @('session-conduct.ps1', 'session-conduct.sh', 'session-machine.ps1', 'session-machine.sh', 'bootstrap-check.ps1', 'bootstrap-check.sh', 'bootstrap-killswitch-guard.ps1', 'bootstrap-killswitch-guard.sh', 'project-hooks.ps1', 'project-hooks.sh', 'register-nudge.ps1', 'register-nudge.sh', 'register-session.ps1', 'register-session.sh', 'deregister-session.ps1', 'deregister-session.sh', 'anchor-hygiene-check.ps1', 'anchor-hygiene-check.sh', 'provision-check.ps1', 'provision-check.sh', 'statelessness_guard.py', 'cross_repo_guard.py', 'anchor_shell_parser.py', 'anchor_write_guard.py', 'pr_supersede_guard.py', 'registry_root.py', 'nudge_status.py', 'bind_nudge.py', 'hook_runtime.py', 'hook_lifecycle_runtime.py', 'native_source_context.py', 'hook_client.py', 'post-tool-hook.ps1', 'terminal_probe.py', 'bind-nudge.sh', 'bind-nudge.ps1')) {
         $src = Join-Path $ScriptDir $script
+        if ($script -eq 'native_source_context.py') {
+            $src = Join-Path $ScriptDir "../src/agent_worktrees/$script"
+        }
         $dst = Join-Path $BinDir $script
         if (Test-Path $src) {
             Copy-Item $src $dst -Force
@@ -2673,7 +2679,7 @@ function Deploy-RuntimeResolvers {
 
 function Deploy-Binstub {
     <# Generate the project-specific binstub in ~/.local/bin/.
-       Every path routes through this payload's attributable command. #>
+       Every path routes through the installed user-side command. #>
     Ensure-InstallDir $LocalBin
 
     # Reserved-name guard (belt-and-suspenders with the ProjectName resolution
@@ -2685,29 +2691,29 @@ function Deploy-Binstub {
         return
     }
 
-    $payloadCmd = Join-Path $PluginDir 'bin\payload\agent-worktrees.cmd'
-    $payloadPs1 = Join-Path $PluginDir 'bin\payload\agent-worktrees.ps1'
+    $userCmd = Join-Path $LocalBin 'agent-worktrees.cmd'
+    $userPs1 = Join-Path $LocalBin 'agent-worktrees.ps1'
     $content = @"
 @echo off
 rem agent-worktrees project binstub
 set "PYTHONUTF8=1"
 set "AGENT_WORKTREES_LAUNCH_ID=$ProjectName-%RANDOM%-%RANDOM%"
-call "$payloadCmd" --project $ProjectName %*
+"$userCmd" --project $ProjectName %*
 exit /b %ERRORLEVEL%
 "@
     $dst = Join-Path $LocalBin "$ProjectName.cmd"
     Set-Content -Path $dst -Value $content -NoNewline
 
-    # Primary .ps1 (PowerShell prefers it over .cmd); both pin the payload.
+    # Primary .ps1 (PowerShell prefers it over .cmd).
     $ps1Content = (@'
 # agent-worktrees project binstub
 $env:PYTHONUTF8 = '1'
 $env:AGENT_WORKTREES_LAUNCH_ID = '%%PROJECT%%-' + [guid]::NewGuid().ToString('N')
-& '%%PAYLOAD%%' --project '%%PROJECT%%' @args
+& '%%COMMAND%%' --project '%%PROJECT%%' @args
 exit $LASTEXITCODE
 '@).Replace('%%PROJECT%%', $ProjectName).Replace(
-        '%%PAYLOAD%%',
-        $payloadPs1.Replace("'", "''")
+        '%%COMMAND%%',
+        $userPs1.Replace("'", "''")
     )
     $ps1Dst = Join-Path $LocalBin "$ProjectName.ps1"
     [System.IO.File]::WriteAllText($ps1Dst, $ps1Content, (New-Object System.Text.UTF8Encoding($false)))
@@ -3832,6 +3838,7 @@ switch ($Action) {
             Write-ServiceOk "Context runtime installed at $InstallDir"
             exit 0
         }
+        Write-V3Manifest
         Deploy-CopilotPlugin
         Deploy-GlobalBinstub
         Ensure-CopilotExperimental
@@ -3873,8 +3880,6 @@ switch ($Action) {
         } catch {
             Write-ServiceWarn "Config migration skipped: $_"
         }
-
-        Write-V3Manifest
 
         Write-Host ""
         Write-ServiceOk "Installation complete"
@@ -4182,6 +4187,7 @@ switch ($Action) {
         Deploy-VenvAndPackage
         if (-not (Deploy-Wrappers)) { exit 1 }
         if (-not (Invoke-VersionedActivate)) { exit 1 }
+        Write-V3Manifest
         Deploy-CopilotPlugin
         Deploy-GlobalBinstub
         Ensure-CopilotExperimental
@@ -4229,8 +4235,6 @@ switch ($Action) {
         } catch {
             Write-ServiceWarn "Config migration skipped: $_"
         }
-
-        Write-V3Manifest
 
         Write-ServiceOk "Update complete"
     }

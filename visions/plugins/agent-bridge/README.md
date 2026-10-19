@@ -6,7 +6,7 @@
   machines, and venue providers.
 - **Scope:** leaf (a per-plugin vision under the [agent-fabric](../../agent-fabric/README.md) branch)
 - **Status:** Draft
-- **Last revised:** 2026-10-15
+- **Last revised:** 2026-10-19
 - **Reality docs:** [`plugins/agent-bridge/README.md`](../../../plugins/agent-bridge/README.md) ·
   [`plugins/agent-bridge/docs/architecture.md`](../../../plugins/agent-bridge/docs/architecture.md)
 
@@ -352,11 +352,30 @@ explicit; disconnect, cancellation, connection close, and durable session
 retirement are not interchangeable. Recovery preserves remote session identity
 without replaying uncertain consequential work.
 
+When a managed host worktree opens a conversation, it owns that relationship
+as a durable, inspectable obligation without allocating another workspace.
+The originating worktree, current caller, bridge attachment and target-native
+conversation remain distinct identities. Stop, reconnect and host-session
+succession preserve responsibility; explicit retirement or accepted transfer
+settles it without terminating the external service or erasing its history.
+Standalone callers remain explicitly unowned rather than acquiring a
+fictional worktree identity.
+
 Credentials come from the existing scoped host-credential and auth-injection
 owners, not a second credential store. Remote tool permissions and structured
 application approvals remain answerable through the bridge's correlated
 headless interaction path. A live offered action and its exact answer determine
 approval; historical text, reconnect, and broad local tool authority do not.
+
+A target can be addressed by configured name or an explicit secure endpoint
+under the same locally approved connection policy. An endpoint is an address,
+not authority to connect or obtain credentials. Enabled plugins can contribute
+declarative connection and authentication requirements while adopter-owned
+configuration supplies concrete bindings. Neither a contribution nor discovery
+grants credential-source approval, executes an authentication command, or
+creates a remote agent. Token-scheme selection preserves the existing scoped
+credential owner's isolation rather than introducing arbitrary header templates
+or ambient-auth fallback.
 
 ### cursor-stable-event-replay
 
@@ -370,6 +389,21 @@ Named agents and sessions resolve through project context, worktree state,
 machine topology, namespace providers, and capability probes. A target may be
 local, remote, elevated, dynamic, or venue-provided, while the caller sees one
 catalog and one resolution contract.
+
+That catalog includes enabled-plugin remote target contributions with
+attributable ownership and explicit configuration precedence. An unbound or
+invalid contribution remains inspectable with its binding requirement or
+unavailability reason, never falsely ready. Roster and detail inspection do not
+contact remote endpoints or acquire credentials. Discovery, complete binding,
+successful connection and a running conversation remain distinct facts.
+
+### conventional-repository-discovery
+After basic installation, Bridge derives declared targets and existing
+agents/worktrees from conventional repository topology and their owning machine
+registries, without separate topology registration or a hand-authored roster.
+Explicit profiles retain priority. Source changes invalidate derived views
+without blind configuration writes or disruptive restarts; unavailable discovery
+is not authoritative emptiness, and observation grants no enrollment or control.
 
 ### bridge-as-agent-delegation
 

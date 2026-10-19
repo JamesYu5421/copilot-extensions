@@ -91,6 +91,9 @@ if [[ -z "${COPILOT_EXTENSIONS_CONTEXT:-}" ]]; then
                 elif [[ "$__aw_action" == uninstall ]]; then
                     __aw_admission_args+=(--teardown)
                 fi
+                if [[ "$__aw_action" == install || "$__aw_action" == update ]]; then
+                    __aw_admission_args+=(--human-operation "$__aw_action")
+                fi
                 "$__aw_admission_python" "${__aw_admission_args[@]}" --run-lifecycle -- \
                     "$__aw_admission_bash" "$SCRIPT_DIR/install.sh" "${__aw_args[@]}"
                 exit $?
@@ -2092,8 +2095,11 @@ deploy_wrappers() {
     deploy_runtime_resolvers || return 1
 
     # Deploy hook scripts, including the consolidated pre/post client and its fallback modules.
-    for script in session-conduct.ps1 session-conduct.sh session-machine.ps1 session-machine.sh bootstrap-check.ps1 bootstrap-check.sh bootstrap-killswitch-guard.ps1 bootstrap-killswitch-guard.sh project-hooks.ps1 project-hooks.sh register-nudge.ps1 register-nudge.sh register-session.ps1 register-session.sh deregister-session.ps1 deregister-session.sh anchor-hygiene-check.ps1 anchor-hygiene-check.sh provision-check.ps1 provision-check.sh statelessness_guard.py cross_repo_guard.py anchor_shell_parser.py anchor_write_guard.py pr_supersede_guard.py registry_root.py nudge_status.py bind_nudge.py hook_runtime.py hook_client.py post-tool-hook.ps1 terminal_probe.py bind-nudge.sh bind-nudge.ps1; do
+    for script in session-conduct.ps1 session-conduct.sh session-machine.ps1 session-machine.sh bootstrap-check.ps1 bootstrap-check.sh bootstrap-killswitch-guard.ps1 bootstrap-killswitch-guard.sh project-hooks.ps1 project-hooks.sh register-nudge.ps1 register-nudge.sh register-session.ps1 register-session.sh deregister-session.ps1 deregister-session.sh anchor-hygiene-check.ps1 anchor-hygiene-check.sh provision-check.ps1 provision-check.sh statelessness_guard.py cross_repo_guard.py anchor_shell_parser.py anchor_write_guard.py pr_supersede_guard.py registry_root.py nudge_status.py bind_nudge.py hook_runtime.py hook_lifecycle_runtime.py native_source_context.py hook_client.py post-tool-hook.ps1 terminal_probe.py bind-nudge.sh bind-nudge.ps1; do
         local script_src="$SCRIPT_DIR/$script"
+        if [[ "$script" == native_source_context.py ]]; then
+            script_src="$SCRIPT_DIR/../src/agent_worktrees/$script"
+        fi
         if [[ -f "$script_src" ]]; then
             tmp="$(mktemp "$BIN_DIR/$script.XXXXXX")"
             cp "$script_src" "$tmp"
@@ -2197,8 +2203,7 @@ deploy_binstub() {
         warn "Refusing to deploy project binstub for reserved runtime name 'agent-worktrees' (global command owned by deploy_tool_binstub)"
         return 0
     fi
-    # Generate a project entry point pinned to this payload. The payload owns
-    # runtime/context selection for both interactive and subcommand paths.
+    # Leave runtime resolution to the installed user-side command.
     local tmp
     tmp="$(mktemp "$LOCAL_BIN/$PROJECT_NAME.XXXXXX")"
     cat > "$tmp" <<'BINSTUB_HEAD'
@@ -2208,7 +2213,7 @@ BINSTUB_HEAD
     cat >> "$tmp" <<BINSTUB_BODY
 export PYTHONUTF8=1
 export AGENT_WORKTREES_LAUNCH_ID="$PROJECT_NAME-\$\$-\$RANDOM-\$(date +%s)"
-exec "$PLUGIN_DIR/bin/payload/agent-worktrees" --project "$PROJECT_NAME" "\$@"
+exec "$LOCAL_BIN/agent-worktrees" --project "$PROJECT_NAME" "\$@"
 BINSTUB_BODY
     chmod +x "$tmp"
     mv -f "$tmp" "$LOCAL_BIN/$PROJECT_NAME"
@@ -2986,9 +2991,9 @@ case "$ACTION" in
             ok "Context runtime installed at $INSTALL_DIR"
             exit 0
         fi
+        write_deploy_manifest
         remove_legacy_scripts
         remove_legacy_binstubs
-        reconcile_binstubs
         # Deploy the self-provisioning `agent-worktrees` TOOL binstub
         # unconditionally (project or not). A bare / runtime-only `install`
         # (no --project-name, e.g. the Worktree Manager core-install path) must
@@ -2996,6 +3001,7 @@ case "$ACTION" in
         # deploy_binstub below only runs under $HAS_PROJECT, so relying on it
         # left a project-less install with no tool binstub at all.
         deploy_tool_binstub
+        reconcile_binstubs
         deploy_copilot_plugin
         ensure_copilot_experimental
         assert_path
@@ -3020,8 +3026,6 @@ case "$ACTION" in
         # upgrades ~/.agent-worktrees/{config,repos,projects}.yaml. Non-fatal.
         PYTHONUTF8=1 "$VENV_PYTHON" -m agent_worktrees config-migrate 2>&1 \
             | sed 's/^/  /' || warn "Config migration skipped"
-
-        write_deploy_manifest
 
         echo ""
         ok "Installation complete"
@@ -3257,12 +3261,13 @@ case "$ACTION" in
         _deploy_venv_and_package
         deploy_wrappers || exit 1
         _versioned_activate || exit 1
+        write_deploy_manifest
         remove_legacy_scripts
         remove_legacy_binstubs
-        reconcile_binstubs
         # Deploy the tool binstub unconditionally (see the install action) so a
         # project-less `update` also keeps `agent-worktrees` on PATH.
         deploy_tool_binstub
+        reconcile_binstubs
         deploy_copilot_plugin
         ensure_copilot_experimental
 
@@ -3286,8 +3291,6 @@ case "$ACTION" in
         # upgrades ~/.agent-worktrees/{config,repos,projects}.yaml. Non-fatal.
         PYTHONUTF8=1 "$VENV_PYTHON" -m agent_worktrees config-migrate 2>&1 \
             | sed 's/^/  /' || warn "Config migration skipped"
-
-        write_deploy_manifest
 
         ok "Update complete"
         ;;

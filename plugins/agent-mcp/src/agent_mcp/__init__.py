@@ -11,17 +11,19 @@ defer, code-mode, storage). One config file describes one bridge: an upstream
 from __future__ import annotations
 
 # Fallback only for running from a source tree with no installed distribution.
-_FALLBACK_VERSION = "0.2.42-dev1"
+_FALLBACK_VERSION = "0.2.43-dev1"
 
 
 def _resolve_version() -> str:
     from importlib.metadata import PackageNotFoundError
     from importlib.metadata import version as _pkg_version
 
+    from .source_build import effective_runtime_version
+
     try:
         # Single source of truth: the installed package metadata (pyproject
         # version), so `status` / `--version` never drift from the real version.
-        return _pkg_version("agent-mcp")
+        return effective_runtime_version(_pkg_version("agent-mcp"))
     except PackageNotFoundError:  # running from source without an install
         return _FALLBACK_VERSION
 

@@ -239,6 +239,20 @@ def test_explicit_test_files_preserve_default_grouping_and_filter_only_collectio
     ) == [[tests / "nested/test_child.py", tests / "test_selected.py"]]
 
 
+@pytest.mark.parametrize("value", ["./tests/test_selected.py", "tests//test_selected.py"])
+def test_interactive_test_file_paths_are_normalized_without_changing_manifest_policy(selectable_tests, value):
+    assert runner._test_file_groups("example", 25, test_files=(value,)) == [
+        [selectable_tests / "test_selected.py"],
+    ]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows native path separators")
+def test_interactive_test_file_accepts_native_windows_separators(selectable_tests):
+    assert runner._test_file_groups(
+        "example", 25, test_files=("tests\\test_selected.py",),
+    ) == [[selectable_tests / "test_selected.py"]]
+
+
 @pytest.mark.parametrize("path", [
     "missing.py", "../test_selected.py", "test_selected.py", "nested",
 ])
@@ -762,7 +776,9 @@ def test_external_targets_are_explicit_and_contained_in_repository(monkeypatch, 
     monkeypatch.setattr(runner, "REPO", tmp_path)
     assert runner._plugin_dir("worktree-manager") == tmp_path / "worktree-manager"
     assert runner._plugin_dir("payload-invocation") == tmp_path / "libs" / "payload-invocation"
+    assert runner._plugin_dir("runtime-source") == tmp_path / "libs" / "versioned-runtime"
     assert runner.EXTERNAL_TEST_DEPENDENCIES["payload-invocation"] == ("pyyaml>=6.0.3",)
+    assert runner.EXTERNAL_TEST_DEPENDENCIES["runtime-source"] == ("pyyaml>=6.0.3",)
 
 
 def test_optional_file_override_is_validated_only_when_present(
@@ -976,6 +992,45 @@ def test_collect_only_also_takes_environment_admission(monkeypatch) -> None:
     assert runner.main(["alpha", "--collect-only"]) == 0
     assert acquire_calls == [0.0]
 
+@pytest.mark.parametrize("explicit", [False, True])
+def test_native_owner_test_profile_is_scoped_and_explicit_limits_win(monkeypatch, explicit):
+    class Lease:
+        def release(self):
+            pass
+
+    monkeypatch.setattr(runner, "_has_suite", lambda _name: True)
+    monkeypatch.setattr(runner.shutil, "which", lambda _name: "uv")
+    monkeypatch.setattr(runner, "_acquire_admission", lambda wait, root: Lease())
+    observed = {}
+
+    def capture(name, _uv, **kwargs):
+        observed[name] = (
+            kwargs["limits"].wall_seconds, kwargs["plugin_timeout"], kwargs["test_timeout"],
+            kwargs["max_files_per_subsuite"],
+        )
+        return 0
+
+    monkeypatch.setattr(runner, "run_plugin", capture)
+    arguments = ["agent-pull-requests", "example"]
+    if explicit:
+        arguments += [
+            "--timeout", "45", "--plugin-timeout", "75", "--test-timeout", "9",
+            "--max-files-per-sub-suite", "3",
+        ]
+    assert runner.main(arguments) == 0
+    if explicit:
+        assert observed == {"agent-pull-requests": (45, 75, 9, 3), "example": (45, 75, 9, 3)}
+    else:
+        expected = (1200, 1800, 30) if sys.platform == "win32" else (300, 900, 30)
+        assert observed == {"agent-pull-requests": (*expected, 10), "example": (300, 900, 30, 25)}
+
+
+@pytest.mark.parametrize("size", [0, -1])
+def test_explicit_file_group_limit_must_remain_positive(size):
+    with pytest.raises(SystemExit) as error:
+        runner.main(["agent-pull-requests", "--max-files-per-sub-suite", str(size)])
+    assert error.value.code == 2
+
 
 def test_prepare_only_takes_environment_admission(monkeypatch) -> None:
     # Like --guards/--collect-only, --prepare-only is NOT exempt: it can
@@ -1075,10 +1130,10 @@ def test_changed_plugins_always_includes_cross_plugin_contract_testers(monkeypat
     monkeypatch.setattr(runner.subprocess, "run", lambda *a, **k: next(calls))
     monkeypatch.setattr(
         runner, "_has_suite",
-        lambda name: name in {"foo", "copilot-extensions-harness"},
+        lambda name: name in {"foo", "copilot-extensions-harness", "customizing-copilot"},
     )
     result = runner.changed_plugins("origin/main")
-    assert result == sorted({"foo", "copilot-extensions-harness"})
+    assert result == sorted({"foo", "copilot-extensions-harness", "customizing-copilot"})
 
 
 def test_changed_plugins_empty_diff_schedules_nothing(monkeypatch) -> None:

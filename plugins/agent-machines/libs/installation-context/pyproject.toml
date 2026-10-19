@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=83.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+exclude-newer = "7 days"
+
+[project]
+name = "agent-installation-context"
+version = "0.1.0-dev3"
+description = "Marketplace-qualified installation identity and receipt validation"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Thomas Michon" }
+]
+dependencies = []
+
+[tool.setuptools]
+py-modules = [
+    "installation_context",
+    "_installation_context_base",
+    "_installation_context_files",
+    "_installation_context_source",
+    "_installation_context_receipts",
+    "_installation_context_snapshot",
+    "_installation_context_runtime_slot_ownership",
+    "_installation_context_runtime_slot_completion",
+    "_installation_context_resolution",
+    "_installation_context_guest_environment",
+    "_installation_context_activation",
+    "_installation_context_legacy_attribution",
+    "_installation_context_legacy_transition",
+    "_installation_context_legacy_retirement",
+    "_installation_context_maintenance",
+    "_installation_context_mode_cli",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 99
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "S", "B", "A", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S603", "S607"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "installation_context_smoke: fast cross-platform contract lane for PR CI",
+]

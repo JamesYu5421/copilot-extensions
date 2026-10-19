@@ -13,6 +13,10 @@ control of an agent, or the decision to delegate a bounded subtask. Use
 agent-bridge for live cross-boundary conversation and steering, and
 `delegation-guidance:delegating-work` for runtime task decomposition.
 
+Held housekeeping on a completed task has a separate preview-first
+[`reservations retry-cleanup` recovery flow](docs/cleanup-recovery.md).
+It preserves failure and attachment history and never rearms completed work.
+
 Internal coordinator deployment accepts optional `conditional`/`routing_dir`
 keyword arguments using the shared
 [conditional cutover contract](../../libs/zdd/README.md#conditional-owner-operation-partial-lifecycle-support).
@@ -72,7 +76,7 @@ closed rather than falling back to ordinary coordinator discovery. Global
 options require their full spelling, so task-worker flags do not intercept
 existing subcommand flags such as `claim --task` or `doctor --task`.
 
-Only `show`, `payload`, `progress`, `heartbeat`, `complete`, and
+Only `show`, `payload`, `start`, `progress`, `heartbeat`, `complete`, and
 `abandon --permit` are accepted, for the projected task only. `show` returns
 the authorized task snapshot without separate progress-history, attachment,
 or worktree-tracking reads. `heartbeat` retains its explicit worker positional;
@@ -81,6 +85,8 @@ reports the worker's own failure directly, not a fleet/session cleanup request.
 Fleet/history/cleanup options are refused. The coordinator independently
 checks the signed task, owner, session, generation, expiry and fencing epoch
 on every request; terminal transitions invalidate the grant.
+Task-only `start` uses the already-bound native session and never returns a
+new credential; grant renewal remains a trusted-supervisor operation.
 The coordinator's fencing floor is retained in the task queue database.
 Coordinator presence expiry, deregistration, demotion and process restart do
 not restore superseded grants or permit epoch-zero renewal after federation.
@@ -200,6 +206,10 @@ materializes a standalone snapshot with both installer-engine files and all
 declared local libraries; local-checkout stamps use content-addressed snapshot
 identities over the materialized tree. Unchanged stamps reuse one snapshot,
 while source, engine or library edits publish a new immutable identity.
+Windows runtime builds use the snapshot's own dependency-policy helper for
+both the library pre-installs and the selected package extras. This attributes
+the copied sources without widening the caller's trusted roots or relaxing
+dependency seasoning; a missing snapshot helper aborts the build.
 Delayed same-version local stamps reject a superseded snapshot candidate before
 publishing markers or launchers. POSIX
 retains its owning-payload pointer. First use primarily fetches and runs the
@@ -522,6 +532,36 @@ alive-but-quiet worker rather than yanking its goal. See the **`agent-dispatch`*
 skill § *Goal-loop tasks* and the vision leaf (*resumable-goal*,
 *resume-the-goal-not-restart-it*) for the full contract.
 
+### Read-only native restart policy
+
+The claim-provider callback has an explicit opt-in for restart inspection:
+`agent-dispatch --local claim-status <task-id> --native-restart-policy`
+(or `--shared` for the original central writer). An unqualified/default task
+reference cannot select that writer from reachability or historical dispatch
+provenance. Ordinary `claim-status` output is unchanged.
+
+The opt-in requests `GET /tasks/<id>?native_restart_policy=true`. The owner reads
+only reduced task fields and active/preparing waiter presence in one SQLite read
+snapshot, then returns `native_restart_policy` with schema
+`native-restart-task-policy`, version 1. It binds task id, repo, owner,
+original native conversation UUID, positive current generation, status and
+hold/steer/resume/waiter fields. Only a started task with a canonical native
+owner, no hold, no pending steer/resume and no waiter can match. Missing,
+malformed or oversized fields refuse; task prompts and results are not returned.
+An older coordinator that ignores the opt-in query cannot satisfy the contract.
+`pending_steer` reports unconsumed inbox entries in that same SQL read snapshot:
+an answered form can clear `awaiting_steer` while its submitted instructions
+still block qualification. Partial consumption does not clear that blocker.
+
+This callback never starts a coordinator, probes/opens SSH failover, changes
+tasks or fetches credentials through configured token commands. It uses only
+existing credentials for the selected writer, without a control credential.
+An unavailable provider remains unavailable, not confirmed task absence.
+`task_qualified` is a provisional policy snapshot: it retains the current
+generation for a future action-time fence, not proof of historical-generation
+continuity or a reservation. `launch_authorized` and `automatic_eligible` are
+always false. It cannot restore a conversation or supersede a hold.
+
 ### Routing: `requires` / `excludes` (hard) vs `affinity` (soft)
 
 - **`requires`** -- a set of capability or identity tokens (e.g. `logger`,
@@ -556,9 +596,53 @@ instead of delivered.
 
 ### Dedup & scheduling
 
-- `dedup_key` (unique) makes `create` idempotent -- a duplicate returns the
-  existing task, so agents can browse/`find` before ideating.
+- `dedup_key` makes `create` idempotent within a repo while a task occupies
+  the logical live identity: proposed, queued, claimed, started, suspended, or
+  submitted with `require_verification: true`. A pending verification therefore
+  retains the original task through repeated discovery and evaluator rejection.
+  Unverified submitted, completed, abandoned, and legacy dead-letter rows release
+  the key.
 - `not_before` defers a task until a wall-clock time (scheduled creation).
+
+Use an exact read when another producer, such as a recipe emitter, already
+authors the task:
+
+```bash
+agent-dispatch lookup --repo github.com/example/project \
+  --dedup-key 'recipe:reviewer:target=github.com/example/project#42'
+```
+
+`GET /tasks?repo=<lane>&dedup_key=<key>` and
+`DispatchClient.lookup_dedup(key, repo=lane)` return `[]` or `[task]`, using
+the same exact repo/key and live-state selection as `create`. Keys are literal,
+including SQL wildcard characters. This is not a capped roster scan or a
+title/prompt search: `find`/`q` remain text search only. Lookup retains the full
+single-task detail shape, including result, hold, evaluator, session, and any
+existing spawn reservation/run waiter, without enrichment or lifecycle changes.
+It does not create, rearm, wake, or clear holds; the CLI does not autostart a
+coordinator. A missing task remains missing.
+
+The repo lane is required by the API/client; the CLI defaults to the calling
+repo when `--repo` is omitted. Other list selectors (including `q`, `sweep`,
+status/category filters, and `limit`) cannot accompany `dedup_key`. Clients
+require the coordinator's `exact_dedup_lookup: 1` health capability instead of
+letting an older coordinator ignore the selector and return unrelated tasks.
+Exact lookup does not perform the reviewer recipe's legacy-key alias matching;
+it reads the stored key, not an equivalent target encoded under another key.
+Recipe creation does apply legacy reviewer aliases with the same live-state rule.
+
+Creation checks and inserts under its existing `BEGIN IMMEDIATE` transaction.
+That serialized logical check protects verification-pending submissions even
+though the unchanged five-state physical unique index is only a supplementary
+constraint. No stronger index is rebuilt at startup. Historical multiple live
+candidates produce a local HTTP `409` / `dedup_conflict` naming the repo, key,
+and candidate task IDs, rather than selecting one or rewriting records; unrelated
+keys and coordinator startup remain usable.
+Selection combines disjoint active and verification-pending queries with
+`UNION ALL` in one read snapshot. Active candidates use the existing partial
+dedup index; pending submissions use the existing status index. Exact lookup and
+reviewer-alias selection therefore avoid scanning completed lane history without
+adding an index or changing startup migrations.
 
 ## Producers
 
@@ -993,6 +1077,39 @@ A repository can compose its review source, lifecycle evaluator, and bounded
 worker pool in one `kind: reviewer-loop` declaration. The registrar expands it
 in memory to the same existing emitter/evaluator/supervised-lane units; the
 declaration remains the only source of truth.
+
+By default a loop named `project-review` expands to `project-review-source`,
+`project-review-evaluator`, and `project-review-workers`, with evaluator selector
+`project-review-lifecycle`. Optional `pool.name`, `evaluator.name`, and
+`evaluator.evaluator_ref` preserve an adopter's existing worker/evaluator
+registration names and task selector independently:
+
+```yaml
+name: project-review
+kind: reviewer-loop
+repo: github.com/example/project
+task_label: external-review
+emitter:
+  command: [python, tools/reviews.py, discover]
+  interval_seconds: 60
+evaluator:
+  name: existing-review-evaluator
+  evaluator_ref: existing-review-lifecycle
+  evaluator_spec: {rules: []}
+pool:
+  name: existing-review-workers
+  body: {type: headless, agent: reviewer}
+```
+
+The emitter and evaluator both use the selected `evaluator_ref`; inspect,
+status, doctor, and side-load consume these same expanded units. Registration
+names must use letters, digits, hyphens, or underscores and be unique across
+the declaration and trusted registry. The evaluator selector is a non-empty,
+non-whitespace string, not a registration name. Explicit empty or malformed
+values are rejected, not replaced with defaults. The emitter name/id remains
+derived; `emitter.evaluator_ref` cannot override the shared selector.
+Keeping names and selectors does not change declaration trust, task/session
+identity, or runtime claim authority, and does not rewrite stored tasks.
 
 The loop's `task_label` is always included in its worker pool. A repository
 that already shares one bounded reviewer fleet with another producer may add
@@ -2101,10 +2218,15 @@ agent-dispatch reattach <task-id> <session-id> --host <pool-host>
 agent-dispatch reattach <task-id> <session-id> --no-resume
 ```
 
-A task's `dedup_key` only releases from the create-dedup index once the task
-reaches a **terminal** status -- so `reattach` only works against a task
-that's already terminal, typically one just `abandon`ed for exactly this
-reason. It refuses (non-zero exit, no mutation) unless `session-id` is
+A task's `dedup_key` releases from logical create-dedup selection when it leaves
+proposed, queued, claimed, started, suspended, or verification-required submitted.
+`reattach` requires a dedup-releasing **concluded** source task,
+typically one just `abandon`ed for this purpose. A verification-pending
+submission is refused before liveness probes, reservation retirement, or
+task creation; explicit confirmation or abandonment must settle it first.
+Legacy unverified submissions retain their existing reattach behavior.
+It refuses (non-zero exit,
+no mutation) unless `session-id` is
 itself confirmed live, the source task is terminal, it carries a
 `dedup_key`, and it is **not** producer-managed (a `producer_fence` can't be
 safely replayed -- recover it through its owning producer instead). If the
@@ -2172,8 +2294,12 @@ agent-dispatch card set <id> \
 agent-dispatch list --status started        # awaiting_steer=true rows are "needs you"
 agent-dispatch card show <id>
 
-# The operator answers; --wake nudges the owning worktree to resume (default on):
-agent-dispatch steer submit <id> --field decision=Proceed
+# Answer the exact card/owner snapshot returned by card show:
+agent-dispatch steer submit <id> --field decision=Proceed \
+  --expected-revision <steering_revision> --idempotency-key <request-id>
+
+# Inspect this request's acceptance, consumption and original wake independently:
+agent-dispatch steer receipt <id> <request-id>
 
 # The resumed worker drains all answers and continues toward its goal:
 agent-dispatch steer take <id> --all        # -> {"steers": [{"fields": {...}, "sender": ...}]}
@@ -2188,7 +2314,22 @@ agent-dispatch steer take <id> --all        # -> {"steers": [{"fields": {...}, "
   their first option by default, so a producer can put its recommendation first
   while still offering the alternatives. Conditions are one level deep: their
   source must be an unconditional choice, and the expected value must be one of
-  that choice's declared options.
+  that choice's declared options. The owner stamps an opaque card `revision`
+  on every post, including byte-identical replacements at the same timestamp.
+  Task reads and `card show` expose a separate opaque `steering_revision`
+  covering the card and owner/session/incarnation/status/awaiting-input basis;
+  routine heartbeat and saved-draft updates do not invalidate it.
+- **Atomic card acceptance.** Pass that exact `steering_revision` as
+  `--expected-revision`. Both native Tasks and Maintenance form actions forward
+  the owner-reported value. The coordinator compares it inside the same SQLite
+  transaction that inserts the answer, clears the draft, changes task state and
+  queues the wake. A changed card or owner is a conflict before any of those
+  effects. A fresh read followed by an unguarded write is not equivalent.
+  SDK callers use `DispatchClient.steer(expected_revision=...)`; the SDK requires
+  `/health` capability `steering_acceptance: 1` and writes only to the guarded
+  endpoint. An old owner, or downgrade after the probe, fails explicitly without
+  falling back to a legacy write. Direct/manual unguarded steering retains its
+  existing advanced-guidance semantics.
 - **`steer submit`** appends the operator's answer to the task's append-only steer
   inbox and clears `awaiting_steer`; it is **not** worker-owned (the operator, or a
   surface acting for them, answers). After persistence, the coordinator asks
@@ -2203,8 +2344,19 @@ agent-dispatch steer take <id> --all        # -> {"steers": [{"fields": {...}, "
   landed and committed (a live-reproduced failure: an operator's answer was
   already recorded while Picker still reported delivery failure). `steer`
   carries a caller-supplied-or-generated `idempotency_key`; the coordinator
-  recognizes a retry with the same key and returns the already-committed
-  result unchanged instead of appending a second answer.
+  binds that key to the complete canonical answer, sender, expected status/
+  revision and wake intent/message. An exact retry is recognized before the
+  stale-card check, even after consumption, a new card or an ownership change;
+  a different payload or unverifiable pre-upgrade key conflicts instead of
+  returning a false acknowledgement. Existing rows migrate without fabricated
+  acceptance receipts. Native guarded submissions derive a stable key when
+  none is supplied; explicit keys support cross-client recovery.
+  The response's task is the current snapshot, while `steer_receipt.acceptance`
+  is the immutable original acceptance. The CLI exposes it as `receipt`.
+  `consumed_at` independently reports the worker's actual take, and `wake`/
+  `wake_status` observe only that request's original wake operation, never a
+  later task wake. Pending/delivered/stale delivery is not consumption;
+  `resume_requested` for a cold body is not a delivered wake.
   `DispatchClient.steer()` retries only a genuine `httpx.TimeoutException`
   (never any other failure) up to `AGENT_DISPATCH_HTTP_IDEMPOTENT_RETRIES`
   times (default 2), reusing the same key across attempts.
@@ -2265,7 +2417,7 @@ oversized input returns HTTP 413, and both leave the task non-terminal. JSON
 null and scalars are rejected. MCP clients should send a decoded object or array;
 the MCP SDK may normalize a JSON-encoded object string before tool invocation.
 
-`show` keeps the decoded `result`. Bulk `list`/`find`/`sweep`/`inbox` rows omit
+`show` and exact `lookup` keep the decoded `result`. Bulk `list`/`find`/`sweep`/`inbox` rows omit
 the potentially large value and expose `has_result`; retrieve it with
 `result <id>`, `GET /tasks/<id>/result`, or MCP `dispatch_result`. SSE events
 also expose only `has_result`, never the result body. Initial completion emits
@@ -2345,7 +2497,21 @@ created-agent storage → send the assigned task → store returned session info
 The created-agent facts are visible in the task's `spawn_reservation.agent_info`;
 readiness is not execution. A storage failure sends nothing. Interrupted send
 retries retain the same handle: reuse an idle agent, or strictly resume a
-stopped one, never create a replacement. Both paths recheck the authenticated
+stopped one, never create a replacement. Dispatch reads and validates the
+full `SessionInfo` with `status <session-id> --full` after a strict resume;
+the compact resume acknowledgement is not identity or readiness evidence.
+Receipt-proven terminal retirement remains binding even if interruption occurred
+before the session handle was stored. A different proven, unretired current head
+can be resumed, but an explicitly released conversation with unknown identity
+cannot authorize a replacement. Ordinary exclusive-lane inheritance retains the
+original allocation reservation across distinct task/creation keys, so handleless
+predecessor receipts remain in scope without importing unrelated lane history.
+Legacy handleless inheritance with an unproven origin refuses before resume.
+If a lost create response left the original reservation without a workspace,
+a successful replay's stored agent facts can prove that workspace within the
+same allocation and creation key; the original origin and retirement history
+remain intact.
+Both paths recheck the authenticated
 reservation/task admission fence immediately before delivery. That coordinator
 transaction is a pre-send admission point, not a cross-service transaction:
 later holds still gate claim/start. The ordinary send itself requires Bridge
@@ -2616,6 +2782,26 @@ alias at all (`aliases` defaults to empty for a legacy record), and
 re-registering it with no `--alias` **preserves that empty set** rather than
 auto-deriving one -- enabling enforcement without first adding an explicit
 `--alias` to every pre-existing pointer will reject their lanes' tasks).
+
+For a pinned fleet writer, opt into `AGENT_DISPATCH_TASK_AUTHORITY=central`;
+use `--local` for explicitly local-only work. These separate targets never
+switch databases on an outage, and a retained local coordinator is presence-only
+(`peer`/`satellite`), not an eligible replacement central writer. Unset retains
+legacy routing; `AGENT_DISPATCH_TASK_AUTHORITY=local` selects strict local
+authority. See the [central/local authority deployment contract](../../services/dispatch/README.md#pinned-central-authority-with-optional-local-only-work)
+for credentials, references, lifecycle and migration limits.
+
+The stdio MCP client uses the same authority and credential selection as the
+CLI. Attention action/page hints, ensured supervisor daemons, their registered
+lane/producer children and script workers preserve explicit target overrides.
+Reactive webhook producers, interactive worker seeds and detached waiters
+retain that selection too; waiter re-exec arguments never contain credentials.
+Raw-URL webhook invocations retain their configured coordinator token unless a
+CLI token overrides it; named targets still use their separate authority credentials.
+The Picker's board reads and live relay honor the same environment default and
+use the corresponding local or central bearer, without loading the full CLI.
+Strict-local script workers ignore an inherited remote `AGENT_DISPATCH_URL`;
+unconfigured legacy script routes retain their existing discovery behavior.
 
 ### Federation (`agent-dispatch federation run|status`)
 

@@ -1,32 +1,9 @@
-"""Worktree Manager mux-companion daemon (Phase 3b Slice 2 Sub-slice 3
--- ``worktree-manager-control-plane`` effort).
+"""Manager-owned mux companion: live observations, routed status and lifecycle.
 
-Implements the Manager-side resident daemon and its wire server, plus the Step
-3 launch/join/cleanup helpers that keep the Manager-owned
-``worktree_id ⇄ mux session`` mapping current and publish ``mux-live-v1``
-observations into ``agent-worktrees``. The mapping registry itself
-(:class:`~worktree_manager.mux_mapping_registry.MuxMappingRegistry`) lives in
-the sibling ``mux_mapping_registry`` module -- split out purely to stay under
-this repo's per-module line cap; see that module's own docstring for the
-registry's own design rationale.
-
-Mirrors ``agent_worktrees.mux_link`` structurally (same
-``work_coalescing_singleton.CoalescingServer`` shape, same lockfile-rendezvous
-pattern) but is intentionally NOT an import of that module --
-``mux_companion.py``'s own docstring documents the process-boundary rule this
-package follows: Worktree Manager never imports ``agent_worktrees``
-in-process, only reaches it through a subprocess/wire boundary. The two
-directions of this slice's IPC contract are therefore implemented
-independently on each side:
-
-* **Manager -> agent-worktrees** (``mux-live-v1``, Step 3's job): pushed via
-  this module's own lockfile-rendezvous + loopback client, now wired from the
-  real launch/join/cleanup path and refreshed opportunistically while the
-  daemon applies routed status.
-* **agent-worktrees -> Manager** (``mux-status-v1``, this module): THIS
-  daemon is the wire *server* for that kind. :func:`build_compute` is the
-  ``compute(kind, payload)`` callback a ``CoalescingServer`` wraps, mirroring
-  ``mux_link.build_compute`` exactly.
+The singleton owns the bounded recovery-evidence sampler as well as mux
+observation. Evidence is independent of mapping tombstones and never grants
+launch authority. All agency-owner reads cross the engine process boundary;
+the Manager never imports ``agent_worktrees`` in-process.
 """
 
 from __future__ import annotations
@@ -59,6 +36,8 @@ from .mux_mapping_registry import (
     remove_mapping,
 )
 from .self_install import current_version, default_root
+from .restart_observer import RestartObserver
+from .restart_notification_runtime import RestartNotificationRuntime
 
 __all__ = [
     "get_mapping",
@@ -654,6 +633,8 @@ class MuxDaemonRuntime:
         self.registry = MuxMappingRegistry(registry_path_)
         self.handler_tracker = _ActiveHandlerTracker()
         self.root = root if root is not None else default_root()
+        self.recovery_observer = RestartObserver(self.root)
+        self.restart_notifications = RestartNotificationRuntime(self.root, self.recovery_observer)
         self.passive = passive
         self.listen_port = listen_port or 0
         self.admissions_open = not passive
@@ -670,6 +651,12 @@ class MuxDaemonRuntime:
         # docstring.
         self._control_requests_in_flight = 0
         self._control_requests_lock = threading.Lock()
+
+    def activate_restart_recovery(self) -> None:
+        """Freeze under the owning loop's drain-visible mutation boundary."""
+        with self.loop_mutation():
+            if self.accepting_requests():
+                self.restart_notifications.activate()
 
     def start(self) -> None:
         try:
@@ -769,6 +756,7 @@ class MuxDaemonRuntime:
             "version": __version__,
             "attached_clients": attached_clients,
             "busy": active_handlers > 0,
+            "restart_recovery": self.restart_notifications.status,
         }
 
     def promote(self) -> dict:
@@ -835,6 +823,7 @@ class MuxDaemonRuntime:
         return self.registry.has_any_live()
 
     def shutdown(self) -> None:
+        self.restart_notifications.close()
         if self.server is not None:
             self.handler_tracker.wait_for_drain(self.SHUTDOWN_DRAIN_TIMEOUT_S)
             self.server.close()
@@ -877,6 +866,8 @@ def run_daemon_foreground(
             passive=passive,
             listen_port=listen_port,
         )
+        if lease is not None:
+            runtime.activate_restart_recovery()
         runtime.start()
         if runtime.server is None or runtime.port is None:
             return 1
@@ -905,13 +896,19 @@ def run_daemon_foreground(
                             lease = promoted
                             runtime.passive = False
                             runtime._self_retire_generation = generation
+                            runtime.activate_restart_recovery()
                 if lease is not None:
                     write_lock_data(lock, runtime.lock_extra())
                 runtime.sync_self_retire()
                 if runtime.republish_enabled:
                     with runtime.loop_mutation():
                         if runtime.republish_enabled:
+                            runtime.restart_notifications.pump(admitted=lease is not None and runtime.accepting_requests())
                             runtime.attachment_observer.observe(runtime.registry)
+                            if lease is not None and runtime.accepting_requests():
+                                runtime.recovery_observer.observe(runtime.registry)
+                else:
+                    runtime.restart_notifications.pause()
                 status_monitor_lock = _status_monitor_lock_path()
                 status_monitor_data = (
                     mux_daemon_live.read_lock_data(status_monitor_lock)
@@ -948,7 +945,10 @@ def run_daemon_foreground(
                 iterations += 1
                 if max_iterations is not None and iterations >= max_iterations:
                     break
-                time.sleep(poll_interval_s)
+                runtime.restart_notifications.wait(
+                    poll_interval_s, mutation=runtime.loop_mutation,
+                    admitted=lambda: lease is not None and runtime.republish_enabled and runtime.accepting_requests(),
+                )
         finally:
             runtime.shutdown()
             mux_daemon_cutover.clear_route_if_owner(os.getpid(), root=resolved_root)

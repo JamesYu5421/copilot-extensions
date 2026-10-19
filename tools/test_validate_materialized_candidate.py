@@ -116,6 +116,31 @@ def commit(root):
     return head
 
 
+@pytest.fixture
+def chat_subject(subject):
+    root, _, _, main = subject
+    dev_root = root.parent / "validated-dev"
+    for checkout in (root, dev_root):
+        roster = checkout / "tools/standalone_consumers.py"
+        original = roster.read_text("utf-8")
+        assert original.count("'services/dispatch')") == 1
+        roster.write_text(
+            original.replace("'services/dispatch')", "'services/dispatch', 'services/chat')"),
+            encoding="utf-8",
+        )
+        package = checkout / "services/chat/pyproject.toml"
+        package.parent.mkdir()
+        package.write_text('[project]\nname="fixture-chat"\n', encoding="utf-8")
+    git(dev_root, "add", ".")
+    git(dev_root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+        "commit", "-qm", "fixture chat registration")
+    dev = git(dev_root, "rev-parse", "HEAD")
+    state = json.loads((root / candidate.STATE).read_text("utf-8"))
+    state["last_promotion"]["dev_head"] = dev
+    (root / candidate.STATE).write_text(json.dumps(state), encoding="utf-8")
+    return root, commit(root), dev, main
+
+
 def test_exact_candidate_and_real_consumer_preserve_tracked_inputs(subject):
     root, head, dev, main = subject
     identity = candidate.validate(root, head, dev, main)
@@ -248,6 +273,52 @@ def test_complete_matrix_and_exact_existing_recipes(subject):
     ]
 
 
+def test_chat_registration_has_both_platform_rows_and_the_actual_ci_recipe(chat_subject):
+    root, _, dev, _ = chat_subject
+    rows = candidate.matrix(root, root.parent / "validated-dev", dev)["include"]
+    assert {(row["component"], row["os"], row["minutes"], row["job_minutes"])
+            for row in rows if row["component"] == "chat"} == {
+        ("chat", "ubuntu-latest", 6, 11), ("chat", "windows-latest", 6, 11),
+    }
+    commands = candidate.recipes(root, "chat")
+    assert commands == [(
+        [sys.executable, str(root / "tools/run-standalone-tests.py"), "services/chat",
+         "--prepare", "--admission-wait", "60", "--timeout", "120"], root,
+    )]
+    jobs = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text("utf-8"))["jobs"]
+    for platform in ("linux", "windows"):
+        job = jobs[f"agent-chat-service-{platform}"]
+        invocation = next(step["run"] for step in job["steps"] if step.get("run"))
+        assert invocation.split()[2:] == commands[0][0][2:]
+
+
+def test_registered_chat_recipe_executes_and_preserves_candidate_identity(chat_subject):
+    root, head, dev, main = chat_subject
+    result = candidate.run(
+        root, head, dev, main, "chat", dev_root=root.parent / "validated-dev",
+    )
+    assert result["component"] == "chat" and result["outcome"] == "success"
+    assert (root / "fleet-selector.txt").is_file()
+    assert candidate.validate(root, head, dev, main)["candidate_sha"] == head
+
+
+def test_missing_registered_chat_package_refuses(chat_subject):
+    root, _, dev, _ = chat_subject
+    (root / "services/chat/pyproject.toml").unlink()
+    with pytest.raises(candidate.CandidateValidationError, match="absent"):
+        candidate.matrix(root, root.parent / "validated-dev", dev)
+
+
+def test_actual_canonical_roster_has_executable_chat_rows():
+    rows = candidate.inventory_matrix(
+        ROOT, candidate.python_suites(ROOT), candidate.standalone_roster(ROOT),
+    )["include"]
+    assert {row["os"] for row in rows if row["component"] == "chat"} == {
+        "ubuntu-latest", "windows-latest",
+    }
+    assert candidate.recipes(ROOT, "chat")[0][0][2] == "services/chat"
+
+
 def test_missing_inventory_or_unknown_consumer_cannot_silently_skip(subject):
     root, head, dev, main = subject
     with pytest.raises(candidate.CandidateValidationError, match="absent"):
@@ -313,10 +384,11 @@ def test_development_inventory_must_be_the_validated_input(subject, invalid):
         candidate.matrix(root, source, dev)
 
 
-def test_windows_standalone_recipe_uses_canonical_component_id(subject, monkeypatch):
-    monkeypatch.setitem(candidate.STANDALONE, "index", PureWindowsPath("services", "index"))
-    argv, _ = candidate.recipes(subject[0], "index")[0]
-    assert argv[2] == "services/index"
+@pytest.mark.parametrize("component", ["index", "chat"])
+def test_windows_standalone_recipe_uses_canonical_component_id(subject, monkeypatch, component):
+    monkeypatch.setitem(candidate.STANDALONE, component, PureWindowsPath("services", component))
+    argv, _ = candidate.recipes(subject[0], component)[0]
+    assert argv[2] == f"services/{component}"
 
 
 def test_omitted_canonical_standalone_consumer_cannot_authorize_inventory(subject, monkeypatch):
@@ -347,6 +419,7 @@ def test_missing_validator_bootstrap_inputs_refuse_inventory(subject, relative):
 
 
 def test_validator_bootstrap_recipe_keeps_pinned_deny_local_contract(subject, tmp_path, monkeypatch):
+    from _promotion_workflow_test_support import source_owned
     root = subject[0]
     workspace = tmp_path / "fresh-bootstrap"
     workspace.mkdir()
@@ -364,7 +437,8 @@ def test_validator_bootstrap_recipe_keeps_pinned_deny_local_contract(subject, tm
           "import packaging; print(packaging.__version__)"], root),
     ]
     jobs = yaml.safe_load((ROOT / ".github/workflows/validate-and-promote.yml").read_text())["jobs"]
-    prefix = "python tools/seasoned_uv.py --registry-only --uv uv --"
+    helper_root = "reviewed-helpers/" if source_owned(jobs) else ""
+    prefix = f"python {helper_root}tools/seasoned_uv.py --registry-only --uv uv --"
     for job in ("build-python-artifacts", "python-artifacts", "promote", "publish-python-artifacts"):
         body = next(step["run"] for step in jobs[job]["steps"] if prefix in step.get("run", ""))
         line = next(line.strip() for line in body.replace("\\\n", "").splitlines() if prefix in line)
@@ -373,7 +447,7 @@ def test_validator_bootstrap_recipe_keeps_pinned_deny_local_contract(subject, tm
         assert actual[actual.index("--index-url") + 1] == (
             "${ARTIFACT_VALIDATION_INDEX_URL:-https://pypi.org/simple}"
         )
-        assert actual[actual.index("-r") + 1] == "tools/artifact_validation_requirements.txt"
+        assert actual[actual.index("-r") + 1] == helper_root + "tools/artifact_validation_requirements.txt"
         actual[:2] = [sys.executable, str(root / "tools/seasoned_uv.py")]
         actual[actual.index("--python") + 1] = str(interpreter)
         actual[actual.index("--index-url") + 1] = "https://packages.example.invalid/simple"
@@ -593,11 +667,32 @@ def test_isolated_trusted_cli_loads_inventory_and_executes_actual_consumer(subje
 
 
 def test_pipeline_requires_successful_exact_candidate_jobs_and_preserves_old_gates():
+    from _promotion_workflow_test_support import assert_source_owned_boundary, source_owned
     workflow = yaml.safe_load(
         (ROOT / ".github" / "workflows" / "validate-and-promote.yml").read_text(),
     )
     jobs = workflow["jobs"]
     merger = jobs["merge-promotion"]
+    if source_owned(jobs):
+        assert_source_owned_boundary(jobs)
+        qualifier = jobs["qualify-candidate"]
+        assert qualifier["permissions"] == {"contents": "read", "actions": "write"}
+        assert "environment" not in qualifier and "secrets." not in json.dumps(qualifier)
+        checkouts = [step for step in qualifier["steps"] if step.get("uses") == "actions/checkout@v4"]
+        assert len(checkouts) == 3
+        assert all(step["with"]["persist-credentials"] is False for step in checkouts)
+        assert checkouts[0]["with"]["ref"] == "${{ env.RELEASE_HELPERS_SHA }}"
+        assert checkouts[1]["with"]["ref"] == "${{ needs.promote.outputs.candidate_sha }}"
+        assert checkouts[2]["with"]["ref"] == "${{ needs.gate.outputs.sha }}"
+        execute = next(step for step in qualifier["steps"] if step.get("id") == "qualify")
+        for argument in (
+            "--candidate-root candidate", "--dev-root validated-dev", "--candidate-sha",
+            "--dev-sha", "--main-before", "--control-sha", "--receipt", "--github-output",
+        ):
+            assert argument in execute["run"]
+        assert not any("checkout" in step.get("uses", "") for step in merger["steps"])
+        assert "python-artifacts" in jobs
+        return
     assert set(merger["needs"]) == {
         "promote", "materialized-candidate-plan", "materialized-candidate-consumers",
         "materialized-candidate-windows",

@@ -51,7 +51,7 @@ def _reexec_argv(args: argparse.Namespace) -> list[str]:
     forked per-tick subprocess re-invokes -- see ``emitter.serve``/
     ``schedule.serve``'s own docstrings.
 
-    Reproduces THIS invocation's own top-level ``--url``/``--shared``/
+    Reproduces THIS invocation's own top-level ``--url``/``--shared``/``--local``/
     ``--token``/``--control-token`` flags (an operator's explicit,
     deliberately pinned target must keep applying to every tick, exactly
     like ``test_serve_still_supports_a_pinned_static_target`` expects) but
@@ -62,16 +62,9 @@ def _reexec_argv(args: argparse.Namespace) -> list[str]:
     would -- never silently caching whatever happened to resolve at
     ``serve`` startup.
     """
-    argv = [sys.executable, "-m", "agent_dispatch"]
-    if getattr(args, "url", None):
-        argv += ["--url", args.url]
-    if getattr(args, "token", None):
-        argv += ["--token", args.token]
-    if getattr(args, "control_token", None):
-        argv += ["--control-token", args.control_token]
-    if getattr(args, "shared", False):
-        argv.append("--shared")
-    return argv
+    from .client_authority import target_cli_args
+
+    return [sys.executable, "-m", "agent_dispatch", *target_cli_args(args)]
 
 
 def _cmd_schedule(args: argparse.Namespace) -> int:
@@ -249,13 +242,21 @@ def _cmd_emitter(args: argparse.Namespace) -> int:
 
 def _cmd_webhook(args: argparse.Namespace) -> int:
     from .producers import webhook
+    from .client_authority import client_authority
 
     config = webhook.load_config(args.config) if args.config else {}
     if args.url:
         config["url"] = args.url
     if args.token:
         config["coordinator_token"] = args.token
-    webhook.serve(config, host=args.host, port=args.port)
+    kwargs = {}
+    authority = client_authority(args)
+    target_args = args
+    if authority == "pinned_url" and not args.token and config.get("coordinator_token"):
+        target_args = argparse.Namespace(**{**vars(args), "token": config["coordinator_token"]})
+    if authority != "legacy":
+        kwargs["client_factory"] = lambda: _client(target_args)
+    webhook.serve(config, host=args.host, port=args.port, **kwargs)
     return 0
 
 
@@ -281,6 +282,23 @@ def _parse_label_max_attempts(items: list[str] | None) -> dict[str, int]:
 def _cmd_reservations(args: argparse.Namespace) -> int:
     """Operator visibility + manual control over spawn reservations."""
     with _client(args) as c:
+        if args.reservations_command in {"retry-cleanup", "cleanup-history"}:
+            try:
+                if args.reservations_command == "cleanup-history":
+                    return _emit(c.cleanup_recovery_history(args.key))
+                machine, _env = _registration_scope(args)
+                if not machine:
+                    print("agent-dispatch reservations retry-cleanup: current host identity unavailable", file=sys.stderr)
+                    return 2
+                return _emit(c.recover_held_cleanup(
+                    args.key, expected_generation=args.expected_generation,
+                    current_host=machine, apply=args.apply,
+                    expected_preview=args.expected_preview, reason=args.reason,
+                    request_id=args.request_id,
+                ))
+            except DispatchError as exc:
+                print(f"agent-dispatch reservations {args.reservations_command}: {exc}", file=sys.stderr)
+                return 2
         if args.reservations_command == "list":
             rows = c.list_reservations(task_id=args.task, state=args.state, limit=args.limit)
             return _emit(rows)
@@ -537,6 +555,19 @@ def register_reservations_command(subparsers: Any) -> None:
     rp = res_sub.add_parser("settle", help="mark a reservation settled (attempt over)")
     rp.add_argument("key")
     rp.add_argument("--detail")
+    rp.set_defaults(func=_cmd_reservations)
+    rp = res_sub.add_parser(
+        "retry-cleanup", help="preview held housekeeping recovery; never restart completed work",
+    )
+    rp.add_argument("key", help="exact retired reservation key")
+    rp.add_argument("--expected-generation", type=int, required=True)
+    rp.add_argument("--apply", action="store_true")
+    rp.add_argument("--expected-preview", help="exact token from preview")
+    rp.add_argument("--request-id", help="stable idempotency id for an apply request")
+    rp.add_argument("--reason", help="auditable reason (required on apply)")
+    rp.set_defaults(func=_cmd_reservations)
+    rp = res_sub.add_parser("cleanup-history", help="read preserved housekeeping failure history")
+    rp.add_argument("key")
     rp.set_defaults(func=_cmd_reservations)
     rp = res_sub.add_parser(
         "rearm",

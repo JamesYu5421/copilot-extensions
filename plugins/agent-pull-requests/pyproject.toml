@@ -7,7 +7,7 @@ exclude-newer = "7 days"
 
 [project]
 name = "agent-pull-requests"
-version = "0.3.15-dev1"
+version = "0.3.16-dev1"
 description = "Cross-repository pull-request CLI with agent-worktrees-mediated GitHub auth."
 readme = "README.md"
 license = "MIT"
@@ -19,6 +19,7 @@ dependencies = [
     "agent-work-coalescing-singleton",
     "agent-procutil",
     "agent-single-instance-lease",
+    "agent-zdd",
 ]
 
 [tool.uv.sources]
@@ -33,6 +34,7 @@ agent-procutil = { path = "libs/agent-procutil" }
 # ``serve`` must never let two daemons race to bind and both write
 # rendezvous, orphaning one silently.
 agent-single-instance-lease = { path = "libs/single-instance-lease" }
+agent-zdd = { path = "libs/zdd" }
 
 [project.optional-dependencies]
 dev = [

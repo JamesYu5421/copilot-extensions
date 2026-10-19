@@ -5,6 +5,8 @@ import io
 import json
 import os
 import socket
+import socketserver
+import shutil
 import subprocess
 import sys
 import threading
@@ -13,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from agent_procutil import no_window_kwargs
 
 import agent_worktrees.hook_ipc as hook_ipc
 import agent_worktrees.__main__ as main
@@ -433,9 +436,11 @@ def test_advisory_guard_does_not_suppress_later_deny(monkeypatch, tmp_path):
 
 def test_client_does_not_import_agent_worktrees_main():
     text = _SCRIPT.read_text("utf-8")
+    runtime_text = _SCRIPT.with_name("hook_lifecycle_runtime.py").read_text("utf-8")
     assert "agent_worktrees.__main__" not in text
-    assert '"agent_worktrees",' in text
-    assert '"session-lifecycle"' in text
+    assert "agent_worktrees.__main__" not in runtime_text
+    assert '"agent_worktrees",' in runtime_text
+    assert '"session-lifecycle"' in runtime_text
 
 
 def test_session_start_fallback_uses_one_runtime_process(monkeypatch, tmp_path):
@@ -482,8 +487,9 @@ def test_session_start_fallback_uses_one_runtime_process(monkeypatch, tmp_path):
     assert seen["kwargs"]["env"]["PYTHONPATH"] == ""
 
 
-def test_session_start_rejects_old_resident_without_lifecycle_capability(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize("kind", ["sessionStart", "sessionEnd"])
+def test_session_hook_rejects_old_resident_without_lifecycle_capability(
+    monkeypatch, tmp_path, kind,
 ):
     runtime = tmp_path / ".agent-worktrees"
     runtime.mkdir(parents=True)
@@ -492,6 +498,7 @@ def test_session_start_rejects_old_resident_without_lifecycle_capability(
             "hook_transport": "tcp",
             "hook_endpoint": "127.0.0.1:1234",
             "hook_token": "token",
+            "hook_capabilities": ["session-start-source-v1", "session-end-source-v1"],
         }),
         encoding="utf-8",
     )
@@ -517,7 +524,193 @@ def test_session_start_rejects_old_resident_without_lifecycle_capability(
         "create_connection",
         lambda *args, **kwargs: Connection(),
     )
-    assert hook_client._request("sessionStart", {}, tmp_path) is None
+    result = hook_client._request(kind, {}, tmp_path)
+    if kind == "sessionEnd" and os.name == "nt":
+        assert "unqualified" in result["_stderr"]
+    else:
+        assert result is None
+
+
+@pytest.mark.parametrize("advertised", [[], ["session-start-source-v1"]])
+def test_source_aware_start_does_not_accept_legacy_start_capability(monkeypatch, tmp_path, advertised):
+    runtime = tmp_path / ".agent-worktrees"
+    runtime.mkdir()
+    (runtime / "status-monitor.lock").write_text(json.dumps({
+        "hook_transport": "tcp", "hook_endpoint": "127.0.0.1:1234", "hook_token": "token",
+        "hook_capabilities": advertised,
+    }))
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def settimeout(self, timeout):
+            pass
+
+        def sendall(self, request):
+            pass
+
+        def recv(self, size):
+            return b'{"version":1,"capabilities":["session-lifecycle-v1"],"result":{}}\n'
+
+    monkeypatch.setattr(hook_client.socket, "create_connection", lambda *args, **kwargs: Connection())
+    result = hook_client._request("sessionStart", {
+        "_agentWorktrees": {"nativeSource": {"qualified": False}},
+    }, tmp_path)
+    if os.name == "nt":
+        assert "unavailable" in result["_stderr"]
+    else:
+        assert result is None
+
+
+@pytest.mark.parametrize("kind", ["sessionStart", "sessionEnd"])
+@pytest.mark.parametrize("capabilities", [None, ["session-lifecycle-v1"]])
+def test_source_aware_hook_never_dispatches_to_legacy_peer(tmp_path, kind, capabilities):
+    mutations = []
+
+    class LegacyHandler(socketserver.StreamRequestHandler):
+        def handle(self):
+            request = json.loads(self.rfile.readline())
+            mutations.append(request["kind"])
+            self.wfile.write(
+                b'{"version":1,"capabilities":["session-lifecycle-v1"],"result":{}}\n'
+            )
+
+    server = HookIpcServer(lambda *_: pytest.fail("legacy handler owns dispatch"))
+    server.server.RequestHandlerClass = LegacyHandler
+    server.start()
+    try:
+        endpoint = server.rendezvous()
+        endpoint.pop("hook_capabilities", None)
+        if capabilities is not None:
+            endpoint["hook_capabilities"] = capabilities
+        runtime = tmp_path / ".agent-worktrees"
+        runtime.mkdir()
+        (runtime / "status-monitor.lock").write_text(json.dumps(endpoint))
+        result = hook_client._request(kind, {
+            "_agentWorktrees": {"nativeSource": {"qualified": False}},
+        }, tmp_path)
+        assert mutations == []
+        if os.name == "nt":
+            assert result["_stderr"]
+        else:
+            assert result is None
+    finally:
+        server.close()
+
+
+@pytest.mark.parametrize("installer", ["install.sh", "install.ps1", "installer.py"])
+def test_installed_bin_layout_contains_all_lifecycle_helpers(tmp_path, monkeypatch, installer):
+    scripts = _SCRIPT.parent
+    installed = tmp_path / "runtime" / "bin"
+    installed.mkdir(parents=True)
+    if installer == "installer.py":
+        from agent_worktrees import installer as publisher
+
+        monkeypatch.setattr(publisher, "bin_dir", lambda: installed)
+        monkeypatch.setattr(publisher, "install_dir", lambda: installed.parent)
+        assert publisher.deploy_wrappers(scripts.parents[2])
+        declared = [path.name for path in installed.iterdir()]
+        text = ""
+    else:
+        text = (scripts / installer).read_text(encoding="utf-8")
+    if installer.endswith(".sh"):
+        declared = text.split("for script in ", 1)[1].split("; do", 1)[0].split()
+    elif installer.endswith(".ps1"):
+        declared = text.split("foreach ($script in @(", 1)[1].split(")) {", 1)[0]
+        declared = [name.strip().strip("'") for name in declared.split(",")]
+    for name in (
+        "hook_client.py", "hook_runtime.py", "hook_lifecycle_runtime.py",
+        "native_source_context.py",
+    ):
+        assert name in declared, f"{installer} does not deploy {name}"
+    if installer.endswith(".sh"):
+        if not shutil.which("bash"):
+            pytest.skip("Native shell installer requires bash")
+        block = "for script in " + text.split("for script in ", 1)[1].split("\n    done", 1)[0] + "\n done"
+        subprocess.run(
+            ["bash", "-eu", "-c", 'SCRIPT_DIR="$1"; BIN_DIR="$2"; ok() { :; }; deploy() {\n'
+             + block + "\n}; deploy", "fixture", str(scripts), str(installed)],
+            check=True, capture_output=True, text=True, **no_window_kwargs(),
+        )
+    elif installer.endswith(".ps1"):
+        assert '$src = Join-Path $ScriptDir "../src/agent_worktrees/$script"' in text
+        if shutil.which("pwsh"):
+            block = "foreach ($script in @(" + text.split(
+                "foreach ($script in @(", 1,
+            )[1].split("\n    }\n", 1)[0] + "\n}"
+            subprocess.run(
+                ["pwsh", "-NoProfile", "-NonInteractive", "-Command", "-"],
+                input="$ErrorActionPreference='Stop'; $ScriptDir=$env:FIXTURE_SCRIPTS; "
+                "$BinDir=$env:FIXTURE_BIN; function Write-ServiceOk {};\n" + block + "\n",
+                env={**os.environ, "FIXTURE_SCRIPTS": str(scripts), "FIXTURE_BIN": str(installed)},
+                check=True, capture_output=True, text=True, **no_window_kwargs(),
+            )
+        else:
+            for name in declared:
+                source = scripts / name
+                if name == "native_source_context.py":
+                    source = scripts.parent / "src" / "agent_worktrees" / name
+                if source.is_file():
+                    shutil.copy2(source, installed / name)
+    for name in ("hook_lifecycle_runtime.py", "native_source_context.py"):
+        source = (
+            scripts / name if name == "hook_lifecycle_runtime.py"
+            else scripts.parent / "src" / "agent_worktrees" / name
+        )
+        assert (installed / name).read_bytes() == source.read_bytes()
+    spec = importlib.util.spec_from_file_location("installed_hook_client", installed / "hook_client.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # The test process need not have a native CLI ancestor; prove that the
+    # deployed canonical helper, rather than a missing payload path, is loaded.
+    loaded = []
+    original = module.importlib.util.spec_from_file_location
+
+    def load(name, path):
+        loaded.append(Path(path))
+        return original(name, path)
+
+    monkeypatch.setattr(module.importlib.util, "spec_from_file_location", load)
+    assert module._capture_native_source()["version"] == 1
+    assert installed / "native_source_context.py" in loaded
+    assert module._load_sibling("hook_lifecycle_runtime.py").run_end
+
+
+@pytest.mark.parametrize("runtime_version,returncode,stdout", [
+    ("1.0.0", 0, "{}"), ("1.0.0", 2, ""), ("1.0.0", 0, "not-json"),
+    ("0.9.0", 0, "{}"),
+])
+def test_source_aware_start_never_downgrades_to_old_startup_scripts(
+    monkeypatch, tmp_path, runtime_version, returncode, stdout,
+):
+    python = tmp_path / "versions" / runtime_version / "bin" / "python"
+    monkeypatch.setattr(hook_client, "_runtime_python", lambda home: python)
+    monkeypatch.setattr(
+        hook_client, "_fallback_legacy_session_start",
+        lambda *_args, **_kwargs: pytest.fail("source-aware packet downgraded to legacy"),
+    )
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(hook_client.subprocess, "run", run)
+    result = hook_client._fallback_session_start({
+        "_agentWorktrees": {"pluginVersion": "1.0.0", "nativeSource": {"qualified": False}},
+    }, tmp_path)
+    if runtime_version == "0.9.0":
+        assert calls == []
+    else:
+        assert "--source-bound" in calls[0]
+    if runtime_version != "1.0.0" or returncode or stdout != "{}":
+        assert result["_stderr"]
+    else:
+        assert result == {}
 
 
 @pytest.mark.parametrize("installed", [False, True])
@@ -2204,9 +2397,82 @@ def test_explicit_context_session_end_uses_cell_runtime(
         "agent_worktrees",
         "deregister-session",
         "--stdin",
+        "--source-bound",
     ]
     assert json.loads(seen["kwargs"]["input"]) == payload
     assert seen["kwargs"]["timeout"] == hook_client._SESSION_END_TIMEOUT_S
+
+
+def test_session_end_transports_original_source_without_terminal_or_env_probe(monkeypatch, tmp_path):
+    origin = {"version": 1, "qualified": True, "ancestors": [{"pid": 101, "start_time": "100"}]}
+    monkeypatch.setattr(hook_client, "_capture_native_source", lambda: origin)
+    monkeypatch.setattr(
+        hook_client, "_probe_terminal", lambda: pytest.fail("End must not attach/probe consoles"),
+    )
+    binding = {
+        "AGENT_WORKTREES_BIND_PROJECT": "example",
+        "AGENT_WORKTREES_BIND_WORKTREE_ID": "original-worktree",
+        "AGENT_WORKTREES_BIND_SESSION_ID": "old-session",
+    }
+    for key, value in binding.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("UNRELATED_ENVIRONMENT_VALUE", "not-transported")
+    seen = {}
+    monkeypatch.setattr(
+        hook_client, "_request",
+        lambda kind, payload, home: seen.update(kind=kind, payload=payload) or {},
+    )
+    payload = {"sessionId": "old-session", "reason": "user_exit"}
+    assert hook_client.decide("sessionEnd", payload, home=tmp_path) == {}
+    assert seen["payload"] == {
+        **payload, "_agentWorktrees": {"nativeSource": origin, "environment": binding},
+    }
+
+
+def test_resident_dispatches_source_bound_session_end(monkeypatch, tmp_path):
+    from agent_worktrees import session_binding_cli
+
+    monkeypatch.setattr(main.sys, "platform", "linux")
+    original = {"qualified": True, "ancestors": [{"pid": 101, "start_time": "100"}]}
+    payload = {
+        "sessionId": "old-session", "cwd": str(tmp_path), "reason": "user_exit",
+        "_agentWorktrees": {"nativeSource": original},
+    }
+    seen = []
+
+    def end(args):
+        seen.append(args)
+        args.result_holder.append({"ok": True, "lifecycle": "historical"})
+        return 0
+
+    monkeypatch.setattr(session_binding_cli, "cmd_deregister_session", end)
+    result = main._resident_hook_decision(
+        "sessionEnd", payload, segment_cache=SimpleNamespace(), policy=SimpleNamespace(),
+    )
+    assert result == {"ok": True, "lifecycle": "historical"}
+    assert len(seen) == 1
+    assert seen[0].resident_environment is True
+    assert seen[0].source_bound is True
+    assert seen[0].hook_payload is payload
+    assert seen[0].launch_id is None
+
+
+def test_native_session_end_roundtrip_is_not_an_empty_unhandled_success(tmp_path):
+    seen = []
+    server = HookIpcServer(
+        lambda kind, payload, deadline: seen.append((kind, payload)) or {"lifecycle": "historical"},
+    )
+    server.start()
+    try:
+        runtime = tmp_path / ".agent-worktrees"
+        runtime.mkdir()
+        (runtime / "status-monitor.lock").write_text(json.dumps(server.rendezvous()))
+        payload = {"sessionId": "old-session", "reason": "user_exit"}
+        result = hook_client._request("sessionEnd", payload, tmp_path)
+        assert result == {"lifecycle": "historical"}
+        assert seen == [("sessionEnd", payload)]
+    finally:
+        server.close()
 
 
 def test_started_resident_lifecycle_suppresses_duplicate_fallback(

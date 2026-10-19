@@ -92,6 +92,13 @@ refused; review their provenance before any separate migration. Cross-space
 owned creation is still unsupported before allocation. This feature does not
 add reservation/receipt authority.
 
+Explicit [native machine-record repair](machine-record-repair.md) is available
+through `doctor --repair-machine-record <exact-id> --from-machine <old>`.
+`--to-machine <key>` optionally asserts the configured local target. Existing
+checkouts retain linked-Git proof; removed ones require canonical native
+registration and exact receiving-namespace evidence. Only the label changes:
+same-machine alias relationships remain intact, without automatic rebinding.
+
 Claim and handoff transactions recheck each freshly loaded source, consumer,
 and child record while holding its sidecar lock. Authority comes from the
 receiving execution user's registered project configuration, never a caller's
@@ -194,7 +201,7 @@ repos:
 | `repo_name` | string | `""` | Which `repos.<name>` is the default repo. Optional when exactly one repo is defined. |
 | `headless` | bool | `false` | CLI-only project: the bare binstub lists worktrees instead of launching an interactive Copilot session. |
 | `auto_fast_forward` | bool | `true` | On resume, fast-forward a clean worktree that is strictly behind upstream. Only ever a FF — never touches dirty / ahead / diverged worktrees. |
-| `default_copilot_account` | string | `""` | This machine's default **Copilot CLI** login for a repo with no explicit `copilot_account` override (see `repos.<name>.copilot_account`). Machine-local policy, not a portable knowledge-repo preference. Resolves machine-local `config.yaml` > global `~/.agent-worktrees/config.yaml` only. Empty means no machine-wide preference (ambient Copilot login). |
+| `default_copilot_account` | string | `""` | This machine's default **Copilot CLI** login for a repo with no explicit `copilot_account` override (see `repos.<name>.copilot_account`). Machine-local policy, not a portable knowledge-repo preference. Resolves selected project's machine-local `config.yaml` > active `config.d` drop-ins > global `~/.agent-worktrees/config.yaml`. Empty means no machine-wide preference (ambient Copilot login). [Repositories Configuration](repositories-configuration.md) supports revisioned local override set/reset without logging in. |
 | `copilot_identity_switch_enabled` | bool | `false` | Master switch for the Copilot CLI identity-enforcement feature (`copilot-identity ensure`, run automatically at the start of every session launch, and available manually). **Off by default** — when false, `ensure` is a pure no-op regardless of `default_copilot_account`/a repo's `copilot_account`: it never mints a `gh` token, shells out to `copilot login`, or reads `~/.copilot/config.json`. Deliberately config-file based (not an environment-variable opt-out) so the choice is durable and visible in `config.yaml`. Same tiering as `default_copilot_account`. |
 | `copilot_profiles` | list | `[]` | Selectable Copilot backend profiles (Tab-cycle in the picker). |
 | `profile_assignment` | map | absent/off | Optional balanced assignment policy over existing `copilot_profiles`. Only a user-owned global, knowledge-overlay, or machine-local/per-project block can set `armed: true`. |
@@ -349,6 +356,33 @@ agent-worktrees ≥ 1.5.3-dev113.)
 | `requires_external_state_root` | bool | `false` | Personal state (efforts/visions/logs) must be written to a separately-bound knowledge repo; the resolver refuses rather than falling back to this repo. |
 | `compose_knowledge_plugins` | bool | `true` | When false, never graft the paired knowledge repo's marketplaces/plugins into the harness session overlay. |
 | `knowledge_only` | bool | `false` | This repo is a **knowledge-only companion**: it exists solely to be carved as another project's paired `-k` knowledge worktree, never driven directly. `create` (and the interactive new-worktree flow) refuses a standalone worktree for it; binstub reconcile skips/reclaims its `<repo>` binstub; the Worktree Manager excludes it from implicit-default/ambiguous-selection project listings. The internal pairing carve is unaffected. Set the matching registry `repos add/update --class knowledge` too so `repos list`/the Manager's repo view reflect it. See the `knowledge-only-repos` effort. |
+
+An adopter's selected `machines.yaml` may declare a paired control plane:
+
+```yaml
+control_plane:
+  project: example-harness
+  harness: example-harness
+  knowledge: example-knowledge
+```
+
+`agent-worktrees knowledge control-plane --path <machines.yaml> --json` is a
+read-only, no-project front door. It returns a version-1 object containing the
+source path, native execution `platform`, declared roles, `paired`, `legacy_project` and
+`legacy_compatible`. It needs neither a pre-existing machine-local harness
+config nor a running Bridge. It does not register, bind or launch anything.
+Missing, malformed and conflicting declarations return an explicit error.
+The platform comes from the shared execution-root classifier, not a caller's
+`WSL_DISTRO_NAME`; containers on a WSL kernel remain Linux.
+Legacy scalar/project-only declarations retain their executable project and
+report no companion.
+
+The optional `harness-knowledge` setup writer consumes this declaration to
+establish the existing machine-local `knowledge_repo` pointer after native
+canonical-registration and configuration-root validation. Keep the selected
+pair in the adopter's configuration, never in a shared harness's committed
+configuration. Existing knowledge-class registrations support the paired
+worktree lifecycle without becoming standalone agent projects.
 
 **Platform-keyed maps** (`launch`, `launch_recovery`, `validate_hook`,
 `post_install_hook`) use the keys `windows`, `wsl`, `linux`, each mapping to a
@@ -519,6 +553,12 @@ armed user configuration still fails before any worktree mutation.
 ---
 
 ## PR workflow — `repos.<name>.pr` (machine-local **or** in-repo)
+
+Optional `publication_checks` configures fixed built-in self-review and scope
+checks that gate managed code publication. No external check commands or dynamic
+registry are accepted. See [publication checks](pr-publication-checks.md) for the
+strict schema, related-repository configuration and central `pr-watch checks`
+commands. Omission preserves existing defaults.
 
 Controls whether sign-off goes through a pull request instead of direct-push
 finalization. This block can be set in the machine-local config **or** in the

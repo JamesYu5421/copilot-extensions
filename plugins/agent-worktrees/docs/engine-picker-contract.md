@@ -367,7 +367,103 @@ An empty registry is cheap and does not trigger historical session discovery;
 explicit recovery and the resident reconciliation cursor own registry repair.
 Thus unrelated session history cannot multiply the cost of a resume check.
 
-The Manager requests `resolve --stage-launch-seed` for prompted requests.
+`session-role --hosting-evidence --worktree-id <exact-id> --json` is a separate
+read-only corroboration mode for the Manager's private restart-evidence journal.
+Its payload identifies `schema: "native-hosting-evidence"` and `version: 1`.
+`confirmed: true` requires a current, unpaused active native head with real
+conversation data, a live native process and a unique PID/birth-correlated mux
+binding, followed by an unchanged owner-record reread. The result includes the
+exact native UUID, native process birth identity, owner lifecycle revision,
+worktree path, native platform, head revision and live mux/pane/incarnation
+identity from the same binding observation. Dotted worktree ids are matched
+using their canonical encoded mux name, not a lossy reverse-decoded id.
+Positive Linux/WSL proof also matches the exact native session's open
+`inuse.<pid>.hold` inode to that process and revalidates its birth identity.
+`binding_proof: "inuse-hold-v1"` identifies this mandatory positive capability;
+stale PID lock names, unavailable descriptors and unsupported native ownership
+formats remain unconfirmed. Ordinary conservative liveness/death-detector
+semantics are unchanged.
+`recovery_binding_capability: "worktree-head-v1"` additionally binds the owner's
+existing `worktree_incarnation` (creation nonce) and `head_revision`. The reader
+never creates a missing nonce. Legacy or malformed nonce metadata leaves this
+capability and incarnation null without changing ordinary hosting evidence.
+The Manager preserves this historical binding for restart-candidate freezing;
+it is not current task/hold admission or permission to launch.
+Missing, uncertain, foreign, superseded or hosted-provider evidence
+returns `confirmed: false` with a reason; unreadable owner state is a JSON error.
+The mode requires an exact worktree id and never infers the daemon caller's
+session, selects a filesystem-latest replacement, mutates a head, or launches.
+Native Windows hosting proof remains explicitly unqualified. The payload's
+`automatic_eligible` is always false: task policy, claims, holds, recovery
+enrollment and launch admission remain their existing owners' responsibilities.
+
+`session-role --restart-check <expected-json> --json` checks a **single explicit
+frozen identity** against the current worktree owner. The bounded (8 KiB)
+object requires exactly `project`, `worktree_id`, `worktree_path`, `native_session_id`,
+`worktree_incarnation`, `head_revision`, `owner_revision`, `activation_ordinal`,
+`source_identity` and `target_epoch` (`platform`, `environment_id`, `boot_id`).
+No ambient session, suffix lookup, nonce allocation or head mutation is used.
+The response has `schema: "native-restart-worktree-check"`, `version: 1`, and
+the exact typed `expected` object. `worktree_qualified: true` means the current
+reduced worktree state, source-bound activation, transcript presence, proven
+native death and absent mux matched, followed by an unchanged owner reread.
+It is a provisional snapshot, **not** a reservation or a launch capability.
+Changed heads/incarnations/lifecycle, terminal or paused worktrees, pause
+history, pending handoffs/seeds, indirect/missing paths, ended or ambiguous
+activations and uncertain/live processes refuse with a reason.
+Mux listing errors/timeouts remain `mux-state-unknown`, not confirmed absence;
+an empty successful listing is distinct from a failed probe.
+Task provenance is not current task policy. A single active, producer-free task
+claim with an exact `dispatch-local-task:` or `dispatch-central-task:` ref can
+request `claim-status <id> --native-restart-policy` through its existing verified
+claim provider, with a two-second callback budget and a required
+no-self-provision guard. The registered writer prefix is preserved in both
+legacy payload and same-cell peer invocation; a failed/old callback never
+retries without the opt-in. There is no default-writer inference.
+The versioned task snapshot must bind the exact task id, machine/worktree,
+project lane and original native UUID to a started, positive-generation task
+with no hold, steer, requested resume or active/preparing waiter.
+Both `awaiting_steer` and the required Boolean `pending_steer` must be false;
+an answered form with unread instructions is not an empty steering inbox.
+Optional `task_policies` retains the matching ref and reduced owner snapshot.
+Current generation is evidence for a future fence, not a generation reservation
+or proof of continuity with an earlier task incarnation.
+Opaque/unmatched dispatch provenance, legacy task refs, inbound ownership,
+mixed/other/historical/producer claims and bound/profile-assigned worktrees
+remain unqualified.
+Unknown persisted state/ref/kind metadata is not canonical active-claim proof:
+the owner codec retains `metadata_opaque: true` through projections and saves,
+while preserving conservative active finality treatment. Malformed claim
+collections/items retain opaque placeholders, not apparent absence.
+Even a matching worktree always returns
+`launch_authorized: false` and `automatic_eligible: false`.
+Action-time task/claim admission, launch fencing and acknowledged restart-seed
+pickup remain separate requirements. Ended shutdown activations are not reopened.
+Malformed input or unreadable evidence is a JSON error. Native Linux/WSL
+identity must match the requested target epoch; Windows, macOS and containers
+remain unsupported rather than falling back to a different launch mode.
+
+The Manager requests `resolve --stage-launch-seed --require-native-seed` for
+prompted requests. The latter is a capability handshake: engines without the
+native execution-leg fence reject it before allocation or staging. The fence
+itself is unconditional in current engines, including direct stage callers.
+Direct engine requests requiring this fence refuse remote/cross-environment
+dispatch before SSH admission; the capability requirement is never silently dropped.
+Launch-seed stage/take mutation protocol version 5 and structured
+`launch_request_stage` version 4 exclude older resident handlers that lack that
+fence, using the existing same-code fallback. Both retain launch-admission guards.
+
+Staging validates the actual execution leg while holding the same strict
+per-record lock that publishes the intent. Active, unknown, or opaque hosted
+bindings refuse staging without replacing pending intent. Execution-leg
+reservation and active/unknown publication acquire that same lock and refuse
+while a typed or legacy launch prompt is pending. Thus a concurrent native seed
+and hosted-provider activation have one winner, not two separately valid
+preflights. Seed handoff also validates the leg in its record transaction.
+Finishing the native handoff releases the pending-intent fence. An incompatible
+activation never silently consumes or discards the seed; recovery history is
+separate and does not reserve an execution leg.
+
 `launch.seed_pending: true`, `launch.seed_id` and `launch.seed_kind` identify
 the saved intent. The second resolve selects it with `--seed-id`, preserving
 New/Resume provenance without restaging text or inferring configured argv.

@@ -102,6 +102,14 @@ def _request(kind: str, payload: dict, home: Path) -> dict | None:
         return None
     if endpoint.get("hook_transport") != "tcp":
         return None
+    lifecycle = _load_sibling("hook_lifecycle_runtime.py") if kind in {"sessionStart", "sessionEnd"} else None
+    if lifecycle is None and kind in {"sessionStart", "sessionEnd"}:
+        return None
+    source_aware = _source_aware_lifecycle(payload)
+    if lifecycle and not lifecycle.admitted(
+        kind, source_aware, endpoint.get("hook_capabilities"), preflight=True,
+    ):
+        return lifecycle.unavailable(kind)
     address = str(endpoint.get("hook_endpoint") or "")
     host, sep, port_text = address.rpartition(":")
     token = endpoint.get("hook_token")
@@ -112,6 +120,8 @@ def _request(kind: str, payload: dict, home: Path) -> dict | None:
     timeout = (
         _SESSION_START_TIMEOUT_S
         if kind == "sessionStart"
+        else _SESSION_END_TIMEOUT_S
+        if kind == "sessionEnd"
         else _CONNECT_TIMEOUT_S
     )
     decision_timeout = (
@@ -158,12 +168,10 @@ def _request(kind: str, payload: dict, home: Path) -> dict | None:
         or value.get("fallback") is True
     ):
         return None
-    capabilities = value.get("capabilities")
-    if kind == "sessionStart" and (
-        not isinstance(capabilities, list)
-        or "session-lifecycle-v1" not in capabilities
+    if lifecycle and not lifecycle.admitted(
+        kind, source_aware, value.get("capabilities"), preflight=False,
     ):
-        return None
+        return lifecycle.unavailable(kind) if source_aware or kind == "sessionEnd" else None
     result = value.get("result")
     return result if isinstance(result, dict) else {}
 
@@ -198,8 +206,45 @@ def _enrich_session_payload(payload: dict) -> dict:
             if key != "WORKTREE_ID"
         },
         "terminal": _probe_terminal(),
+        "nativeSource": _capture_native_source(),
     }
     return enriched
+
+
+def _capture_native_source() -> dict:
+    path = Path(__file__).resolve().with_name("native_source_context.py")
+    if not path.is_file():
+        path = Path(__file__).resolve().parents[1] / "src" / "agent_worktrees" / path.name
+    try:
+        spec = importlib.util.spec_from_file_location("_agent_worktrees_native_source", path)
+        if spec is None or spec.loader is None:
+            raise ImportError("Native source metadata helper is unavailable")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.capture()
+    except (OSError, ImportError, ValueError) as exc:
+        sys.stderr.write(f"[agent-worktrees] Native lifecycle source unavailable: {exc}\n")
+        return {"version": 1, "qualified": False, "reason": "native-source-unavailable"}
+
+
+def _enrich_session_end_payload(payload: dict) -> dict:
+    return {
+        **payload,
+        "_agentWorktrees": {
+            "nativeSource": _capture_native_source(),
+            "environment": {
+                key: os.environ[key] for key in (
+                    "AGENT_WORKTREES_BIND_PROJECT", "AGENT_WORKTREES_BIND_WORKTREE_ID",
+                    "AGENT_WORKTREES_BIND_SESSION_ID",
+                ) if key in os.environ
+            },
+        },
+    }
+
+
+def _source_aware_lifecycle(payload: dict) -> bool:
+    metadata = payload.get("_agentWorktrees")
+    return isinstance(metadata, dict) and "nativeSource" in metadata
 
 
 def _probe_terminal() -> dict:
@@ -710,74 +755,42 @@ def _fallback_session_start(payload: dict, home: Path) -> dict:
         else ""
     )
     runtime_version = python.parents[1].name
+    source_aware = _source_aware_lifecycle(payload)
     if (
         isinstance(payload_version, str)
         and payload_version
         and _version_key(runtime_version) < _version_key(payload_version)
     ):
+        if source_aware:
+            return {"_stderr": (
+                "[agent-worktrees] Native source registration requires the current runtime; "
+                "older lifecycle fallback refused.\n"
+            )}
         if _external_update_driver_active(home, python):
             return {} if contextual else _fallback_legacy_session_start(
                 payload, skip_reconcile=True
             )
         return {} if contextual else _fallback_legacy_session_start(payload)
-    try:
-        environment = os.environ.copy()
-        environment["PYTHONPATH"] = ""
-        result = subprocess.run(
-            [
-                str(python),
-                "-m",
-                "agent_worktrees",
-                "session-lifecycle",
-                "--stdin",
-                "--timeout-seconds",
-                str(_SESSION_START_DECISION_S),
-            ],
-            input=json.dumps(payload, separators=(",", ":")),
-            capture_output=True,
-            text=True,
-            timeout=_SESSION_START_TIMEOUT_S,
-            check=False,
-            env=environment,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return {}
-    if result.returncode != 0:
-        return {} if contextual else _fallback_legacy_session_start(payload)
-    if result.stderr:
-        sys.stderr.write(result.stderr)
-    try:
-        value = json.loads(result.stdout or "{}")
-    except (TypeError, ValueError):
-        return {} if contextual else _fallback_legacy_session_start(payload)
-    return value if isinstance(value, dict) else {}
+    helper = _load_sibling("hook_lifecycle_runtime.py")
+    if helper is None:
+        return {"_stderr": "[agent-worktrees] Lifecycle transport is unavailable.\n"}
+    result = helper.run_start(
+        python, payload, source_aware=source_aware,
+        timeout=_SESSION_START_TIMEOUT_S, decision_timeout=_SESSION_START_DECISION_S,
+    )
+    return result if result is not None else (
+        {} if contextual else _fallback_legacy_session_start(payload)
+    )
 
 
 def _fallback_session_end(payload: dict, home: Path) -> dict:
     python = _runtime_python(home)
     if python is None:
-        return {}
-    try:
-        environment = os.environ.copy()
-        environment["PYTHONPATH"] = ""
-        subprocess.run(
-            [
-                str(python),
-                "-m",
-                "agent_worktrees",
-                "deregister-session",
-                "--stdin",
-            ],
-            input=json.dumps(payload, separators=(",", ":")),
-            capture_output=True,
-            text=True,
-            timeout=_SESSION_END_TIMEOUT_S,
-            check=False,
-            env=environment,
-        )
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return {}
+        return {"_stderr": "[agent-worktrees] SessionEnd runtime is unavailable; closure is unconfirmed.\n"}
+    helper = _load_sibling("hook_lifecycle_runtime.py")
+    if helper is None:
+        return {"_stderr": "[agent-worktrees] Lifecycle transport is unavailable.\n"}
+    return helper.run_end(python, payload, timeout=_SESSION_END_TIMEOUT_S)
 
 
 @cache
@@ -912,6 +925,8 @@ def decide(kind: str, payload: dict, *, home: Path | None = None) -> dict:
         and not isinstance(payload.get("_agentWorktrees"), dict)
     ):
         payload = _enrich_session_payload(payload)
+    if kind == "sessionEnd" and not isinstance(payload.get("_agentWorktrees"), dict):
+        payload = _enrich_session_end_payload(payload)
     remote = _request(kind, payload, home)
     if remote is not None:
         return remote
@@ -942,6 +957,8 @@ def main(argv: list[str] | None = None) -> int:
             payload = _enrich_session_payload(payload)
             # Catalog evidence must survive cancellation of slow lifecycle work.
             _write_session_guidance(payload)
+        elif kind == "sessionEnd":
+            payload = _enrich_session_end_payload(payload)
         if kind == "postToolUse" and "--local-fallback" in argv[1:]:
             result = _fallback_post(payload, Path.home())
         else:
@@ -960,7 +977,7 @@ def main(argv: list[str] | None = None) -> int:
                     else ""
                 ),
             )
-        elif result:
+        elif result and kind != "sessionEnd":
             sys.stdout.write(json.dumps(result, separators=(",", ":")))
     except Exception:
         pass

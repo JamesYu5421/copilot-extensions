@@ -13,10 +13,23 @@ def cmd_mux_daemon(rest: list[str]) -> int:
     if not args:
         print(
             "usage: worktree-manager mux-daemon "
-            "<run|ensure|register|remove|show|status> [...]"
+            "<run|ensure|register|remove|show|status|recovery-evidence> [...]"
         )
         return 2
     action = args.pop(0)
+    if action == "recovery-evidence":
+        from .restart_capabilities import inspect_recovery
+        from .self_install import default_root
+
+        check_attempt = None
+        if len(args) == 2 and args[0] == "--check-attempt":
+            check_attempt = args[1]
+        elif args:
+            print("error: recovery-evidence accepts only --check-attempt <UUID>")
+            return 2
+        result = inspect_recovery(default_root(), check_attempt=check_attempt)
+        print(json.dumps(result))
+        return 1 if result.get("blocker") else 0
     if action == "status":
         from .daemons_cli import cmd_daemons
 

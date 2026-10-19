@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from _promotion_workflow_test_support import source_workflow
+
 SCRIPT = Path(__file__).with_name("run-standalone-tests.py")
 SPEC = importlib.util.spec_from_file_location("run_standalone_tests", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
@@ -44,6 +46,7 @@ def test_retained_preparation_builds_actual_standalone_resource_hooks(
             "versioned_runtime.py": "_versioned_runtime.py",
             "versioned_runtime_leases.py": "versioned_runtime_leases.py",
             "versioned_runtime_construction.py": "versioned_runtime_construction.py",
+            "versioned_runtime_source.py": "versioned_runtime_source.py",
         }.items()
     }
     output = tmp_path / "artifacts"
@@ -60,7 +63,8 @@ def test_retained_preparation_builds_actual_standalone_resource_hooks(
         retained.append(Path(kwargs["cwd"]))
         assert retained[0] != checkout
         for name in ("standalone_build.py", "versioned_runtime.py",
-                     "versioned_runtime_leases.py", "versioned_runtime_construction.py"):
+                     "versioned_runtime_leases.py", "versioned_runtime_construction.py",
+                     "versioned_runtime_source.py"):
             (resources / name).write_text("raise RuntimeError('mutable original reopened')\n")
         candidate = Path(next(argument for argument in command if argument.endswith(str(Path(component)))))
         result = actual_run(
@@ -170,6 +174,7 @@ def test_manager_preparation_retains_source_payload_layout(tmp_path, monkeypatch
 
 @pytest.mark.parametrize("component", [
     "fleet-manager", "worktree-manager", "services/index", "services/dispatch",
+    "services/chat",
 ])
 def test_fresh_preparation_attributes_complete_local_graph(tmp_path, monkeypatch, component):
     projects = {
@@ -177,6 +182,7 @@ def test_fresh_preparation_attributes_complete_local_graph(tmp_path, monkeypatch
         "worktree-manager": "worktree-manager",
         "services/index": "agent-index-service",
         "services/dispatch": "agent-dispatch-service",
+        "services/chat": "agent-chat-service",
         "plugins/agent-index": "agent-index",
         "plugins/agent-dispatch": "agent-dispatch",
         "plugins/agent-index/libs/dropin-registry": "agent-dropin-registry",
@@ -259,8 +265,13 @@ def test_prepare_rejects_host_interpreter_before_admission(tmp_path, monkeypatch
     assert called == []
 
 
-def test_legacy_dispatch_name_uses_canonical_preparation_lease_and_tests(tmp_path, monkeypatch):
-    legacy, canonical = "agent-dispatch-service", "services/dispatch"
+@pytest.mark.parametrize("legacy,canonical", [
+    ("agent-dispatch-service", "services/dispatch"),
+    ("agent-chat-service", "services/chat"),
+])
+def test_service_alias_uses_canonical_preparation_lease_and_tests(
+    tmp_path, monkeypatch, legacy, canonical,
+):
     monkeypatch.setattr(runner, "REPO", tmp_path)
     root = tmp_path / canonical
     (root / "tests").mkdir(parents=True)
@@ -731,13 +742,17 @@ with owned_python(['-c', 'import time; time.sleep(120)'],
 
 
 def test_ci_path_gates_smoke_and_promotion_keeps_exhaustive():
-    import yaml
+    root = SCRIPT.parent.parent
+    _assert_ci_path_gates_smoke_and_promotion_keeps_exhaustive(
+        source_workflow(root, "ci.yml")["jobs"],
+        source_workflow(root, "validate-and-promote.yml")["jobs"],
+    )
 
-    workflows = SCRIPT.parent.parent / ".github" / "workflows"
-    ci = yaml.safe_load((workflows / "ci.yml").read_text(encoding="utf-8"))["jobs"]
-    promotion = yaml.safe_load(
-        (workflows / "validate-and-promote.yml").read_text(encoding="utf-8")
-    )["jobs"]
+
+def _assert_ci_path_gates_smoke_and_promotion_keeps_exhaustive(ci, promotion):
+    import shlex
+    from packaging.requirements import Requirement
+
     discovery = next(step["run"] for step in ci["discover"]["steps"] if step.get("id") == "set")
     detector = next(
         step["run"] for step in ci["checks"]["steps"] if step.get("id") == "version-bump-engine"
@@ -750,7 +765,15 @@ def test_ci_path_gates_smoke_and_promotion_keeps_exhaustive():
             step["run"] for step in ci[name]["steps"]
             if step.get("name") == "Test runner admission and isolation"
         )
-        assert 'python tools/seasoned_uv.py --uv uv -- --system pytest pyyaml "setuptools>=83.0.0" wheel' in command
+        install = shlex.split(command.split("&&", 1)[0])
+        assert "tools/seasoned_uv.py" in install and "--system" in install
+        requirements = {
+            requirement.name: requirement
+            for requirement in map(Requirement, install[install.index("--system") + 1:])
+        }
+        assert {"pytest", "pytest-timeout", "pyyaml", "setuptools", "wheel"} <= requirements.keys()
+        assert "83.0.0" in requirements["setuptools"].specifier
+        assert "82.9.0" not in requirements["setuptools"].specifier
     for name in ("agent-index-service-linux", "agent-index-service-windows"):
         assert ci[name]["needs"] == "discover"
         assert "needs.discover.outputs.standalone_service == 'true'" in ci[name]["if"]

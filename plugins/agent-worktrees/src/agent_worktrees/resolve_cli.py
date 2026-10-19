@@ -18,7 +18,7 @@ from .execution_spaces import ExecutionSpaceError, registry_for_config
 from .resume_seed import cold_start_error, plain_live_open, seed_for_attempt
 from .launch_seed_exec import deferred_command
 from .worktree_creation import LaunchSeedStagingFailure
-from .launch_progress import step
+from .launch_progress import preview_mode, step
 from .resolve_picker_cli import ResolvePickerContext, run_legacy_picker
 
 
@@ -266,6 +266,8 @@ class _ResolveEarlyExit(RuntimeError):
 
 
 def _remote_selector_args(state: ResolveCommandState) -> list[str]:
+    if getattr(state.args, "require_native_seed", False):
+        raise ValueError("Remote --require-native-seed is unsupported; launch on the target.")
     if getattr(state.args, "owner_ref", None):
         raise ValueError("Remote --owner-ref is unsupported; create owned worktrees on the target.")
     if getattr(state.args, "copilot_args", None):
@@ -289,7 +291,7 @@ def _remote_selector_args(state: ResolveCommandState) -> list[str]:
             continue  # Structured admission already guarantees queued seed staging.
         if getattr(state.args, name, False):
             args.append("--" + name.replace("_", "-"))
-    for name in ("profile", "parent_session", "caller_worktree"):
+    for name in ("profile", "parent_session", "caller_worktree", "native_resume_session"):
         value = getattr(state.args, name, None)
         if value is not None:
             args.append("--" + name.replace("_", "-") + "=" + str(value))
@@ -308,6 +310,7 @@ def add_parsers(sub) -> None:
     parser.add_argument(
         "--no-resume", action="store_true", help="Don't auto-resume the last Copilot session"
     )
+    parser.add_argument("--native-resume-session", default=None, help="Require owner-fenced execution of this exact dormant native head")
     parser.add_argument(
         "--bare-resume",
         action="store_true",
@@ -368,6 +371,11 @@ def add_parsers(sub) -> None:
         help="Keep creation prompts queued until the returned command executes",
     )
     parser.add_argument("--stage-launch-seed", action="store_true", help="Require typed launch-seed staging")
+    # The fence is unconditional; this capability flag excludes older engines before mutation.
+    parser.add_argument(
+        "--require-native-seed", action="store_true",
+        help="Require atomically fenced native launch-seed staging",
+    )
     parser.add_argument("--seed-id", default=None, help="Execute this already-staged launch intent")
     parser.add_argument("--launch-request-b64", default=None, help="Accept a structured target-local launch request")
     parser.add_argument("--launch-request-status", default=None, help="Inspect an admitted target-local launch request")
@@ -431,6 +439,21 @@ def add_parsers(sub) -> None:
 
 def cmd_resolve(args: argparse.Namespace) -> int:
     """Resolve a launch plan and emit it as JSON."""
+    with preview_mode(getattr(args, "dry_run", False)):
+        return _cmd_resolve(args)
+
+
+def _cmd_resolve(args: argparse.Namespace) -> int:
+    native_resume = getattr(args, "native_resume_session", None)
+    if native_resume is not None and (
+        not native_resume or not getattr(args, "worktree_id", None)
+        or not getattr(args, "no_resume", False)
+        or any(getattr(args, name, None) for name in (
+            "new_worktree", "base", "bare_resume", "restore", "seed", "seed_id",
+            "launch_request_b64", "launch_request_status",
+        ))
+    ):
+        return output._json_error("Native resume requires an existing unseeded --worktree-id and --no-resume", exit_code=3)
     if (
         getattr(args, "launch_request_b64", None) is not None
         or getattr(args, "launch_request_status", None) is not None
@@ -440,7 +463,8 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         return cmd_request(args)
     if getattr(args, "defer_new_seed", None) is None:
         args.defer_new_seed = True
-    append_launch_event("resolve_handler_start")
+    if not getattr(args, "dry_run", False):
+        append_launch_event("resolve_handler_start")
     try:
         state = ResolveCommandState.from_args(args)
     except _ResolveEarlyExit as exc:
@@ -583,6 +607,10 @@ def cmd_resolve(args: argparse.Namespace) -> int:
                 output.err("Requested machine is unavailable.")
                 return 1
 
+        if state.use_base and getattr(args, "dry_run", False):
+            config = state.load_config()
+            return _resolve_base_repo(config, args, profile=_resolve_profile(config, args))
+
         if state.worktree_id:
             return _resolve_noninteractive_worktree(state)
 
@@ -595,6 +623,9 @@ def cmd_resolve(args: argparse.Namespace) -> int:
                 output.err(str(exc))
                 return 1
 
+        if getattr(args, "dry_run", False):
+            output.err("--dry-run requires an explicit worktree, --new, or --base; no picker was opened")
+            return 2
         tracking_path = cfg.tracking_dir()
         tracking_path.mkdir(parents=True, exist_ok=True)
         current_platform = cfg.detect_platform()
@@ -719,16 +750,17 @@ def _resolve_json_mode(state: ResolveCommandState) -> int:
             preflight=launch_preflight,
         )
         env = _build_env(None, _repo_session_env(config, work_dir), work_dir=work_dir)
-        output._json_output(
-            {
-                "action": "exec",
-                "work_dir": work_dir,
-                "cmd": launch_cmd,
-                "env": env,
-                "post_exit": False,
-                "no_mux": True,
-            }
-        )
+        launch = {
+            "action": "exec",
+            "work_dir": work_dir,
+            "cmd": launch_cmd,
+            "env": env,
+            "post_exit": False,
+            "no_mux": True,
+        }
+        if getattr(state.args, "dry_run", False):
+            launch["preview"] = True
+        output._json_output(launch)
         return 0
 
     if state.use_new:
@@ -788,6 +820,8 @@ def _resolve_json_mode(state: ResolveCommandState) -> int:
             compose_pair=True, config=config,
         )
     if getattr(state.args, "restore", False):
+        if getattr(state.args, "dry_run", False):
+            return output._json_error("--restore preview is unsupported; no session was restored", exit_code=3)
         session_id = sessions.find_latest_session_id_fast(record.worktree_path, record.sessions)
         restored = _perform_remux(
             worktree_id=record.worktree_id,
@@ -810,30 +844,31 @@ def _resolve_json_mode(state: ResolveCommandState) -> int:
                 "Previous launch-prompt handoff is unconfirmed; the seed is retained "
                 "but will not be automatically submitted twice.", exit_code=3,
             )
-    try:
-        with step("Recording worktree resume", worktree_id=worktree_id), tracking._RecordLock(
-            yaml_path, require_sidecar=True,
-        ):
-            record = tracking.load_record(yaml_path)
-            require_record_mutation(record, config)
-            tracking.mark_resumed(record, save=False)
-            tracking.save_record(record)
-    except ExecutionSpaceError as exc:
-        return output._json_error(str(exc), exit_code=3)
-    except TimeoutError as exc:
-        return output._json_error(
-            f"Cannot resolve {record.worktree_id}: contended by another process ({exc})",
-            exit_code=3,
+    if not getattr(state.args, "dry_run", False):
+        try:
+            with step("Recording worktree resume", worktree_id=worktree_id), tracking._RecordLock(
+                yaml_path, require_sidecar=True,
+            ):
+                record = tracking.load_record(yaml_path)
+                require_record_mutation(record, config)
+                tracking.mark_resumed(record, save=False)
+                tracking.save_record(record)
+        except ExecutionSpaceError as exc:
+            return output._json_error(str(exc), exit_code=3)
+        except TimeoutError as exc:
+            return output._json_error(
+                f"Cannot resolve {record.worktree_id}: contended by another process ({exc})",
+                exit_code=3,
+            )
+        activity.log_event(
+            "worktree_resumed",
+            worktree_id=record.worktree_id,
+            branch=record.branch,
+            resume_count=record.resume_count,
         )
 
-    activity.log_event(
-        "worktree_resumed",
-        worktree_id=record.worktree_id,
-        branch=record.branch,
-        resume_count=record.resume_count,
-    )
-
     no_resume = getattr(state.args, "no_resume", False)
+    native_resume = getattr(state.args, "native_resume_session", None)
     last_session = None
     if not no_resume:
         with step("Resolving resume session", worktree_id=worktree_id):
@@ -848,7 +883,8 @@ def _resolve_json_mode(state: ResolveCommandState) -> int:
                 lane="new",
                 generation_key=f"new:{record.worktree_id}",
                 explicit_profile=explicit_profile,
-                resume_session=last_session,
+                resume_session=native_resume or last_session,
+                allocate_new=not native_resume and not getattr(state.args, "dry_run", False),
             )
     except profile_assignment.ProfileAssignmentError as exc:
         return output._json_error(str(exc), exit_code=3)
@@ -878,12 +914,15 @@ def _resolve_json_mode(state: ResolveCommandState) -> int:
         _emit_parent_context_hint(record, to_stderr=True)
 
     seed_pending = bool(staged_seed and not getattr(state.args, "bare_resume", False))
+    if native_resume and (seed_pending or not no_resume):
+        return output._json_error("Native ACP resume cannot consume a launch seed or select CLI history", exit_code=3)
     if seed_pending:
         launch_cmd = deferred_command(launch_cmd, yaml_path, seed_id=staged_seed.seed_id)
     else:
         launch_cmd = deferred_command(
             launch_cmd, yaml_path, admission_only=True,
             preserve_seed_id=staged_seed.seed_id if staged_seed else None,
+            native_resume_session=native_resume,
         )
 
     launch = {
@@ -903,6 +942,10 @@ def _resolve_json_mode(state: ResolveCommandState) -> int:
     }
     if selection.assignment is not None:
         launch["profile_assignment"] = profile_assignment.metadata(selection.assignment)
+    if getattr(state.args, "dry_run", False):
+        launch["preview"] = True
+        if warning := getattr(selection, "warning", ""):
+            launch["preview_warning"] = warning
     project = config.repo_name
     if project:
         launch["project"] = project
@@ -936,7 +979,10 @@ def _resolve_noninteractive_worktree(state: ResolveCommandState) -> int:
     launch_preflight = _preflight_launch(config, state.args, plan_work_dir)
     if launch_preflight.error:
         return _core()._launch_preflight_error(launch_preflight)
-    if getattr(state.args, "restore", False) and not _restore_before_resume(record):
+    if (
+        getattr(state.args, "restore", False) and not getattr(state.args, "dry_run", False)
+        and not _restore_before_resume(record)
+    ):
         return 1
     profile = _resolve_profile(config, state.args)
     return _resolve_resume(

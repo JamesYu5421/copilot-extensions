@@ -613,6 +613,11 @@ def _fixture_checkout(tmp_path: Path, *, materialized: bool = False) -> Path:
     assert set(refs) == {"sh", "ps1"}
     if any(ier.is_canonical_ref(ref, plugin, repo_root=root) for ref in refs.values()):
         shutil.copytree(ENGINE, root / "libs/installer-engine")
+    # Native output declarations bind to the publisher's helper even when
+    # the input wrappers already consume payload-local engines.
+    publisher_engine = root / "libs/installer-engine"
+    publisher_engine.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ENGINE / ier.HUMAN_HELPER, publisher_engine / ier.HUMAN_HELPER)
     project_sources = tomllib.loads((plugin / "pyproject.toml").read_text())["tool"]["uv"]["sources"]
     for package, lib in LIBRARIES.items():
         source = (plugin / project_sources[package]["path"]).resolve()
@@ -643,6 +648,23 @@ def _fixture_checkout(tmp_path: Path, *, materialized: bool = False) -> Path:
         }, "release materialization must not mutate source"
         return dest
     return plugin
+
+
+@pytest.mark.parametrize("materialized", [False, True], ids=["checkout", "release"])
+def test_fixture_checkout_accepts_already_materialized_input(tmp_path, monkeypatch, materialized):
+    generated = _fixture_checkout(tmp_path / "input", materialized=True)
+    monkeypatch.setattr(sys.modules[__name__], "PLUGIN", generated)
+    plugin = _fixture_checkout(tmp_path / "output", materialized=materialized)
+    refs = ier.plugin_ref_map(plugin)
+    assert set(refs) == {"sh", "ps1"}
+    for ref in refs.values():
+        assert ier.is_local_ref(ref, plugin)
+        assert ref.resolved().read_bytes() == (ENGINE / ref.file_name).read_bytes()
+    publisher_engine = tmp_path / "output/authoring/libs/installer-engine"
+    assert {path.name for path in publisher_engine.iterdir()} == {ier.HUMAN_HELPER}
+    assert ier.human_output_json(plugin / "scripts/install.ps1") == (
+        plugin / "scripts/install.human-output.json"
+    ).read_text(encoding="utf-8")
 
 
 def _snapshot_prelude() -> str:
@@ -782,6 +804,7 @@ if (@(Get-ChildItem (Join-Path $InstallDir 'snapshots') -Directory).Count -ne {1
         "versioned_runtime.py",
         "versioned_runtime_leases.py",
         "versioned_runtime_construction.py",
+        "versioned_runtime_source.py",
     ):
         source = ENGINE if name in (
             "installer_dependency_policy.py", "installer_dependency_config.py",
@@ -797,6 +820,133 @@ if (@(Get-ChildItem (Join-Path $InstallDir 'snapshots') -Directory).Count -ne {1
     assert nested["tool"]["uv"]["sources"]["agent-dropin-registry"] == {
         "path": "../dropin-registry"
     }
+
+
+@pytest.mark.parametrize(
+    "materialized,acquired_uv,invalid",
+    [
+        (False, False, None), (True, False, None),
+        (False, True, None), (True, True, None),
+        (True, True, "missing-helper"), (True, True, "outside-source"),
+    ],
+    ids=["checkout-fallback", "release-fallback", "checkout-uv", "release-uv",
+         "missing-helper", "outside-source"],
+)
+def test_runtime_install_attributes_its_snapshot_not_the_calling_helper(
+    tmp_path, materialized, acquired_uv, invalid,
+):
+    env = _env(tmp_path)
+    plugin = _fixture_checkout(tmp_path, materialized=materialized)
+    runtime = tmp_path / "runtime"
+    snapshot = runtime / "snapshots" / "1.2.3"
+    uv = _fake_uv(tmp_path)
+    env["TEST_UV_EXPECTED_SOURCES"] = json.dumps({
+        "agent-dispatch": str(snapshot),
+        **{package: str(snapshot / "libs" / lib) for package, lib in LIBRARIES.items()},
+    })
+    uv_result = f"return '{uv}'" if acquired_uv else "return $null"
+    python = Path(sys.executable)
+    if not acquired_uv:
+        # CreateProcess cannot resolve a bare uv.cmd like a real uv.exe.
+        python = tmp_path / "python-fixture.ps1"
+        python.write_text(
+            f"""
+$forward = @($args)
+for ($i = 0; $i -lt $forward.Count - 1; $i++) {{
+    if ($forward[$i] -eq '--uv' -and $forward[$i + 1] -eq 'uv') {{
+        $forward[$i + 1] = '{uv}'
+        # PowerShell consumed the script-call end-of-options marker.
+        $forward = @($forward[0..($i + 1)]) + @('--') + @($forward[($i + 2)..($forward.Count - 1)])
+        break
+    }}
+}}
+& '{sys.executable}' @forward
+exit $LASTEXITCODE
+""", encoding="utf-8",
+        )
+    failure = "package-boundary-reached"
+    mutation = ""
+    if invalid == "missing-helper":
+        failure = "Build snapshot dependency policy is unavailable:"
+        mutation = """
+Set-Item Function:New-RealPluginBuildSnapshot ${function:New-PluginBuildSnapshot}
+function New-PluginBuildSnapshot {
+    param($PluginDir, $InstallDir, $Version, [switch]$BestEffort)
+    $snapshot = New-RealPluginBuildSnapshot @PSBoundParameters
+    Remove-Item -LiteralPath (Join-Path $snapshot 'scripts/installer_dependency_policy.py')
+    return $snapshot
+}
+"""
+    elif invalid == "outside-source":
+        failure = "local source is outside attributable trusted source roots"
+        outside = tmp_path / "unowned"
+        outside.mkdir()
+        (outside / "pyproject.toml").write_text(
+            '[project]\nname = "agent-zdd"\nversion = "1.0.0"\n', encoding="utf-8",
+        )
+        mutation = f"function Resolve-Zdd {{ param($LibRoot) return '{outside}' }}\n"
+    script = (
+        _snapshot_prelude()
+        + _function("ps1", "Resolve-Zdd")
+        + _function("ps1", "Install-Runtime")
+        + f"""
+$PluginDir='{plugin}'
+$PkgSrcDir=$PluginDir
+$InstallDir='{runtime}'
+$LocalBin='{tmp_path / "local-bin"}'
+$SrcVersion='1.2.3'
+$VenvDir='{tmp_path / "slot"}'
+$VenvPython='{python}'
+$script:RuntimeConstructionReuse=$false
+$originalPolicy=$script:InstallerDependencyPolicy
+$script:trampolinePass=0
+function Get-SourceKind {{ param($PluginPath) return 'marketplace' }}
+function Get-Command {{ return [pscustomobject]@{{ Source='{sys.executable}' }} }}
+function Write-Fail {{ param($Msg) throw "$Msg; $zddOut" }}
+function Ensure-Uv {{ param($InstallRoot) {uv_result} }}
+function Invoke-VersionedSlotClean {{ }}
+function Test-DispatchVenv {{ param($Dir, $Python) return $true }}
+function Remove-PluginBuildArtifacts {{ param($PluginDir, $ExtraDir) }}
+function Remove-ConsoleTrampolines {{
+    param($VenvDir)
+    $script:trampolinePass++
+    if ($script:trampolinePass -eq 2) {{ throw 'package-boundary-reached' }}
+}}
+{mutation}
+try {{
+    Install-Runtime
+    throw 'package boundary was not exercised'
+}} catch {{
+    if (-not $_.Exception.Message.Contains('{failure}')) {{ throw }}
+}}
+if ($script:InstallerDependencyPolicy -cne $originalPolicy) {{ throw 'caller policy was not restored' }}
+"""
+    )
+    result = _run("ps1", script, tmp_path, env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    if invalid:
+        assert not Path(env["TEST_UV_LOG"]).exists()
+        return
+    calls = [json.loads(line) for line in Path(env["TEST_UV_LOG"]).read_text().splitlines()]
+    assert len(calls) == (7 if acquired_uv else 8)
+    expected_sources = set(json.loads(env["TEST_UV_EXPECTED_SOURCES"]).values()) | {f"{snapshot}[mcp]"}
+    sources = [
+        next(arg for arg in call if arg in expected_sources)
+        for call in calls
+    ]
+    assert sources[:6] == [
+        str(snapshot / "libs" / lib)
+        for lib in (
+            "zdd", "dropin-registry", "plugin-resolve",
+            "single-instance-lease", "agent-procutil", "plugin-activation",
+        )
+    ]
+    assert sources[6:] == [f"{snapshot}[mcp]"] * (1 if acquired_uv else 2)
+    for call in calls:
+        assert "--exclude-newer" in call
+        cutoff = datetime.fromisoformat(call[call.index("--exclude-newer") + 1].replace("Z", "+00:00"))
+        assert cutoff <= datetime.now(timezone.utc) - timedelta(days=7)
+        assert "--reinstall" in call
 
 
 @pytest.mark.parametrize("materialized", [False, True], ids=["checkout", "release"])

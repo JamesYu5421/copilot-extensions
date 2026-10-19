@@ -373,3 +373,108 @@ required payload acquisition fails. Preserve and verify those owners' work;
 do not duplicate it or count it as a newly implemented optimization here.
 Neither a source merge nor a passing formatter fixture measures the installed
 flow's execution count or duration.
+
+### Final integration work counts (isolated native source fixtures)
+
+Verified the existing #6836 optimization rather than adding a competing
+finishing path. The real PowerShell `Reconcile-Binstubs` function is invoked
+twice with the same synthetic runtime callback. With ordinary standalone
+installer behavior it invokes that callback twice; with the unified updater's
+explicit local-integration deferral it invokes it zero times. This removes
+two installer-owned reconciliation subprocesses when those two call sites
+are reached; it does not remove the final required reconciliation. The
+native Bash fixture independently observes the same two-to-zero count.
+
+The aggregate-update fixture separately records the real orchestration's
+collaborator calls on Windows:
+
+| Initial runtime state | Engine installer calls | Final command passes | Final profile passes |
+|---|---:|---:|---:|
+| Current version | 0 | 1 | 1 |
+| Different version | 1 | 1 | 1 |
+| No deployed version (first touch) | 1 | 1 | 1 |
+
+All three require the ordering `modules`, `runtimes`, `commands`, `profiles`.
+The first-touch case and exact installer-count assertion extend
+`test_update_quick_skip.py::test_local_finishing_runs_once_after_runtime_work`.
+The native deferral fixture is
+`test_terminal_refresh.py::test_native_powershell_installer_defers_both_reconcile_passes`.
+Companion native fixtures preserve standalone profile work and require a
+verified Manager result; final-integration fixtures retain required command
+and profile failures instead of converting them into a successful no-op.
+
+These are invocation-count proofs with external work replaced by synthetic
+callbacks, not timings of real command migration, package construction or
+profile publication. The two complete orchestration/integration modules
+passed 42 cases on Windows in 12.89 seconds and 42 on native Linux in 14.92
+seconds. Six selected native PowerShell deferral/compatibility cases passed
+in 13.68 seconds; the two native Bash count cases passed in 5.26 seconds.
+Those are validation costs, not claimed update savings. No installed updater
+or service lifecycle was invoked. Equivalent historical/current end-to-end
+durations and promoted installed operation counts remain separate,
+unresolved evidence.
+
+### Codespaces admitted-reuse work counts (isolated native fixtures)
+
+`test_installer_reuse_work_counts.py` exercises the actual Codespaces native
+venv/package functions, module-launch health probe and canonical attached
+construction/retention adapter against a real temporary Python venv.
+Admission is not replaced with a Boolean stub. A matching valid completion
+marker earns reuse; an unhealthy entrypoint, different payload fingerprint
+or malformed marker must refuse without constructing a venv, installing
+packages or stamping build information. Completion and selector bytes and
+timestamps, along with the interpreter, venv configuration and entrypoint,
+remain unchanged in all four cases.
+
+| Healthy admitted reuse | PowerShell | Bash |
+|---|---:|---:|
+| Venv-construction calls | 0 | 0 |
+| Package-install calls | 0 | 0 |
+| Build-stamp calls | 0 | 0 |
+| UV-acquisition helper calls | 1 | 0 |
+
+The remaining asymmetry is source-proven: PowerShell `Deploy-Venv` invokes
+`Assert-Uv` before canonical admission and its reuse return; Bash performs
+UV acquisition only after admission has established that construction is
+needed. The extra PowerShell helper invocation is a candidate reduction,
+not an implemented fix or a measured resolver/network cost. A change must
+retain health and canonical admission and respect the existing native-file
+reservation.
+
+The new four-state matrix plus the existing fresh-venv SRE retry case passed
+five native cases on Windows and five on Linux, with the opposite shell
+skipped on each host. Both fresh fixtures exercise real venv construction,
+not package installation or activation. Only the Bash branch additionally
+verifies explicit incomplete-candidate abort; the PowerShell retry branch
+stubs slot admission and does not exercise construction teardown.
+The Linux run used the retained prepared interpreter and
+reported an `asyncio_mode` configuration warning because its pytest asyncio
+plugin was absent; no asynchronous test was selected. Original child,
+test-item and suite bounds remain in force.
+
+This verifies #6598's source-level reuse path without reimplementing it.
+Promoted-payload identity, full clean-room provisioning, live installed
+behavior and equivalent before/after update durations are still open.
+
+### Remove the measured PowerShell UV acquisition
+
+The follow-up moves only `Assert-Uv` below canonical slot admission and the
+admitted-reuse return in Codespaces `Deploy-Venv`. The preceding four-state
+baseline remains historical evidence: PowerShell's acquisition helper count
+changes from one to zero for healthy reuse, while Bash remains zero. Venv,
+package and stamp counts remain zero, and health/content/schema refusals
+retain their exact reasons and unchanged protected bytes/timestamps.
+
+The strengthened Windows fixture uses the actual `Assert-Uv`/`Ensure-Uv`
+functions with a private, explicitly selected fake UV executable. Its log
+must remain absent: even the otherwise-required `uv --version` process is
+avoided. A new first-touch fixture witnesses the real, live construction
+owner before UV acquisition, injects an acquisition failure, and verifies
+canonical abort plus candidate reclamation. It failed before the line move
+because acquisition preceded admission, then passed afterward.
+
+The final Windows selection passed 11 cases (10 opposite-shell skips),
+including all five existing construction retry/fallback modes. Native Linux
+parity passed 10 cases (11 unavailable-shell skips). No deadlines were raised.
+These establish work avoided and failure ordering, not a measured end-to-end
+time improvement or promoted installed proof.
