@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import math
 import sqlite3
+import sys
 import time
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
@@ -51,6 +51,8 @@ class PositiveEvidence:
     activation_ordinal: int = 0
     source_identity: str | None = None
     lifecycle_qualified: bool = False
+    worktree_incarnation: str | None = None
+    head_revision: int | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -79,11 +81,20 @@ class PositiveEvidence:
             or self.lifecycle_qualified and self.source_identity is None
         ):
             raise ValueError("Unconfirmed recovery activation identity")
+        if (self.worktree_incarnation is None) != (self.head_revision is None):
+            raise ValueError("Incomplete recovery worktree/head binding")
+        if self.worktree_incarnation is not None and (
+            not isinstance(self.worktree_incarnation, str)
+            or len(self.worktree_incarnation) != 16
+            or any(character not in "0123456789abcdef" for character in self.worktree_incarnation)
+            or type(self.head_revision) is not int or self.head_revision < 0
+        ):
+            raise ValueError("Invalid recovery worktree/head binding")
         if type(self.observation_sequence) is not int or self.observation_sequence < 1:
             raise ValueError("Invalid recovery observation sequence")
         if (
             type(self.observed_at) not in {float, int}
-            or not math.isfinite(self.observed_at) or self.observed_at <= 0
+            or not 0 < self.observed_at <= sys.float_info.max
         ):
             raise ValueError("Invalid recovery observation time")
 
@@ -94,8 +105,14 @@ class PositiveEvidence:
             if field.name not in {
                 "observed_at", "observation_sequence", "owner_revision", "mapping_revision",
                 "lifecycle_qualified",
+                "worktree_incarnation", "head_revision",
             }
         )
+
+    @property
+    def recovery_binding_qualified(self) -> bool:
+        """Historical capture proof only; current owner admission is still owed."""
+        return self.lifecycle_qualified and self.worktree_incarnation is not None
 
     def provider_identity(self) -> tuple:
         """The enclosing host generation, independent of its native occupant."""
@@ -105,6 +122,7 @@ class PositiveEvidence:
                 "observed_at", "observation_sequence", "owner_revision",
                 "native_session_id", "native_incarnation", "mapping_revision",
                 "activation_ordinal", "source_identity", "lifecycle_qualified",
+                "worktree_incarnation", "head_revision",
             }
         )
 
@@ -124,8 +142,16 @@ _HISTORY_PER_SUBJECT = 16
 _MAX_SUBJECTS = 4096
 
 
+def decode_recovery_json(payload: str) -> object:
+    """Normalize the native JSON decoder's excessive-nesting refusal."""
+    try:
+        return json.loads(payload)
+    except RecursionError as exc:
+        raise ValueError("Recovery JSON nesting exceeds the decoder budget") from exc
+
+
 def _decode(payload: str) -> dict:
-    row = json.loads(payload)
+    row = decode_recovery_json(payload)
     legacy_keys = {"last_positive", "disposition", "detail", "notification_id"}
     if (
         not isinstance(row, dict)
