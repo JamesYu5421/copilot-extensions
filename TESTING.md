@@ -772,6 +772,39 @@ stdout/stderr capture, exact exit codes, actual retry, warm dispatch and cleanup
 Transient processes use the canonical caller-owned Windows Job: a deadline must
 close the whole tree before joining readers or closing their streams.
 
+### Central versus local-only authority
+
+`tests/test_client_authority.py` in `agent-dispatch` covers the opt-in
+`AGENT_DISPATCH_TASK_AUTHORITY` selector, separate credentials, no automatic
+cross-authority fallback, local installer lifecycle, producer/worker routing,
+restricted task pins, explicit browse/create authority and presence-only role
+admission. The existing CLI discovery fixture has its own distinct name so it
+cannot shadow the suite's authentication-command isolation fixture.
+Authority-qualified claim providers retain fixed callback target prefixes and
+disable read-time provisioning. The existing native consumer-prefix tests also
+run under the managed Windows runner: their CMD fixture uses an ordinary path
+spelling of the same interpreter file, while preserving every registered
+argument, child environment and process boundary.
+Native fallback retirement retains the selected CIM creation identity and a
+process handle: creation-time validation and termination use that same handle,
+never a later PID lookup. Missing, replaced or unqueryable identities refuse
+with a warning. The native regression covers replacement of both roots and
+descendants, handle disposal and a real test-owned child's stale-identity
+refusal followed by matching-identity termination. Runtime existence probes use
+literal paths so extended Windows interpreter paths reach these real adapters.
+
+The opt-in native multi-container proof is documented in the
+[central/local authority clean-room lane](tools/clean-room/central-local-authority/README.md).
+It uses the actual central service, an independent peer database and native
+CLI processes inside fresh containers, including a central network partition
+without ownership migration. It is not required PR CI or a model evaluation.
+The lane's host driver durably preassigns the network and all three container
+names (including the UID probe), binds the fixture to that registry and verifies
+absence after contained-worker death within the original 360-second budget.
+`tests/test_central_authority_clean_room.py` covers report/owner refusals and a
+real native containment timeout against a file-backed daemon protocol stub.
+That fatal-worker regression is not a real Docker fault-injection proof.
+
 The standalone runner accepts the legacy `agent-index-service` and
 `agent-dispatch-service` component names as aliases for `services/index` and
 `services/dispatch`, respectively. It normalizes aliases before environment
