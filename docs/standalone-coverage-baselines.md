@@ -106,15 +106,42 @@ launch still runs unchanged, but measurement admission fails rather than compili
 the skipped line or inventing equivalent line numbers.
 
 The Linux prototype also supports explicit offline/no-index/no-dependency wheel
-installation through UV. An operation is eligible only when its **original caller arguments already include
-`--no-config`**; the collector never adds it or suppresses configuration silently.
-This prevents implicit cwd/user/system configuration from widening the closed
-operation contract. A stable per-registry measurement entry observes each
+installation through UV. Configuration-enabled original calls are authorized,
+but the current proxy backend cannot completely observe them and refuses them
+as an unsupported capability. Its previously proved subset still requires the
+original caller's `--no-config`; this is not a policy requiring consumers to add
+that flag. The collector never adds it or suppresses configuration silently.
+A stable per-registry measurement entry observes each
 native UV Python entry **before exec**, verifies the UV binary hash, and joins it
 to the signed UV launch. Ancestry alone is never producer authority, and interpreter
 metadata is not forged. Source builds, bytecode-compilation subprocesses and UV
 operations with no registered native entry are conservatively refused; cache-only
 operation support is not claimed. This is not a general opaque-launcher contract.
+Warm wheel installation is not evidence of a zero-child cache path: the tested
+warm invocation still produces a genuine signed native entry. A pre-issued UV
+entry with no actual request/birth is an explicit collection refusal, not an
+empty successful ledger.
+
+Admission is closed to the registry's declared native interpreter and optional
+pinned UV executable. A fresh byte-identical interpreter copy can be declared
+explicitly; the isolated Linux proof verifies its actual kernel image and
+`sys.executable`, copied SDK source bytes and generated signature validation.
+It does not automatically admit other copies, platforms or interpreter builds.
+Undeclared copies (including renamed executables), shells, captured/unissued
+Popen calls, direct native spawns and opaque system commands invalidate
+measurement while preserving their application's original execution.
+Instrumented descendants also refuse unmanaged native executables instead of
+silently ignoring names that do not resemble Python. Stripping the inherited
+context from a child environment or its spawning instrumented process does not
+erase that obligation; opaque execution/fork/exec/system operations still refuse.
+
+Real offline UV `run`, source-directory and sdist installations, and native
+cache-only operations are deliberately **not admitted**. Their original explicit
+`--no-config` and other arguments are not changed, and their normal success is
+not a collection success. These conservative refusals do not close the general
+UV support gate or authorize immutable/full baselines. Changed collector/audit
+source fingerprints also mean earlier performance acceptance is not transferable
+to a newly modified candidate without separately authorized revalidation.
 
 Prototype tests generate HMAC credentials and Ed25519 keys/signatures, verify real
 SDK authenticity/integrity, and reject tampered signatures and missing producer
@@ -124,6 +151,103 @@ network, host bind or forwarded credentials. Dependency wheels are restored thro
 the configured governed host feed and installed offline in that container.
 Linux proof is not Windows proof; a Windows container lane is still required
 before claiming native Windows coverage of the prototype.
+
+Performance comparisons keep the pinned image and resource ceilings fixed, retain
+every paired result, alternate whole-run order, and report every producer's actual
+initialization duration. The comparison asserts both the 1.5x execution-cost gate
+and the 0.2-second per-child target; a passing ratio does not turn a tail-duration
+miss into a pass. Profiling diagnostics are explicitly excluded from paired timing.
+`CGS_PRELUDE_PHASE_PROFILE=1` enables the isolated twelve-producer wall/CPU phase
+diagnostic; adding `CGS_PRELUDE_IMPORT_PROFILE=1` records bounded import/source-load
+intervals. Both retain the stream's original timer endpoints and include diagnostic
+overhead, scheduler time and IO; neither produces benchmark or baseline authority.
+The optional import profile is removed before executing the application.
+Collector entry and owned activation helpers compile their exact hash-verified
+bytes with `dont_inherit=True` in isolated helper namespaces, avoiding
+`runpy.run_path`'s unrelated import graph. Application `-m` execution retains its
+native `runpy` semantics; no required collector work moves past the prelude timer.
+Only the measured child entry uses CPython's `_json` C scanner/encoder directly
+for the existing JSON records. Capability probes execute within the original
+prelude and refuse unsupported implementations, signatures or semantics; there
+is no Python JSON parsing/encoding fallback. Canonical bytes, HMACs, key
+normalization, duplicate-key behavior, native depth/integer limits, Unicode and
+strict nonfinite signing refusals remain unchanged. The C decoder may import
+stdlib JSON's error class on invalid input; that is a refusal, not a successful
+fallback. Host aggregation, ordinary launches and the SDK retain standard JSON.
+`child_stream.py` contains only the child tracer and its required threading/setup
+logic. `child_stream_parent.py` owns inventory/manifests, evidence validation,
+context registration and merging; child bootstrap never loads that module.
+Both exact staged sources remain in helper integrity checks and collector
+fingerprints. The split does not move required child work outside its timer.
+Diagnostic retention is independent of admission. Recovery comparisons emit
+sanitized `MEASUREMENT_DIAGNOSTICS` JSON before owned-container cleanup, including
+both runs' setup/call/teardown reports, parent validation/staging/signing/spawn
+spans, authenticated issuance/birth fields and first **existing** wait/poll exit
+observations. Unknown kernel exit times remain null; no extra polling, waits or
+process-authority claims are introduced. Keys, argv, environments and absolute
+private paths are not exported. Failure paths retain reports too. These records
+do not grant native zero/multiple-child completeness or baseline authority.
+
+The bounded native-entry proof represents runtime-generated sources separately:
+actual native compile-event bytes are matched to the executing code object and
+the verified emitting code object's source. Actual nested code objects receive
+distinct source identities; sharing `<string>` is never an admission rule.
+Generated lines retain their real audited source bytes under a SHA identity,
+not guessed lines in a repository file. The sparse tracer supports code-object
+identities, and the parent reader keeps the original static manifest intact
+while checking caller-proven generated-source bytes, bounds and collisions.
+
+An owned-test observer may use the explicitly authorized setup/completion
+control-plane transaction inside the existing caller clocks. The recovery
+test's opt-in lifecycle hook begins after the original start and completes,
+parses and closes observer state before the original end. This is not a
+per-child startup ACK: native line entry publishes one-way, without waiting.
+The zero-capability worker receives no privileged event descriptor or added
+capability. Compiler extraction/build, runtime import/staging, event setup,
+draining, source validation and cleanup remain charged; a source/clock
+correctness proof is not a performance or baseline pass. Default collectors
+do not activate this experimental native observer.
+
+The owned-test native build candidate uses `observer_native_build.py` to extract
+the same hash-pinned compiler wheel's executable and **complete** library tree
+into a fresh invocation-local directory. It does not install a compiler package,
+prune target libraries or reuse a cross-run cache. Extraction, input verification,
+compilation, report serialization and removal of toolchain/cache state stay
+inside the original caller clock. Bounded monotonic setup subphases are
+diagnostics, never exemptions from that clock.
+
+Its non-default `runtime-link-only` variant changes only the measurement helper's
+link arguments: no CRT/default libraries, actual protected loaded runtime symbol
+providers linked explicitly, and undefined-symbol rejection. The original C
+source hash and entry-source hash remain mandatory. Missing/changed providers,
+unknown ELF layout, absent constructor initialization or mismatched entry bytes
+refuse setup without fallback. ELF checks establish static shape only, **not**
+ABI equivalence, authentic child entry or performance acceptance. The real
+configured workload, kernel lifecycle, source/line evidence and genuine signature
+checks remain mandatory; this candidate is not enabled by the standalone runner.
+
+The prior native source/clock proof is bounded correctness evidence, **not**
+Recovery 5-second/15-second deadline or performance acceptance. Its 120-second
+owned-fixture guard is not authority to widen any original application clock.
+Setup refusal is fatal before the consumer body. Partial initialization/capture
+resources are cleaned immediately and again idempotently during the authorized
+completion exchange; missing/unproven cleanup cannot produce an admitted result.
+A refusal retains the original bounded error/stdout/stderr evidence and actual
+reached/failed setup phase before sending the completion reply, even when no
+entry listener was allocated. Cleanup distinguishes absent from closed resources.
+Unavailable build argv, ELF identity and runtime providers stay null, never
+filled from a planned command. A reporting/cleanup failure cannot replace the
+first setup error or turn a refused transaction into success.
+A failure-only caller interval is retained after completion/cleanup before the
+original refusal propagates. Native setup-refusal validation remains a separate
+explicit check; source-only protocol tests do not claim privileged execution.
+
+An abrupt exit after authentic entry can retain valid source records only when
+the real kernel birth/exec/exit ledger and source evidence match. Its exit code
+alone never establishes “no SDK.” Missing exit, missing entry, unknown source or
+observer loss remains refusal even when the application reported success.
+Inventory derivation may reuse the exact bytes just checked for source equivalence,
+but launch-time equivalence and end-of-run source rechecks remain mandatory.
 
 `validate-and-promote.yml` earns separate Linux and Windows evidence under
 `fleet-manager-linux` and `fleet-manager-windows`. Its two independent

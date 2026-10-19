@@ -28,7 +28,7 @@ from tools.coverage_guided_selection.ancestor_resolution import _git  # noqa: E4
 from tools.coverage_guided_selection.baseline import (  # noqa: E402
     BASELINE_SCHEMA_VERSION, BaselineCollectionError, _DRIVER_SCRIPT,
 )
-from tools.coverage_guided_selection import child_stream, child_audit  # noqa: E402
+from tools.coverage_guided_selection import child_stream, child_stream_parent, child_audit  # noqa: E402
 from plugin_test_containment import Limits, isolated_environment, run_contained  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
@@ -71,7 +71,9 @@ def verify_revision(repo: Path, measured_commit: str) -> None:
         raise ValueError("standalone source/build/test inputs differ from measured_commit")
 
 
-def verified_source_mapping(repo: Path, installed: Path, environment: Path) -> tuple[dict, dict]:
+def verified_source_mapping(
+    repo: Path, installed: Path, environment: Path, *, with_inventory: bool = False,
+) -> tuple:
     """Only byte-identical installed modules earn repository line coordinates."""
     installed = installed.resolve()
     if not installed.is_relative_to(environment.resolve()):
@@ -82,16 +84,27 @@ def verified_source_mapping(repo: Path, installed: Path, environment: Path) -> t
     actual = {p.relative_to(installed).as_posix(): p for p in installed.rglob("*.py")}
     if actual.keys() != expected.keys():
         raise ValueError("installed/source Python module inventories differ")
-    mapping, hashes = {}, {}
+    mapping, hashes, contents = {}, {}, {}
     for relative, canonical in expected.items():
         path = actual[relative]
         if path.is_symlink() or not path.resolve().is_relative_to(installed):
             raise ValueError("installed module must not be linked outside its package")
-        if path.read_bytes() != canonical.read_bytes():
+        actual_bytes, canonical_bytes = path.read_bytes(), canonical.read_bytes()
+        if actual_bytes != canonical_bytes:
             raise ValueError(f"installed source differs from canonical module: {relative}")
         key = canonical.relative_to(repo).as_posix()
         mapping[str(path.resolve())] = key
-        hashes[key] = digest(canonical)
+        hashes[key] = hashlib.sha256(canonical_bytes).hexdigest()
+        contents[str(path.resolve())] = actual_bytes
+    if with_inventory:
+        inventory = {
+            identifier: {
+                "installed": file, "canonical": canonical, "sha256": hashes[canonical],
+                "lines": len(contents[file].splitlines()),
+            }
+            for identifier, (file, canonical) in enumerate(sorted(mapping.items()), 1)
+        }
+        return mapping, hashes, inventory
     return mapping, hashes
 
 
@@ -156,13 +169,13 @@ def build_baseline(repo: Path, result: dict, measured_commit: str, hashes: dict)
             "child_context_strategy": "leased-venv-pth/inherited-audited-manifest",
             "child_backend": child_stream.VERSION,
             "child_audit": child_audit.VERSION,
-            "unsupported_child_lifecycles": ["fork", "forkpty", "exec"],
+            "unsupported_child_lifecycles": ["fork", "forkpty", "exec", "system", "unregistered-native"],
             "child_persistence": "unbuffered-sparse-writes",
             "coverage_version": result["coverage_version"],
             "children": result["children"],
             "child_backend_sha256": {
                 name: digest(Path(__file__).with_name(name + ".py"))
-                for name in ("child_stream", "child_audit")
+                for name in ("child_stream", "child_stream_parent", "child_audit")
             },
             "temporary_path_strategy": "compact-node-digest" if os.name == "nt" else "pytest-default",
         },
@@ -191,7 +204,7 @@ def _prepare_instrumentation(python: Path, *, repo: Path, prepare: bool) -> None
             )
 
 
-def coverage_files(sandbox: Path, mapping: dict) -> tuple[str, dict]:
+def coverage_files(sandbox: Path, mapping: dict, *, inventory=None) -> tuple[str, dict]:
     """Lease-scoped stdlib children plus coverage.py parent, without spawn wrappers."""
     control = sandbox / "child-lines"
     control.mkdir(mode=0o700)
@@ -200,12 +213,16 @@ def coverage_files(sandbox: Path, mapping: dict) -> tuple[str, dict]:
     (control / "status").write_bytes(b"R")
     nonce = secrets.token_hex(32)
     (control / "run").write_text(nonce, encoding="ascii")
+    if inventory is not None and {
+        row["installed"]: row["canonical"] for row in inventory.values()
+    } != mapping:
+        raise ValueError("verified source inventory does not match source mapping")
     options = {
         "child_stream_control": str(control), "child_stream_nonce": nonce,
-        "child_stream_inventory": child_stream.source_inventory(mapping),
+        "child_stream_inventory": child_stream_parent.source_inventory(mapping) if inventory is None else inventory,
         "child_stream_helpers": {},
     }
-    for name in ("child_stream", "child_audit"):
+    for name in ("child_stream", "child_stream_parent", "child_audit"):
         target = sandbox / ("_cgs_" + name + ".py")
         shutil.copyfile(Path(__file__).with_name(name + ".py"), target)
         options["_cgs_" + name] = str(target)

@@ -4,8 +4,103 @@ import time
 
 import pytest
 
-from tools.coverage_guided_selection import child_stream as stream
+from tools.coverage_guided_selection import child_stream as runtime
+from tools.coverage_guided_selection import child_stream_parent as stream
 from tools.coverage_guided_selection import child_audit
+
+
+def test_child_runtime_has_only_runtime_functions_and_parent_reuses_constants():
+    import ast
+    from pathlib import Path
+    names={node.name for node in ast.parse(Path(runtime.__file__).read_text()).body
+           if isinstance(node,ast.FunctionDef)}
+    assert names=={"_phase","_auditor","_write","_fail","_source","_frame_source",
+                   "_line","_call","_after_fork","start"}
+    assert stream._auditor is runtime._auditor
+    assert (stream.ENV,stream.VERSION,stream.MAX_RECORDS,stream.MAX_MANIFEST)==(
+        runtime.ENV,runtime.VERSION,runtime.MAX_RECORDS,runtime.MAX_MANIFEST)
+    assert not any(name in runtime.__dict__ for name in
+                   ("source_inventory","manifest_text","read_streams","configure_parent","_contexts","_helpers"))
+
+
+def test_staged_parent_source_is_byte_exact_and_end_checked(tmp_path,monkeypatch):
+    import hashlib
+    from pathlib import Path
+    from tools.coverage_guided_selection import standalone
+    source=tmp_path/"source.py"
+    source.write_text("pass\n")
+    _,options=standalone.coverage_files(tmp_path,{str(source):"component/source.py"})
+    assert len(options["child_stream_helpers"])==3
+    for name in ("child_stream","child_stream_parent","child_audit"):
+        staged=Path(options["_cgs_"+name])
+        expected=Path(runtime.__file__).with_name(name+".py").read_bytes()
+        assert staged.read_bytes()==expected
+        assert options["child_stream_helpers"][str(staged)]==hashlib.sha256(expected).hexdigest()
+    monkeypatch.setattr(stream,"_helpers",options["child_stream_helpers"])
+    Path(options["_cgs_child_stream_parent"]).write_text("# changed parent evidence parser\n")
+    with pytest.raises(ValueError,match="instrumentation source changed"):
+        stream.finish_parent()
+
+
+def test_sparse_seen_fast_path_only_publishes_committed_records(monkeypatch):
+    stream = runtime
+    import threading
+    from types import SimpleNamespace
+    frame=SimpleNamespace(f_lineno=2,f_code=SimpleNamespace(co_filename="source.py"))
+    monkeypatch.setattr(stream,"_source",lambda name:(1,3))
+    monkeypatch.setattr(stream,"_failed",False)
+    monkeypatch.setattr(stream,"_seen",set())
+    monkeypatch.setattr(stream,"_lock",threading.Lock())
+    writes=[]
+    def write(record):
+        assert (1,2) not in stream._seen
+        writes.append(record)
+    monkeypatch.setattr(stream,"_write",write)
+    stream._line(frame,"line",None)
+    stream._line(frame,"line",None)
+    assert len(writes)==1 and stream._seen=={(1,2)}
+    monkeypatch.setattr(stream,"_seen",set())
+    failures=[]
+    monkeypatch.setattr(stream,"_fail",lambda:failures.append(True))
+    def failed(record):
+        raise OSError("write failure")
+    monkeypatch.setattr(stream,"_write",failed)
+    stream._line(frame,"line",None)
+    assert failures==[True] and not stream._seen
+
+
+def test_distinct_actual_code_objects_do_not_alias_shared_string_filename(monkeypatch):
+    from types import SimpleNamespace
+    first=compile("first=1\n","<string>","exec",dont_inherit=True)
+    second=compile("second=2\n","<string>","exec",dont_inherit=True)
+    monkeypatch.setattr(runtime,"_code_sources",{id(first):(500,1),id(second):(501,1)})
+    monkeypatch.setattr(runtime,"_sources",{})
+    monkeypatch.setattr(runtime,"_root","owned-source-root/")
+    assert runtime._frame_source(SimpleNamespace(f_code=first))==(500,1)
+    assert runtime._frame_source(SimpleNamespace(f_code=second))==(501,1)
+    unknown=compile("third=3\n","<string>","exec",dont_inherit=True)
+    assert runtime._frame_source(SimpleNamespace(f_code=unknown)) is None
+
+
+@pytest.mark.parametrize("corruption",["collision","foreign-path","wrong-hash","fake-canonical"])
+def test_generated_source_extension_identity_is_strict(evidence,corruption):
+    import hashlib
+    directory,_,_,_,options=evidence
+    generated=options["audit_control"]/"generated"
+    generated.mkdir()
+    source=generated/"observed.py"
+    content=b"actual_generated=1\n"
+    source.write_bytes(content)
+    digest=hashlib.sha256(content).hexdigest()
+    row={"installed":str(source),"sha256":digest,"lines":1,
+         "canonical":"generated-source:sha256:"+digest}
+    identifier=500
+    if corruption=="collision":identifier=next(iter(options["inventory"]))
+    elif corruption=="foreign-path":row["installed"]=str(source.parent.parent/"foreign.py")
+    elif corruption=="wrong-hash":row["sha256"]="0"*64
+    else:row["canonical"]="component/pretend-fixed-source.py"
+    with pytest.raises(ValueError,match="generated source"):
+        stream.read_streams(directory,**options,generated_inventory={identifier:row})
 
 
 @pytest.mark.parametrize("arguments,expected", [

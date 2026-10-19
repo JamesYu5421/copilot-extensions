@@ -16,6 +16,17 @@ from tools.coverage_guided_selection import standalone
 
 
 class TestStandaloneCoverage:
+    def test_inventory_reuses_verified_bytes_without_removing_fresh_checks(self,tmp_path):
+        from tools.coverage_guided_selection import child_stream_parent as child_stream
+        repo,environment,installed=self._sources(tmp_path)
+        mapping,hashes,inventory=standalone.verified_source_mapping(
+            repo,installed,environment,with_inventory=True)
+        assert inventory==child_stream.source_inventory(mapping)
+        assert {row["canonical"]:row["sha256"] for row in inventory.values()}==hashes
+        (installed/"__init__.py").write_text("changed = True\n")
+        with pytest.raises(ValueError,match="differs"):
+            standalone.verified_source_mapping(repo,installed,environment,with_inventory=True)
+
     @pytest.mark.parametrize("platform,identity", [
         ("linux", "fleet-manager-linux"), ("win32", "fleet-manager-windows"),
     ])
@@ -192,7 +203,7 @@ class TestStandaloneCoverage:
         ("linux", "ubuntu-latest"), ("windows", "windows-latest"),
     ])
     def test_promotion_enrolls_both_platforms_and_blocks_on_full_collection(self, platform, label):
-        yaml = pytest.importorskip("yaml", reason="workflow structure assertions require PyYAML")
+        import yaml
 
         root = Path(__file__).resolve().parents[1]
         text = (root / ".github/workflows/validate-and-promote.yml").read_text()
@@ -225,6 +236,20 @@ class TestStandaloneCoverage:
         assert "fleet-manager-linux fleet-manager-windows; do" in promotion_runs
         assert f"needs.{job_name}.result == 'failure'" in jobs["report-failure"]["if"]
 
+    def test_manual_integration_declares_required_workflow_parser(self):
+        import yaml
+
+        root = Path(__file__).resolve().parents[1]
+        jobs = yaml.safe_load((root / ".github/workflows/ci.yml").read_text())["jobs"]
+        job = jobs["coverage-guided-selection-integration"]
+        invocation = next(
+            step["run"] for step in job["steps"]
+            if "test_coverage_guided_selection.py" in step.get("run", "")
+        )
+        assert "python tools/seasoned_uv.py --uv uv -- --system pytest pyyaml" in invocation
+        assert "python -m pytest -q" in invocation
+        assert not any(step.get("continue-on-error") for step in job["steps"])
+
     def test_stage_one_does_not_activate_or_trigger_the_per_pr_fleet_lane(self):
         root = Path(__file__).resolve().parents[1]
         workflow = (root / ".github/workflows/ci.yml").read_text()
@@ -234,6 +259,7 @@ class TestStandaloneCoverage:
             "tools/coverage_guided_selection/baseline.py",
             "tools/coverage_guided_selection/standalone.py",
             "tools/coverage_guided_selection/child_stream.py",
+            "tools/coverage_guided_selection/child_stream_parent.py",
             "tools/coverage_guided_selection/child_audit.py",
             "tools/test_coverage_guided_selection.py",
             "tools/test_coverage_standalone.py",

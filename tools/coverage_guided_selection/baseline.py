@@ -120,12 +120,12 @@ _DRIVER_SCRIPT = textwrap.dedent(
         child_stream = None
         if options.get("child_stream_control"):
             import importlib.util
-            for name in ("_cgs_child_audit", "_cgs_child_stream"):
+            for name in ("_cgs_child_audit", "_cgs_child_stream", "_cgs_child_stream_parent"):
                 spec = importlib.util.spec_from_file_location(name, options[name])
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[name] = module
                 spec.loader.exec_module(module)
-            child_stream = sys.modules["_cgs_child_stream"]
+            child_stream = sys.modules["_cgs_child_stream_parent"]
             child_stream.configure_parent(
                 options["child_stream_control"], sys.executable,
                 options["child_stream_nonce"], options["child_stream_inventory"],

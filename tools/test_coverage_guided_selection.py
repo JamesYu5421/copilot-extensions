@@ -62,6 +62,11 @@ from tools.coverage_baseline_chunk_contract import (
 from tools.test_coverage_standalone import TestStandaloneCoverage  # noqa: E402,F401
 from tools.test_child_stream import (  # noqa: E402,F401
     TestChildStreamNative, evidence,
+    test_child_runtime_has_only_runtime_functions_and_parent_reuses_constants,
+    test_staged_parent_source_is_byte_exact_and_end_checked,
+    test_sparse_seen_fast_path_only_publishes_committed_records,
+    test_distinct_actual_code_objects_do_not_alias_shared_string_filename,
+    test_generated_source_extension_identity_is_strict,
     test_interpreter_options_do_not_exempt_site_disabled_code,
     test_verified_records_merge_without_replacing_parent_evidence,
     test_malformed_or_unearned_child_evidence_is_refused,
@@ -77,16 +82,52 @@ from tools.test_child_stream import (  # noqa: E402,F401
 )
 from tools.test_measurement_launch import (  # noqa: E402,F401
     TestMeasurementContainer,
+    test_child_json_encoding_is_byte_exact_to_stdlib,
+    test_child_json_decoding_preserves_types_duplicates_numbers_and_unicode,
+    test_child_json_bytes_encoding_detection_matches_stdlib,
+    test_child_json_invalid_trailing_depth_integer_and_type_refusals,
+    test_child_json_inherits_native_depth_and_integer_limits,
+    test_child_json_strict_encoder_refuses_nonfinite_and_unsupported_types,
+    test_child_json_circular_failure_does_not_poison_next_encoding,
+    test_child_json_unsupported_capability_never_falls_back,
+    test_child_json_refuses_non_cpython_implementation,
+    test_child_json_nonfinite_signed_data_is_refused_before_file_creation,
+    test_child_json_signed_records_are_cross_backend_byte_identical,
     test_original_program_boundaries,
     test_c_program_globals_and_argv_are_not_polluted,
     test_system_exit_is_not_converted,
     test_bootstrap_future_flags_do_not_change_program_annotations,
     test_generated_offline_signature_is_required,
+    test_signed_inventory_ids_have_one_stable_json_representation,
     test_issued_missing_request_cannot_disappear_as_empty_success,
     test_extra_unissued_directory_is_refused_without_spawning,
     test_skip_first_line_is_explicitly_unsupported,
-    test_uv_requires_original_explicit_no_config,
+    test_config_enabled_uv_refuses_unobservable_backend_without_changing_flags,
     test_uv_additional_unobservable_build_operations_are_refused,
+)
+from tools.test_measurement_admission import (  # noqa: E402,F401
+    TestMeasurementAdmission,
+    test_unissued_native_lifecycle_invalidates_collection,
+    test_renamed_native_descendant_cannot_be_ignored,
+    test_instrumented_child_cannot_erase_context_to_escape_admission,
+    test_unwrapped_native_launch_requires_issuance_except_known_no_code,
+    test_missing_uv_entry_is_an_explicit_refusal_not_empty_success,
+    test_closed_uv_contract_never_admits_general_operations,
+)
+from tools.test_measurement_diagnostics import (  # noqa: E402,F401
+    TestMeasurementDiagnosticsNative,
+    test_optional_observer_transaction_stays_inside_original_recovery_clocks,
+    test_diagnostic_snapshot_omits_secrets_paths_and_unobserved_exits,
+    test_phase_reports_and_failure_are_emitted_before_cleanup,
+    test_snapshot_failure_preserves_phase_reports_and_original_error,
+)
+from tools.test_observer_lifecycle import (  # noqa: E402,F401
+    test_partial_setup_refusal_cleans_accounts_and_never_runs_body,
+    test_import_setup_refusal_still_completes_without_source_or_consumers,
+    test_unproven_cleanup_never_becomes_setup_or_admission_success,
+    test_setup_cleanup_is_idempotent_and_cannot_close_reused_descriptor,
+    test_invalid_repeated_transaction_states_are_fatal,
+    test_missing_exit_refusal_is_not_zero_source_or_abrupt_exit_acceptance,
 )
 
 

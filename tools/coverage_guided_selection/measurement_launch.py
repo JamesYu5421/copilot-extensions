@@ -7,38 +7,164 @@ execution. Signed offline tickets bind the actual spawn event to its producer.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import json
 import os
-from pathlib import Path
 import sys
 import time
+
+
+def phase(name, *, wall_ns=None, cpu_ns=None):
+    """Explicit diagnostics only; retain wall time, including scheduler/IO delay."""
+    if os.environ.get("CGS_PRELUDE_PHASE_PROFILE") != "1" or not os.environ.get("_CGS_PRELUDE_NS"):
+        return
+    wall = time.perf_counter_ns() if wall_ns is None else wall_ns
+    cpu = time.process_time_ns() if cpu_ns is None else cpu_ns
+    record = f"{name}:{wall}:{cpu};"
+    os.environ["_CGS_PRELUDE_PHASES"] = os.environ.get("_CGS_PRELUDE_PHASES", "") + record
+
+
+if __name__ == "_cgs_measurement_entry":
+    phase("module-first")
+
+import hashlib  # noqa: E402
+import hmac  # noqa: E402
+
+if __name__ != "_cgs_measurement_entry":
+    import json
+    from pathlib import Path
+
+
+class ChildJSON:
+    """The used JSON API over CPython's existing C codec, never a fallback parser."""
+
+    strict = True
+    object_hook = None
+    object_pairs_hook = None
+    parse_float = float
+    parse_int = int
+
+    @staticmethod
+    def parse_constant(value):
+        return float({"NaN": "nan", "Infinity": "inf", "-Infinity": "-inf"}[value])
+
+    def __init__(self, backend=None):
+        if sys.implementation.name != "cpython":
+            raise RuntimeError("child JSON requires supported CPython _json")
+        try:
+            if backend is None:
+                import _json as backend
+            self.backend = backend
+            self.scan = backend.make_scanner(self)
+            probe = {"b": [True, 1, False, None, "\0", "\ud800", "\U0001f680"], "a": 1.25}
+            encoded = self.dumps(probe, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            if encoded != '{"a":1.25,"b":[true,1,false,null,"\\u0000","\\ud800","\\ud83d\\ude80"]}':
+                raise ValueError("encoder capability differs")
+            decoded = self.loads(encoded)
+            if decoded != probe or decoded["b"][0] is not True or type(decoded["b"][1]) is not int:
+                raise ValueError("decoder capability differs")
+            if self.dumps("\U0001f680", ensure_ascii=False) != '"\U0001f680"':
+                raise ValueError("Unicode encoder capability differs")
+            for nonfinite in (float("nan"), float("inf"), -float("inf")):
+                try:
+                    self.dumps(nonfinite, allow_nan=False)
+                except ValueError:
+                    pass
+                else:
+                    raise ValueError("nonfinite encoder capability differs")
+        except Exception as exc:
+            raise RuntimeError("unsupported CPython _json child codec capability") from exc
+
+    def dumps(self, value, *, sort_keys=False, separators=None, ensure_ascii=True, allow_nan=True):
+        item_separator, key_separator = (", ", ": ") if separators is None else separators
+        encoder = self.backend.encode_basestring_ascii if ensure_ascii else self.backend.encode_basestring
+        encode = self.backend.make_encoder(
+            {}, None, encoder, None, key_separator, item_separator, sort_keys, False, allow_nan,
+        )
+        return "".join(encode(value, 0))
+
+    def dump(self, value, handle, **options):
+        handle.write(self.dumps(value, **options))
+
+    def loads(self, value):
+        if isinstance(value, (bytes, bytearray)):
+            # Match stdlib JSON's encoding detection without importing its Python decoder.
+            if value.startswith((b"\0\0\xfe\xff", b"\xff\xfe\0\0")):
+                encoding = "utf-32"
+            elif value.startswith((b"\xfe\xff", b"\xff\xfe")):
+                encoding = "utf-16"
+            elif value.startswith(b"\xef\xbb\xbf"):
+                encoding = "utf-8-sig"
+            elif len(value) >= 4 and value[0] == 0:
+                encoding = "utf-16-be" if value[1] else "utf-32-be"
+            elif len(value) >= 4 and value[1] == 0:
+                encoding = "utf-16-le" if value[2] or value[3] else "utf-32-le"
+            elif len(value) == 2 and value[0] == 0:
+                encoding = "utf-16-be"
+            elif len(value) == 2 and value[1] == 0:
+                encoding = "utf-16-le"
+            else:
+                encoding = "utf-8"
+            value = value.decode(encoding, "surrogatepass")
+        if not isinstance(value, str):
+            raise TypeError("child JSON input must be str, bytes or bytearray")
+        start = 0
+        while start < len(value) and value[start] in " \t\r\n":
+            start += 1
+        try:
+            result, end = self.scan(value, start)
+        except StopIteration as exc:
+            raise ValueError("invalid child JSON value") from exc
+        if value[end:].strip(" \t\r\n"):
+            raise ValueError("trailing child JSON data")
+        return result
+
+
+if __name__ == "_cgs_measurement_entry":
+    json = ChildJSON()
+    phase("module-imports-ready")
 
 SCHEMA = "CGS-MEASUREMENT/1"
 REQUEST = "_CGS_MEASUREMENT_REQUEST"
 _registry = None
 _hook_installed = False
+_audit_helpers = None
+_verified_loader_source = None
+
+
+def verified_namespace(source, filename, name, expected_sha256):
+    if __import__("hashlib").sha256(source).hexdigest() != expected_sha256:
+        raise ValueError("measurement helper source changed")
+    namespace = {
+        "__name__": name, "__file__": filename, "__package__": "",
+        "__spec__": None, "__cached__": None, "__loader__": None, "__doc__": None,
+    }
+    exec(compile(source, filename, "exec", dont_inherit=True), namespace, namespace)
+    return namespace
+
+
+def verified_file_namespace(filename, name, expected_sha256):
+    with open(filename, "rb") as handle:
+        source = handle.read()
+    return verified_namespace(source, filename, name, expected_sha256)
 
 
 def canonical(value):
-    # JSON object keys are strings on read-back (source inventory IDs start as ints).
-    value = json.loads(json.dumps(value, allow_nan=False))
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode()
 
 
 def signed_write(path, payload, key):
+    # Normalize once at the boundary; reads and argv digests are already JSON-shaped.
+    payload = json.loads(json.dumps(payload, allow_nan=False))
     data = canonical(payload)
     record = {"payload": payload, "signature": hmac.new(key, data, hashlib.sha256).hexdigest()}
-    with path.open("x", encoding="utf-8") as handle:
+    with open(path, "x", encoding="utf-8") as handle:
         json.dump(record, handle, sort_keys=True)
-    path.chmod(0o600)
+    os.chmod(path,0o600)
 
 
 def signed_read(path, key):
-    if path.is_symlink() or path.stat().st_size > 1_048_576:
+    if os.path.islink(path) or os.stat(path).st_size > 1_048_576:
         raise ValueError("unsafe measurement record")
-    with path.open("rb") as handle:
+    with open(path, "rb") as handle:
         data = handle.read(1_048_577)
     if len(data) > 1_048_576:
         raise ValueError("measurement record exceeds bound")
@@ -108,18 +234,93 @@ def invocation(arguments):
 
 
 def rewritten(arguments, request):
-    mode, prefix, _, tail = invocation(arguments)
+    global _verified_loader_source
+    mode, flags, _, tail = invocation(arguments)
     if mode == "information":
         return list(arguments)
+    if _verified_loader_source is None:
+        import inspect
+        _verified_loader_source = (
+            inspect.getsource(verified_namespace) + "\n" + inspect.getsource(verified_file_namespace)
+        )
+    filename = str(Path(__file__).resolve())
+    digest = hashlib.sha256(Path(filename).read_bytes()).hexdigest()
     # No assignment/import aliases leak into the application's __main__ globals.
-    body = (
+    prefix = (
         "__import__('os').environ.__setitem__('_CGS_PRELUDE_NS',"
-        "str(__import__('time').perf_counter_ns()));__import__('runpy').run_path("
-        + repr(str(Path(__file__).resolve()))
-        + ",run_name='_cgs_measurement_entry')['entry']("
-        + repr(str(request)) + ",globals())"
+        "str(__import__('time').perf_counter_ns()));"
     )
-    return [*prefix, "-c", body, *tail]
+    if os.environ.get("CGS_PRELUDE_PHASE_PROFILE") == "1":
+        marker = (
+            "__import__('os').environ.__setitem__('_CGS_PRELUDE_PHASES',"
+            "'timer-start:'+__import__('os').environ['_CGS_PRELUDE_NS']+':'"
+            "+str(__import__('time').process_time_ns())+';');"
+            "__import__('os').environ.__setitem__('_CGS_PRELUDE_SCHED_START',"
+            "__import__('builtins').open('/proc/self/schedstat').read());"
+            "__import__('os').environ.__setitem__('_CGS_PRELUDE_CGROUP_START',"
+            "__import__('builtins').open('/sys/fs/cgroup/cpu.stat').read());"
+        )
+        prefix += marker
+        if os.environ.get("CGS_PRELUDE_IMPORT_PROFILE") == "1":
+            diagnostic = (
+                "import sys,time\n"
+                "assert sys.getprofile() is None\n"
+                "sys._cgs_import_phases=[]\n"
+                "def record(frame,event,arg):\n"
+                " if event not in ('call','return'):return\n"
+                " name=frame.f_code.co_name\n"
+                " module=frame.f_globals.get('__name__')\n"
+                " if module in ('_frozen_importlib','importlib._bootstrap') and name=='_find_and_load':\n"
+                "  label='import:'+frame.f_locals['name']\n"
+                " elif module=='runpy' and name in ('_get_code_from_file','get_importer','_run_module_code'):\n"
+                "  label='runpy:'+name\n"
+                " else:return\n"
+                " if len(sys._cgs_import_phases)>=4096:raise RuntimeError('diagnostic profile bound')\n"
+                " sys._cgs_import_phases.append((label,event,time.perf_counter_ns(),time.process_time_ns()))\n"
+                "sys.setprofile(record)\n"
+            )
+            prefix += "exec(" + repr(diagnostic) + ",{});"
+    body = (
+        prefix + "(lambda helper: (exec(" + repr(_verified_loader_source) + ",helper),"
+        + "helper['verified_file_namespace'](" + repr(filename)
+        + ",'_cgs_measurement_entry'," + repr(digest)
+        + "))[-1])({})['entry']("
+        + repr(str(request)) + ",globals()," + repr(digest) + ")"
+    )
+    return [*flags, "-c", body, *tail]
+
+
+def report_prelude(control, *, start_ns, end_ns, end_cpu_ns, duration_us):
+    imports = getattr(sys, "_cgs_import_phases", None)
+    if imports is not None:
+        sys.setprofile(None)
+        del sys._cgs_import_phases
+    phase("timer-end", wall_ns=end_ns,cpu_ns=end_cpu_ns)
+    events = []
+    for value in os.environ["_CGS_PRELUDE_PHASES"].split(";"):
+        if value:
+            name, wall, cpu = value.split(":")
+            events.append({"phase":name,"wall_ns":int(wall),"cpu_ns":int(cpu)})
+    def counters(value):
+        return {key:int(number) for key,number in (line.split() for line in value.splitlines())}
+    with open("/proc/self/schedstat") as handle:
+        scheduler_end = [int(v) for v in handle.read().split()]
+    with open("/sys/fs/cgroup/cpu.stat") as handle:
+        cgroup_end = counters(handle.read())
+    scheduler_start = [int(v) for v in os.environ["_CGS_PRELUDE_SCHED_START"].split()]
+    cgroup_start = counters(os.environ["_CGS_PRELUDE_CGROUP_START"])
+    report = {
+        "schema":"CGS-PRELUDE-PHASES/1","pid":os.getpid(),
+        "timer_start_ns":start_ns,"timer_end_ns":end_ns,"recorded_duration_us":duration_us,
+        "events":events,
+        "imports":imports,
+        "scheduler_delta":{key:after-before for key,before,after in zip(
+            ("runtime_ns","runqueue_wait_ns","timeslices"),scheduler_start,scheduler_end)},
+        "cgroup_delta":{key:cgroup_end[key]-value for key,value in cgroup_start.items()},
+        "diagnostic_only":True,
+    }
+    with open(os.path.join(control,f"prelude-phases-{os.getpid()}.json"),"x") as handle:
+        json.dump(report,handle)
 
 
 def physical(payload, root):
@@ -155,7 +356,7 @@ def uv_wheel_contract(arguments, environment, python):
     if set(values) != {"--python", "--target"} or switches != {"--offline", "--no-index", "--no-deps"}:
         raise ValueError("UV wheel measurement requires offline/no-index/no-deps/target")
     if not no_config:
-        raise ValueError("UV measurement requires original explicit --no-config")
+        raise ValueError("configuration-enabled UV observation is unsupported by the current proxy backend")
     if environment.get("UV_COMPILE_BYTECODE") or environment.get("UV_CONFIG_FILE"):
         raise ValueError("UV implicit subprocess/config operation is unsupported")
     if os.path.normcase(os.path.abspath(values["--python"])) != python:
@@ -219,12 +420,11 @@ def _line_intent(payload, timestamp):
     plan = payload.get("measurement")
     if not plan:
         return
-    import runpy
     import secrets
-    reader = runpy.run_path(str(Path(__file__).with_name("child_audit.py")))
+    reader = audit_helpers()
     record = (
-        f"{reader['VERSION']} {plan['child_stream_nonce']} {plan['token']} {payload['auditor_pid']} "
-        f"{reader['argv_key'](payload['argv'])} {timestamp}\n"
+        f"{reader.VERSION} {plan['child_stream_nonce']} {plan['token']} {payload['auditor_pid']} "
+        f"{reader.argv_key(payload['argv'])} {timestamp}\n"
     )
     path = Path(plan["child_stream_control"]) / "audit" / f"{payload['auditor_pid']}-{secrets.token_hex(16)}.intent"
     with path.open("x", encoding="ascii") as handle:
@@ -245,6 +445,7 @@ def execute(payload, namespace, activate):
         runpy._run_module_as_main(program, alter_argv=True)
     else:
         import importlib.machinery
+        from pathlib import Path
         file = Path(program).absolute()
         if not file.is_file():
             raise ValueError("directory/zip measurement entry is not supported")
@@ -255,47 +456,70 @@ def execute(payload, namespace, activate):
         exec(compile(file.read_bytes(), str(file), "exec", dont_inherit=True), namespace, namespace)
 
 
-def entry(path, namespace):
-    root = Path(path)
-    key = (root.parent / "key").read_bytes()
-    payload = signed_read(root / "request.json", key)
-    if payload["schema"] != SCHEMA or payload["nonce"] != root.name:
+def entry(path, namespace, bootstrap_sha256):
+    phase("entry-enter")
+    root = os.fspath(path)
+    with open(os.path.join(os.path.dirname(root),"key"),"rb") as handle:
+        key = handle.read()
+    payload = signed_read(os.path.join(root,"request.json"), key)
+    phase("request-verified")
+    if payload["schema"] != SCHEMA or payload["nonce"] != os.path.basename(root):
         raise ValueError("unknown measurement request")
-    if payload["bootstrap_sha256"] != hashlib.sha256(Path(__file__).read_bytes()).hexdigest():
+    if payload["bootstrap_sha256"] != bootstrap_sha256:
         raise ValueError("measurement bootstrap source changed")
+    phase("bootstrap-source-checked")
     activation = payload["activation"]
-    module = Path(activation["path"])
-    if hashlib.sha256(module.read_bytes()).hexdigest() != activation["sha256"]:
-        raise ValueError("measurement activation source changed")
-    import runpy
-    callback = runpy.run_path(str(module), run_name="_cgs_measurement_activation")["activate"]
+    module = activation["path"]
+    with open(module,"rb") as handle:
+        source = handle.read()
+    callback = verified_namespace(
+        source, module, "_cgs_measurement_activation", activation["sha256"],
+    )["activate"]
+    phase("activation-code-loaded")
     def activate(value):
-        signed_write(root / "birth.json", {
+        signed_write(os.path.join(root,"birth.json"), {
             "schema": SCHEMA, "nonce": value["nonce"], "context": value["context"],
             "pid": os.getpid(), "parent": os.getppid(), "born_ns": time.monotonic_ns(),
         }, key)
-        callback(value)
+        phase("birth-record-written")
+        if os.environ.get("CGS_PRELUDE_PHASE_PROFILE") == "1":
+            callback(value, profile={"mark":phase,"finish":report_prelude})
+        else:
+            callback(value)
         os.environ.pop(REQUEST, None)
     execute(payload, namespace, activate)
 
 
 def _audit(event, arguments):
     registry = _registry
-    if registry is None or event != "subprocess.Popen":
+    if registry is None:
+        return
+    if event in {"os.fork", "os.forkpty", "os.exec", "os.system"}:
+        registry.failures.append("unissued native fork/exec lifecycle is unsupported")
+        return
+    if event == "os.posix_spawn":
+        if sys._getframe(1).f_globals.get("__name__") != "subprocess":
+            registry.failures.append("unissued direct native spawn is unsupported")
+        return
+    if event != "subprocess.Popen":
         return
     executable, args, _, environment = arguments
     environment = os.environ if environment is None else environment
     request = environment.get(REQUEST)
     if not request:
+        try:
+            argv = audit_helpers().native_argv(args)
+            informational = (
+                os.path.normcase(os.path.abspath(executable)) == registry.python
+                and invocation(argv)[0] == "information"
+            )
+        except (ValueError, TypeError, OSError):
+            informational = False
+        if not informational:
+            registry.failures.append("native launch has no parent-issued measurement request")
         return
     if isinstance(args, str):
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "_cgs_launch_argv", Path(__file__).with_name("child_audit.py"),
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        args = module.native_argv(args)
+        args = audit_helpers().native_argv(args)
     root = Path(request)
     payload = signed_read(root / "request.json", registry.key)
     expected = physical(payload, root)
@@ -311,6 +535,20 @@ def _audit(event, arguments):
     }, registry.key)
     if payload["kind"] == "python":
         _line_intent(payload, time.monotonic_ns())
+
+
+def audit_helpers():
+    """Reuse the existing helper implementation, not re-executed source per record."""
+    global _audit_helpers
+    if _audit_helpers is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_cgs_measurement_audit_helpers", Path(__file__).with_name("child_audit.py"),
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _audit_helpers = module
+    return _audit_helpers
 
 
 class Registry:
@@ -331,6 +569,7 @@ class Registry:
         self.measurement_plan = measurement_plan
         self.uv = str(Path(uv).resolve()) if uv else None
         self.processes = {}
+        self._diagnostic_launches, self._diagnostic_exits = {}, {}
         if self.uv:
             proxy = self.root / "python-measurement-entry"
             proxy.write_text(
@@ -357,7 +596,22 @@ class Registry:
         signature = inspect.signature(self.original)
         registry = self
         class MeasurementPopen(registry.original):
+            def _record_exit(self, code):
+                root = getattr(self, "_measurement_root", None)
+                if root is not None and code is not None:
+                    registry._diagnostic_exits.setdefault(
+                        root, {"observed_ns": time.monotonic_ns(), "returncode": code},
+                    )
+                return code
+
+            def wait(self, *args, **kwargs):
+                return self._record_exit(super().wait(*args, **kwargs))
+
+            def poll(self, *args, **kwargs):
+                return self._record_exit(super().poll(*args, **kwargs))
+
             def __init__(self, args, *positional, **kwargs):
+                entered = time.monotonic_ns()
                 bound = signature.bind(args, *positional, **kwargs)
                 executable = bound.arguments.get("executable")
                 candidate = executable or (args[0] if isinstance(args, (list, tuple)) and args else "")
@@ -365,8 +619,7 @@ class Registry:
                 if bound.arguments.get("shell") or (
                     os.path.normcase(os.path.abspath(candidate)) != registry.python and not is_uv
                 ):
-                    if os.path.basename(str(candidate)).lower() in {"uv", "uv.exe"}:
-                        registry.failures.append("UV native launches are not yet registered by the prototype")
+                    registry.failures.append("opaque shell or unregistered native executable is unsupported")
                     super().__init__(args, *positional, **kwargs)
                     return
                 if not is_uv:
@@ -415,8 +668,13 @@ class Registry:
                     }
                     payload["uv_slots"] = [child.name]
                 if registry.measurement_plan:
+                    plan_started = time.monotonic_ns()
                     payload["measurement"] = registry.measurement_plan(root, payload)
+                    plan_finished = time.monotonic_ns()
+                else:
+                    plan_started = plan_finished = time.monotonic_ns()
                 signed_write(root / "request.json", payload, registry.key)
+                request_written = time.monotonic_ns()
                 registry.requests.append(root)
                 registry._issued[root] = {
                     "kind": payload["kind"],
@@ -429,7 +687,10 @@ class Registry:
                 environment.pop("COVERAGE_PROCESS_CONFIG", None)
                 bound.arguments["args"] = physical(payload, root)
                 bound.arguments["env"] = environment
+                self._measurement_root = root
+                spawn_started = time.monotonic_ns()
                 super().__init__(*bound.args, **bound.kwargs)
+                spawn_returned = time.monotonic_ns()
                 self.args = args
                 signed_write(root / "spawn.json", {
                     "schema": SCHEMA, "nonce": nonce, "pid": self.pid,
@@ -437,6 +698,12 @@ class Registry:
                 registry.processes[root] = self
                 registry._issued_processes[root] = self
                 registry._spawn_pids[root] = self.pid
+                registry._diagnostic_launches[root] = {
+                    "entered_ns": entered, "plan_started_ns": plan_started,
+                    "plan_finished_ns": plan_finished, "request_written_ns": request_written,
+                    "spawn_started_ns": spawn_started, "spawn_returned_ns": spawn_returned,
+                    "ledger_written_ns": time.monotonic_ns(),
+                }
         _registry = self
         if not _hook_installed:
             sys.addaudithook(_audit)
@@ -471,6 +738,8 @@ class Registry:
         result = []
         for root in sorted(expected):
             issued = self._issued[root]
+            if issued["kind"] == "uv-slot" and not (root / "request.json").is_file():
+                raise ValueError("UV issued native entry absent; cache-only/opaque operations are unsupported")
             payload = signed_read(root / "request.json", self.key)
             audit = signed_read(root / "audit.json", self.key)
             spawn = signed_read(root / "spawn.json", self.key)
@@ -524,8 +793,7 @@ class Registry:
                 or audit["physical_argv_sha256"] != hashlib.sha256(canonical(rewritten(payload["argv"],root))).hexdigest()
             ):
                 raise ValueError("measurement spawn/producer binding mismatch")
-            import runpy
-            if runpy.run_path(str(Path(__file__).with_name("child_audit.py")))["live"](birth["pid"]):
+            if audit_helpers().live(birth["pid"]):
                 raise ValueError("measurement producer is still running")
             if payload.get("parent_uv"):
                 if issued["kind"] != "uv-slot":
@@ -537,7 +805,7 @@ class Registry:
             row = {"request": payload, "audit": audit, "spawn": spawn, "birth": birth}
             plan = payload.get("measurement")
             if plan:
-                from tools.coverage_guided_selection.child_stream import read_streams
+                from tools.coverage_guided_selection.child_stream_parent import read_streams
                 if any(
                     hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected
                     for path, expected in plan["child_stream_helpers"].items()

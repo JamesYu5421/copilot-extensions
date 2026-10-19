@@ -175,8 +175,12 @@ def _event(event, arguments):
             _probe = arguments[0]
             return
         if event in {"os.fork", "os.forkpty", "os.exec"}:
-            if os.environ.get(ENV):
+            if _child or os.environ.get(ENV):
                 error("unsupported fork/exec coverage lifecycle")
+            return
+        if event == "os.system":
+            if _child or os.environ.get(ENV):
+                error("unsupported opaque system command coverage lifecycle")
             return
         if event == "sys.settrace" and _child:
             stream = sys.modules.get("_cgs_child_stream")
@@ -200,21 +204,23 @@ def _event(event, arguments):
             executable, argv, _, environment = arguments
         environment = os.environ if environment is None else environment
         if not environment.get(ENV):
+            if _child or os.environ.get(ENV):
+                argv = native_argv(argv)
+                if key(executable or argv[0]) == _python and python_mode(argv) == "information":
+                    return
+                error("instrumented process stripped native child coverage context")
             return
         argv = native_argv(argv)
         executable_key = key(executable or argv[0])
         is_python = executable_key == _python
-        name = os.path.basename(executable_key).lower()
-        if not is_python and not name.startswith(("python", "pypy")):
+        if not is_python:
+            error("unmanaged native executable inherited child instrumentation")
             return
         mode = python_mode(argv)
         if mode == "information":
             return
         if mode == "site-disabled":
             error("site-disabled Python code execution context=" + context(environment))
-            return
-        if not is_python:
-            error("unmanaged Python interpreter inherited child instrumentation")
             return
         token = context(environment)
         if _child and token != _own_context:
