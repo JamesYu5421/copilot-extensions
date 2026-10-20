@@ -134,6 +134,9 @@ from tools.test_observer_lifecycle import (  # noqa: E402,F401
     test_invalid_repeated_transaction_states_are_fatal,
     test_missing_exit_refusal_is_not_zero_source_or_abrupt_exit_acceptance,
 )
+from tools.test_observer_native_concurrency import (  # noqa: E402,F401
+    test_python_generated_guard_preserves_actual_native_dispatch_mapping,
+)
 
 
 def test_baseline_error_preserves_collection_output_despite_coverage_warning():

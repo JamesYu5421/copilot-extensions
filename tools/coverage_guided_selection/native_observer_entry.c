@@ -14,7 +14,8 @@
 #endif
 typedef void PyObject;
 typedef int (*audit_fn)(const char *, PyObject *, void *);
-static int exe_fd = -1, handled = 0, busy = 0;
+static int exe_fd = -1, handled = 0;
+static _Thread_local int busy = 0;
 static PyObject *source_dispatch = NULL;
 static long long stamp(void) {
     struct timespec value;

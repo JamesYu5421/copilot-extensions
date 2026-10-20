@@ -156,11 +156,13 @@ def _generated_event(event, args):
         if reference != code:
             continue
         actual = tuple(_code_tree(code))
-        if _generated_count + len(actual) > 4096:
+        unregistered = [value for value in actual
+                        if _code_sources.get(id(value), (None,))[0] is not value]
+        if _generated_count + len(unregistered) > 4096:
             _auditor().error("verified generated code-object bound exceeded")
             return
-        _generated_count += len(actual)
-        for value in actual:
+        _generated_count += len(unregistered)
+        for value in unregistered:
             # Proven generated methods have no fixed repository line coordinates.
             _code_sources[id(value)] = (value, None)
         return

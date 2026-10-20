@@ -55,6 +55,11 @@ new-thread tracer installation.
 Spawn and producer identities share the native filesystem argument encoding.
 Non-UTF-8 POSIX bytes and their surrogate-escaped string equivalents therefore
 hash losslessly without rewriting or rejecting supported application arguments.
+Native compile/exec dispatch suppresses recursion only on the current thread:
+callback I/O on one thread must not hide another thread's real events. The
+generated-code guard preserves identity-matched source coordinates already
+registered by the earlier native dispatch instead of replacing them with an
+unmapped generated-method entry.
 The fast unit selector checks code-tree and cache identity without launching
 interpreters. In a prepared collector environment, set
 `CGS_RUN_STANDALONE_INTEGRATION=1` and run
