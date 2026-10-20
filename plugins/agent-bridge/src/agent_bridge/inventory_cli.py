@@ -21,10 +21,13 @@ def _cmd_agent_show(args: argparse.Namespace) -> None:
     from .client import BridgeClientError
 
     client = core._get_client()
+    from .remote_acp_config import is_remote_address
+    project = core._sender_repo() if is_remote_address(args.name) else None
     try:
         agent = client.get_agent(
             args.name,
             include_unaddressable=bool(getattr(args, "include_unaddressable", False)),
+            **({"project": project} if project is not None else {}),
         )
     except BridgeClientError as exc:
         if exc.status == 404:
@@ -55,6 +58,23 @@ def _cmd_agent_show(args: argparse.Namespace) -> None:
             print(f"  Host:     {host}")
         if agent.get("managed"):
             print(f"  Managed:  {agent['managed']}")
+        _print_remote_binding(agent)
+
+
+def _print_remote_binding(agent: dict) -> None:
+    if agent.get("target_type") == "remote-acp":
+        print(f"  State:    {agent.get('state', 'unavailable')}")
+        if agent.get("unavailable_reason"):
+            print(f"  Binding:  {agent['unavailable_reason']}")
+
+
+def _in_listing_project(agent: dict, project: str) -> bool:
+    if agent.get("target_type") == "remote-acp":
+        return bool(
+            agent.get("global_scope")
+            or project in [str(value).casefold() for value in agent.get("projects", [])]
+        )
+    return agent.get("project") is None or str(agent.get("project")).casefold() == project
 
 
 def _report_topology_errors(errors: list[str]) -> None:
@@ -83,15 +103,17 @@ def _cmd_agents(args: argparse.Namespace) -> None:
         sys.exit(_run_agents_stream(args))
     core = _core()
     client = core._get_client()
-    agents, topology_errors = client.list_agents_with_diagnostics()
     project = _listing_project(args)
+    agents, topology_errors = client.list_agents_with_diagnostics(
+        **({"project": project} if project is not None else {}),
+    )
     total = len(agents)
     if project:
         project_key = project.casefold()
         agents = [
             agent
             for agent in agents
-            if agent.get("project") is None or str(agent.get("project")).casefold() == project_key
+            if _in_listing_project(agent, project_key)
         ]
     if args.json:
         core._json_out(agents)
@@ -120,6 +142,7 @@ def _cmd_agents(args: argparse.Namespace) -> None:
                 print(f"  Host:     {host}")
             if managed:
                 print(f"  Managed:  {managed}")
+            _print_remote_binding(a)
             if i < len(agents) - 1:
                 print()
     if project and total > len(agents) and not args.json and agents:
@@ -153,20 +176,21 @@ def _fetch_agent_rows(
     the ones named in ``incomplete_namespaces``."""
     core = _core()
     client = core._get_client()
+    project = _listing_project(args)
     agents, topology_errors, incomplete_namespaces, capability_known = (
         client.list_agents_with_incomplete(
             force_refresh=force_refresh, require_complete=require_complete,
+            **({"project": project} if project is not None else {}),
         )
     )
     if topology_errors:
         raise RuntimeError("; ".join(topology_errors)[:200])
-    project = _listing_project(args)
     if project:
         project_key = project.casefold()
         agents = [
             agent
             for agent in agents
-            if agent.get("project") is None or str(agent.get("project")).casefold() == project_key
+            if _in_listing_project(agent, project_key)
         ]
     return agents, incomplete_namespaces, capability_known
 

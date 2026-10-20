@@ -50,6 +50,7 @@ from ..session_manager import (
     SessionConflictError,
 )
 from ..transport import SpawnTarget
+from ..remote_acp_config import is_remote_address
 from ..session_start_selection import find_reusable_caller_session as _find_reusable_session
 from ..worktree_head import resolve_head
 from ..preference_requests import apply_request_preferences, reused_preference_source
@@ -635,21 +636,20 @@ async def start_session(req: StartSessionRequest, request: Request):
                 f"session: {active[0]}",
             )
 
-    if agent_name and agent_name.startswith("remote-acp:"):
-        from ..remote_acp_sessions import connect_remote_session
-        if (
-            req.worktree_id or req.creation_key or req.provider_instance
-            or req.copilot_args or req.env or req.mcp_servers
-            or req.model or req.effort or req.parity_fault
-        ):
+    if agent_name and is_remote_address(agent_name):
+        from .. import remote_acp_sessions as remote_api
+        if remote_api.has_local_launch_options(req):
             raise HTTPException(422, "Remote ACP target does not launch local resources")
         try:
-            remote = await connect_remote_session(
+            remote = await remote_api.connect_remote_session(
                 mgr, agent_name.removeprefix("remote-acp:"),
                 cwd=req.target_dir or "/", caller_id=req.caller_id,
-                caller_session_id=req.caller_session_id,
-                remote_session_id=req.remote_session_id,
+                caller_session_id=req.caller_session_id, remote_session_id=req.remote_session_id,
+                **({"reuse": True} if req.caller_id and not req.force_new else {}),
+                **({"project": req.sender_repo} if req.sender_repo is not None else {}),
             )
+        except remote_api.RemoteSessionBusy as exc:
+            raise HTTPException(409, exc.detail) from None
         except (ValueError, PermissionError, ConnectionError):
             raise HTTPException(422, "Remote ACP target/connection refused") from None
         return StartSessionResponse(
