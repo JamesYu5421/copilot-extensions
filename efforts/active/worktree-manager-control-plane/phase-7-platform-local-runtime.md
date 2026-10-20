@@ -146,6 +146,26 @@ implementation; public-file absence is not proof of unpublished custody.
 
 ## Journal
 
+- **2026-10-20** - The next current-head review identified five internal mux/
+  Companion adapters still entering `uv run --project`, which could overwrite
+  the same qualified environment with an editable install. Registration,
+  pane removal and Companion now use their owning slot's installed interpreter,
+  without a global-version lookup or project synchronization. Windows
+  background dispatch is headless and quotes native argument boundaries.
+  The final contained nine-file selection passes **235 tests**, with only the
+  two Windows symlink-permission skips. Actual PowerShell 5.1/7 registration,
+  removal and generated Companion popup commands, plus Git Bash registration
+  and removal, each run twice without UV or fetched source, retain the exact
+  installed module/prefix, leave every environment file byte unchanged and
+  pass installed health afterward. Native observation records no visible
+  windows or focus theft across those calls and the existing launcher cycles.
+  The popup test executes the generated command through native CMD; it does
+  not claim a live interactive mux/keybinding qualification. Linux/macOS and
+  pristine-box lane limitations remain as recorded above. Lint, headless-launch
+  and patch checks pass. Documentation impact: the Manager recovery contract
+  now explicitly includes these internal callers. Review, release and the
+  authorized published-consumer gate remain open.
+
 - **2026-10-20** - Addressed four findings from implementation PR #7420's
   first current-head review. Native PowerShell IEX failures now throw without
   exiting the caller; separate script invocation retains the child's exit

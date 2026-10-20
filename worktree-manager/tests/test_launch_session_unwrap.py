@@ -255,8 +255,8 @@ def test_windows_launcher_applies_companion_keybind_after_passthrough():
 
 def test_companion_keybind_fragment_builds_the_popup_command():
     """mux-bind-relay Step 1: the generated root-table directive must bind
-    Ctrl+K to a `display-popup` that resolves the Companion via `uv run`
-    against the caller-supplied ManagerRoot, mirroring
+    Ctrl+K to a `display-popup` that resolves the Companion from the installed
+    interpreter under the caller-supplied ManagerRoot, mirroring
     Invoke-ManagedMuxRegister's own invocation pattern (no separately-
     published `worktree-manager` binstub needed) -- and must NOT (yet) bind
     any MouseDown1Status/mouse-click directive: empirically confirmed
@@ -267,7 +267,8 @@ def test_companion_keybind_fragment_builds_the_popup_command():
     assert "function Get-AwMuxCompanionKeybindFragment" in so
     assert "function Invoke-AwMuxCompanionBind" in so
     assert "bind-key -T root C-k display-popup" in so
-    assert "uv run --quiet --project" in so
+    assert "uv run" not in so
+    assert r".venv\Scripts\python.exe" in so
     assert "-m worktree_manager companion" in so
     assert "source-file -t $Session" in so
     # The corruption finding: no mouse-click directive ships (yet) in any

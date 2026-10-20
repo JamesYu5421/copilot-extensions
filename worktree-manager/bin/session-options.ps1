@@ -114,9 +114,9 @@ function Set-AwPsmuxServerPriority {
 # directive that delivers the Mux Companion (visions/mux-companion
 # §mux-bind-keybind-relay): Ctrl+K opens the popup.
 #
-# `uv run --quiet --project <ManagerRoot> -m worktree_manager companion`
+# `<ManagerRoot>/.venv/Scripts/python.exe -m worktree_manager companion`
 # mirrors launch-session.ps1's own Invoke-ManagedMuxRegister invocation
-# pattern -- resolves the Companion from its own project root directly, no
+# pattern -- resolves the Companion from its own installed environment, no
 # separately-published `worktree-manager` binstub needed. `display-popup -E`
 # closes the popup the instant the Companion process exits (it is a normal
 # TUI app that exits on 'q'/Ctrl+C), so no separate dismiss wiring is needed.
@@ -136,7 +136,8 @@ function Set-AwPsmuxServerPriority {
 # (mux-bind-relay effort, Step 1).
 function Get-AwMuxCompanionKeybindFragment {
     param([Parameter(Mandatory)][string]$ManagerRoot)
-    $popupCmd = "uv run --quiet --project \`"$ManagerRoot\`" -m worktree_manager companion"
+    $managerPython = Join-Path $ManagerRoot '.venv\Scripts\python.exe'
+    $popupCmd = "\`"$managerPython\`" -I -B -X utf8 -m worktree_manager companion"
     "bind-key -T root C-k display-popup -E -w 80% -h 80% `"$popupCmd`""
 }
 

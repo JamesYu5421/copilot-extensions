@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -385,6 +387,184 @@ def test_native_generated_launcher_without_uv_or_source(standalone_runtime, tmp_
     assert "fixture failure" in failed.stderr
 
 
+def _record_internal_calls(slot, tmp_path):
+    environment = slot / ".venv"
+    main = next(environment.rglob("worktree_manager/__main__.py"))
+    original = main.read_text(encoding="utf-8")
+    main.write_text(
+        "import json,os,pathlib,sys,worktree_manager\n"
+        "if sys.argv[1:2] in (['mux-daemon'],['companion']):\n"
+        "    pathlib.Path(os.environ['MANAGER_TEST_RECEIPT']).write_text(json.dumps({\n"
+        "        'args':sys.argv[1:],'prefix':sys.prefix,'module':worktree_manager.__file__\n"
+        "    }),encoding='utf-8')\n"
+        "    raise SystemExit(0)\n" + original,
+        encoding="utf-8",
+    )
+    shutil.rmtree(slot / "src")
+    binary = slot / "bin"
+    binary.mkdir()
+    return binary, tmp_path / "receipt.json"
+
+
+def test_internal_callers_cannot_resolve_or_sync_the_installed_project():
+    binary = Path(__file__).resolve().parents[1] / "bin"
+    for name in (
+        "launch-session.ps1", "launch-session.sh", "pane-wrapper.ps1",
+        "pane-wrapper.sh", "session-options.ps1",
+    ):
+        code = "\n".join(
+            line for line in (binary / name).read_text(encoding="utf-8").splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        assert not re.search(r"\buv\b", code), name
+
+
+def _environment_snapshot(slot):
+    return {
+        str(path.relative_to(slot)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in (slot / ".venv").rglob("*") if path.is_file()
+    }
+
+
+def _check_internal_calls(command, env, slot, receipt, action, tmp_path):
+    before = _environment_snapshot(slot)
+    for _ in range(2):
+        receipt.unlink(missing_ok=True)
+        result = subprocess.run(
+            command, cwd=tmp_path, env=env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not result.stderr.strip(), result.stderr
+        deadline = time.monotonic() + 5
+        while not receipt.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert receipt.exists(), result.stdout + result.stderr
+        record = json.loads(receipt.read_text(encoding="utf-8"))
+        assert Path(record["prefix"]).resolve() == (slot / ".venv").resolve()
+        assert Path(record["module"]).resolve().is_relative_to((slot / ".venv").resolve())
+        if action == "companion":
+            assert record["args"] == ["companion"]
+        else:
+            assert record["args"][:2] == ["mux-daemon", action]
+            assert "--project=fixture" in record["args"]
+            assert "--worktree-id=fixture-wt" in record["args"]
+            assert "--session-incarnation=fixture-id:17" in record["args"]
+            if action == "register":
+                assert "--worktree-path=" + env["MANAGER_TEST_WORKDIR"] in record["args"]
+        assert _environment_snapshot(slot) == before
+    runtime.probe_runtime(slot, "1.2.3")
+    assert _environment_snapshot(slot) == before
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows mux and Companion adapters")
+@pytest.mark.parametrize("shell", ["powershell", "pwsh"])
+@pytest.mark.parametrize("action", ["register", "remove", "companion"])
+def test_internal_windows_calls_preserve_the_installed_environment(
+    standalone_runtime, tmp_path, shell, action, _no_visible_windows,
+):
+    executable = _shell_executable(shell)
+    if not executable:
+        pytest.skip(f"native {shell} is unavailable")
+    slot = standalone_runtime
+    binary, receipt = _record_internal_calls(slot, tmp_path)
+    source_bin = Path(__file__).resolve().parents[1] / "bin"
+    prefix = (
+        "$ErrorActionPreference = 'Stop'\n"
+        "$script:LaunchProject = 'fixture'\n"
+        "$plan = [pscustomobject]@{worktree_id='fixture-wt'}\n"
+        "$awProject = 'fixture'; $awWt = 'fixture-wt'; $awMuxSession = 'fixture-session'\n"
+        "function Fixture-Mux { 'fixture-id:17' }\n"
+        "$script:AwPsmuxBin = 'Fixture-Mux'; $awPsmuxBin = 'Fixture-Mux'\n"
+        "function Write-SetupLog { param($Message,$Level); throw $Message }\n"
+    )
+    if action == "register":
+        source = (source_bin / "launch-session.ps1").read_text(encoding="utf-8")
+        match = re.search(r"^function Invoke-ManagedMuxRegister \{.*?^\}", source, re.M | re.S)
+        assert match
+        body = match.group() + "\nInvoke-ManagedMuxRegister 'fixture-session' $env:MANAGER_TEST_WORKDIR\n"
+    elif action == "remove":
+        source = (source_bin / "pane-wrapper.ps1").read_text(encoding="utf-8")
+        body = source[
+            source.index("if (\n    -not [string]::IsNullOrWhiteSpace($awProject)"):
+            source.index("# Intentional interrupt -- exit silently")
+        ]
+    else:
+        body = (source_bin / "session-options.ps1").read_text(encoding="utf-8") + (
+            "\n$fragment = Get-AwMuxCompanionKeybindFragment -ManagerRoot (Split-Path -Parent $PSScriptRoot)\n"
+            "$fragment\n"
+        )
+    script = binary / "fixture.ps1"
+    script.write_text(prefix + body, encoding="utf-8-sig")
+    env = dict(
+        os.environ, PATH=str(Path(os.environ["SystemRoot"]) / "System32"),
+        MANAGER_TEST_RECEIPT=str(receipt),
+        MANAGER_TEST_WORKDIR=str(tmp_path / "work tree caf\u00e9") + "\\",
+    )
+    assert shutil.which("uv", path=env["PATH"]) is None
+    command = [executable, "-NoProfile", "-File", str(script)]
+    if action == "companion":
+        result = subprocess.run(
+            command, cwd=tmp_path, env=env, capture_output=True, text=True,
+            encoding="utf-8", timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        assert result.returncode == 0, result.stderr
+        match = re.fullmatch(
+            r'bind-key -T root C-k display-popup -E -w 80% -h 80% "(.*)"', result.stdout.strip(),
+        )
+        assert match, result.stdout
+        popup_command = match.group(1).replace('\\"', '"')
+        command = f'"{os.environ["COMSPEC"]}" /d /s /c "{popup_command}"'
+    _check_internal_calls(
+        command, env, slot, receipt, action, tmp_path,
+    )
+
+
+@pytest.mark.parametrize("action", ["register", "remove"])
+def test_internal_posix_calls_preserve_the_installed_environment(
+    standalone_runtime, tmp_path, action, _no_visible_windows,
+):
+    executable = _shell_executable("bash")
+    if not executable:
+        pytest.skip("native bash is unavailable")
+    slot = standalone_runtime
+    binary, receipt = _record_internal_calls(slot, tmp_path)
+    source_bin = Path(__file__).resolve().parents[1] / "bin"
+    prefix = (
+        "#!/usr/bin/env bash\n"
+        "setup_log() { echo \"$*\" >&2; }\n"
+        "tmux() { printf 'fixture-id:17\\n'; }\n"
+        "LAUNCH_PROJECT=fixture; WORKTREE_ID=fixture-wt\n"
+        "AW_PROJECT=fixture; AW_WT=fixture-wt; AW_MUX_SESSION=fixture-session\n"
+    )
+    if action == "register":
+        source = (source_bin / "launch-session.sh").read_text(encoding="utf-8")
+        match = re.search(r"^        _aw_publish_managed_mux_live\(\) \{.*?^        \}", source, re.M | re.S)
+        assert match
+        body = match.group() + '\n_aw_publish_managed_mux_live fixture-session "$MANAGER_TEST_WORKDIR"\n'
+    else:
+        source = (source_bin / "pane-wrapper.sh").read_text(encoding="utf-8")
+        body = source[
+            source.index('if [[ -n "$AW_PROJECT" && -n "$AW_WT" ]]'):
+            source.index("# Intentional interrupt -- exit silently")
+        ]
+    script = binary / "fixture.sh"
+    script.write_text(prefix + body, encoding="utf-8")
+    path = os.pathsep.join((
+        str(Path(executable).parent), str(Path(executable).parent.parent / "usr" / "bin"),
+    )) if os.name == "nt" else os.defpath
+    env = dict(
+        os.environ, PATH=path, MANAGER_TEST_RECEIPT=str(receipt),
+        MANAGER_TEST_WORKDIR=str(tmp_path / "work tree caf\u00e9"), MSYS2_ARG_CONV_EXCL="*",
+    )
+    env.pop("BASH_ENV", None)
+    assert shutil.which("uv", path=env["PATH"]) is None
+    _check_internal_calls(
+        [executable, str(script)], env, slot, receipt, action, tmp_path,
+    )
+
+
 def test_probe_checks_actual_environment_and_import(standalone_runtime):
     runtime.probe_runtime(standalone_runtime, "1.2.3")
     with pytest.raises(RuntimeError, match="does not match"):
@@ -453,19 +633,13 @@ def test_healthy_runtime_repairs_binstubs_without_reconstruction(
     runtime.probe_runtime(slot, "1.2.3")
 
 
-@pytest.mark.skipif(
-    os.name != "nt" or os.environ.get("MANAGER_RUNTIME_WINDOWS_E2E") != "1",
-    reason="opt-in native desktop observation of generated launchers",
-)
-def test_generated_windows_launchers_two_headless_cycles(standalone_runtime, tmp_path, monkeypatch):
+@pytest.fixture
+def _no_visible_windows(monkeypatch):
+    if os.name != "nt" or os.environ.get("MANAGER_RUNTIME_WINDOWS_E2E") != "1":
+        yield
+        return
     from mux_windows_observer import descendants, processes, windows
 
-    root = standalone_runtime.parent.parent
-    si._write_marker(root, "1.2.3")
-    monkeypatch.setattr(si, "local_bin", lambda: tmp_path / "bin")
-    si._deploy_binstubs()
-    env = dict(os.environ, WORKTREE_MANAGER_ROOT=str(root), PATH="")
-    env.pop("BASH_ENV", None)
     baseline_windows, baseline_foreground = windows()
     roots, owned, visible, focused = set(), set(), set(), set()
     stop = threading.Event()
@@ -502,22 +676,38 @@ def test_generated_windows_launchers_two_headless_cycles(standalone_runtime, tmp
     with ThreadPoolExecutor(max_workers=1) as executor:
         monitor = executor.submit(observe)
         try:
-            for _ in range(2):
-                for shell in ("cmd", "powershell", "pwsh", "bash"):
-                    executable = _shell_executable(shell)
-                    if shell == "bash" and not executable:
-                        continue
-                    assert executable, f"native {shell} is required for this explicit lane"
-                    result = subprocess.run(
-                        _launcher_command(shell, executable, si.local_bin(), ["two words"]),
-                        env=env, cwd=tmp_path, capture_output=True, text=True,
-                        encoding="utf-8", timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
-                    )
-                    assert result.returncode == 0, result.stderr
-                    assert json.loads(result.stdout) == ["two words"]
+            yield
         finally:
             stop.set()
             monitor.result(timeout=3)
     assert roots and owned
-    assert not visible, "a generated launcher surfaced a visible window"
-    assert not focused, "a generated launcher stole focus"
+    assert not visible, "a Manager invocation surfaced a visible window"
+    assert not focused, "a Manager invocation stole focus"
+
+
+@pytest.mark.skipif(
+    os.name != "nt" or os.environ.get("MANAGER_RUNTIME_WINDOWS_E2E") != "1",
+    reason="opt-in native desktop observation of generated launchers",
+)
+def test_generated_windows_launchers_two_headless_cycles(
+    standalone_runtime, tmp_path, monkeypatch, _no_visible_windows,
+):
+    root = standalone_runtime.parent.parent
+    si._write_marker(root, "1.2.3")
+    monkeypatch.setattr(si, "local_bin", lambda: tmp_path / "bin")
+    si._deploy_binstubs()
+    env = dict(os.environ, WORKTREE_MANAGER_ROOT=str(root), PATH="")
+    env.pop("BASH_ENV", None)
+    for _ in range(2):
+        for shell in ("cmd", "powershell", "pwsh", "bash"):
+            executable = _shell_executable(shell)
+            if shell == "bash" and not executable:
+                continue
+            assert executable, f"native {shell} is required for this explicit lane"
+            result = subprocess.run(
+                _launcher_command(shell, executable, si.local_bin(), ["two words"]),
+                env=env, cwd=tmp_path, capture_output=True, text=True,
+                encoding="utf-8", timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            assert result.returncode == 0, result.stderr
+            assert json.loads(result.stdout) == ["two words"]

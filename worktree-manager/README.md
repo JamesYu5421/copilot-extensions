@@ -354,6 +354,11 @@ Generated launchers resolve `current-version` and execute that slot's own
 interpreter. Ordinary calls perform no dependency solve and need no `uv` on
 PATH. Windows CMD, PowerShell and Git Bash launchers use the Windows environment
 interpreter; macOS/Linux launchers use the POSIX environment interpreter.
+Internal mux registration, pane teardown and the Companion popup also execute
+the interpreter belonging to their own script's installed slot, not a
+project-sync command or the globally selected version. They leave the qualified
+environment unchanged and work without `uv`; Windows background calls remain
+headless and preserve argument boundaries.
 First-touch bootstrap uses a temporary qualified runner to enter this
 same self-install contract before importing runtime-dependent CLI modules;
 it removes that runner before launching the installed environment. A healthy

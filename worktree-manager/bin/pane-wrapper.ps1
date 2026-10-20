@@ -299,9 +299,12 @@ if (
 ) {
     try {
         $managerRoot = Split-Path -Parent $PSScriptRoot
+        $managerPython = Join-Path $managerRoot '.venv\Scripts\python.exe'
+        if (-not (Test-Path -LiteralPath $managerPython)) {
+            throw "Manager installed interpreter is missing: $managerPython"
+        }
         $removeArgs = @(
-            'run', '--quiet', '--project', $managerRoot,
-            '-m', 'worktree_manager', 'mux-daemon', 'remove',
+            '-I', '-B', '-X', 'utf8', '-m', 'worktree_manager', 'mux-daemon', 'remove',
             "--project=$awProject", "--worktree-id=$awWt"
         )
         # `--mux-session`, when known (#3838 fix): lets the daemon-side
@@ -331,13 +334,19 @@ if (
                 $removeArgs += "--session-incarnation=$incarnation"
             }
         } catch {}
-        # Dispatch detached (real-bug follow-up to #3825): this is
+        # Dispatch without blocking (real-bug follow-up to #3825): this is
         # teardown, not attach, but blocking the pane's own exit on the
         # same tens-of-seconds-worst-case CLI edge delays it for no
         # benefit.
-        Start-Process -FilePath 'uv' -ArgumentList $removeArgs `
+        $nativeArgs = @($removeArgs | ForEach-Object {
+            '"' + ($_ -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"'
+        })
+        Start-Process -FilePath 'conhost.exe' `
+            -ArgumentList (@('--headless', "`"$managerPython`"") + $nativeArgs) `
             -WindowStyle Hidden -ErrorAction Stop | Out-Null
-    } catch {}
+    } catch {
+        [Console]::Error.WriteLine("Manager mux removal failed: $($_.Exception.Message)")
+    }
 }
 
 # Intentional interrupt -- exit silently so post-exit finalization runs.

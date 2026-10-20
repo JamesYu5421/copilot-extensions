@@ -1316,10 +1316,15 @@ print(str(leg.get('state', '')) if isinstance(leg, dict) and leg.get('provider')
             local sess="$1"
             local spath="$2"
             [[ -n "$sess" && -n "${LAUNCH_PROJECT:-}" && -n "${WORKTREE_ID:-}" ]] || return 0
-            command -v uv >/dev/null 2>&1 || return 0
-            local wm_root
+            local wm_root wm_python
             wm_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P 2>/dev/null || true)"
             [[ -n "$wm_root" ]] || return 0
+            wm_python="$wm_root/.venv/bin/python"
+            [[ -x "$wm_python" ]] || wm_python="$wm_root/.venv/Scripts/python.exe"
+            if [[ ! -x "$wm_python" ]]; then
+                setup_log WARN "Manager installed interpreter is missing: $wm_python"
+                return 0
+            fi
             # The real mux session's own stable identity (Copilot review
             # finding on PR #3906): stored so a later teardown's own live
             # probe of the SAME tmux session (pane-wrapper.sh) can be
@@ -1332,11 +1337,11 @@ print(str(leg.get('state', '')) if isinstance(leg, dict) and leg.get('provider')
             # Dispatch detached rather than blocking attach on this call
             # (real-bug follow-up to #3825): the bundled register edge can
             # spend tens of seconds (mux metadata probes, daemon boot-wait,
-            # status-monitor-restart) before it returns, plus `uv run`'s own
-            # resolve overhead -- never block create/join on it. Mirrors the
+            # status-monitor-restart) before it returns -- never block
+            # create/join on it. Mirrors the
             # existing background-subshell dispatch already used above for
             # activity-log.
-            ( uv run --quiet --project "$wm_root" -m worktree_manager mux-daemon register \
+            ( "$wm_python" -I -B -X utf8 -m worktree_manager mux-daemon register \
                 --project="$LAUNCH_PROJECT" \
                 --worktree-id="$WORKTREE_ID" \
                 --worktree-path="$spath" \
