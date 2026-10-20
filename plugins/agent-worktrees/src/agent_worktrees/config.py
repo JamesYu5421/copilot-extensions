@@ -734,14 +734,16 @@ def find_machine_metadata(
 
 def detect_machine(
     repo_dir: str | Path | None = None, *, value: str | None = None,
+    config: Config | None = None,
 ) -> str:
     """Local execution name; preserve native aliases, qualify WSL guest keys."""
-    from .machine_identity import resolve_execution_machine
+    from .machine_identity import load_execution_registry, resolve_execution_machine
 
     return resolve_execution_machine(
         value if value is not None else socket.gethostname().lower(),
         guest=detect_platform() == "wsl", configured=value is not None,
-        load_entries=(lambda: load_machines_yaml(repo_dir)) if repo_dir is not None else None,
+        load_entries=(lambda: load_execution_registry(repo_dir, config=config))
+        if repo_dir is not None else None,
     )
 
 

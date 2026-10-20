@@ -23,9 +23,13 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
-from machine_transport import MachineEntry, machine_entries_to_topology, machine_name, resolve_identity
+from machine_transport import (
+    MachineEntry, MachineEnvironment, MachineSelection,
+    machine_entries_to_topology, machine_name, resolve_identity,
+)
 from machine_transport import resolve_machine_selection, split_machine_environment
 from machine_transport import is_local_machine as _mt_is_local_machine
 
@@ -84,6 +88,63 @@ def resolve_execution_machine(
     if not guest and resolved.topology_key is not None:
         return machine_name(entries[resolved.topology_key])
     return resolved.canonical
+
+
+def load_execution_registry(
+    repo_dir: str | Path, *, config: cfg.Config | None = None,
+) -> dict[str, MachineEntry]:
+    """Prefer checkout-local registry data, then its proven owning anchor."""
+    try:
+        return (
+            cfg.load_machines_yaml(repo_dir, config=config)
+            if config is not None else cfg.load_machines_yaml(repo_dir)
+        )
+    except FileNotFoundError:
+        if config is None:
+            raise
+        anchor = Path(config.default_repo.anchor)
+        checkout = Path(repo_dir)
+        if checkout.resolve() == anchor.resolve():
+            raise
+        from . import front_door_cli
+
+        owning_anchor = front_door_cli._git_toplevel(checkout)
+        if owning_anchor is None or owning_anchor.resolve() != anchor.resolve():
+            raise
+        return cfg.load_machines_yaml(anchor, config=config)
+
+
+def resolve_execution_context(
+    name: str, repo_dir: str | Path, *, environment: str,
+    config: cfg.Config | None = None,
+) -> MachineSelection[MachineEntry]:
+    """Project a registered execution ID into its physical/environment tuple.
+
+    This is metadata selection, not execution-space mutation authority. Unknown
+    names retain their exact spelling; suffixes alone cannot admit another host.
+    """
+    try:
+        entries = load_execution_registry(repo_dir, config=config)
+    except FileNotFoundError:
+        entries = {}
+    selection = resolve_machine_selection(entries, name, environment)
+    if selection.entry is None:
+        return MachineSelection(None, MachineEnvironment(name, environment), selection.exact)
+    return selection
+
+
+def repository_config(repo_dir: Path) -> cfg.Config | None:
+    """Load target configuration without changing or depending on ambient project."""
+    from . import front_door_cli
+
+    anchor = front_door_cli._git_toplevel(repo_dir)
+    project = front_door_cli._reverse_lookup_project(anchor or repo_dir)
+    if project is not None:
+        return cfg.load_config(
+            cfg.project_dir(project) / "config.yaml", project=project,
+            include_control_plane_related_pr=False,
+        )
+    return None
 
 
 def is_local_machine(name: str, config: cfg.Config) -> bool:
