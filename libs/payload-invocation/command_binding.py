@@ -158,11 +158,14 @@ def write_legacy_manifest(
         raise ValueError("The lifecycle must supply an unbound schema-3 plugin manifest.")
     lifecycle = _load_lifecycle()
     lease = lifecycle.borrowed_lease(_rules(), primitive, **arguments)
+    purpose = lease.purpose if lease is not None else lifecycle._purpose(_rules(), {})
+    lifecycle._publication(_rules(), primitive, arguments, purpose)
     if lease is None:
         lifecycle._reservation(
             _rules(), primitive, root, lifecycle._owner(_rules(), primitive, arguments),
         )
     with (nullcontext(lease) if lease is not None else lifecycle._lock(primitive, arguments)) as lock:
+        lifecycle._publication(_rules(), primitive, arguments, purpose)
         try:
             receipt = publish_legacy_binding(primitive, **arguments)
         except SourceProvenanceUnavailable as error:
@@ -386,7 +389,9 @@ def main() -> int:
     parser.add_argument("--write-manifest", action="store_true")
     parser.add_argument("--run-lifecycle", action="store_true")
     parser.add_argument("--check-lifecycle", action="store_true")
+    parser.add_argument("--lifecycle-operation", choices=("publish", "teardown"))
     parser.add_argument("--deferred-runtime", action="store_true")
+    parser.add_argument("--managed-deployment", action="store_true")
     parser.add_argument("--teardown", action="store_true")
     parser.add_argument("--lifecycle-timeout", type=float)
     parser.add_argument("--human-operation", choices=("install", "update"))
@@ -399,6 +404,10 @@ def main() -> int:
         parser.error("Specify only one lifecycle operation.")
     if arguments.deferred_runtime and not arguments.run_lifecycle:
         parser.error("--deferred-runtime requires --run-lifecycle.")
+    if arguments.managed_deployment and (not arguments.run_lifecycle or arguments.teardown):
+        parser.error("--managed-deployment requires --run-lifecycle without --teardown.")
+    if arguments.lifecycle_operation is not None and not arguments.check_lifecycle:
+        parser.error("--lifecycle-operation requires --check-lifecycle.")
     if arguments.lifecycle_timeout is not None and not arguments.run_lifecycle:
         parser.error("--lifecycle-timeout requires --run-lifecycle.")
     if arguments.human_operation and (not arguments.run_lifecycle or arguments.teardown):
@@ -421,7 +430,10 @@ def main() -> int:
             if lifecycle_action:
                 lifecycle = _load_lifecycle()
                 if arguments.check_lifecycle:
-                    if lifecycle.borrowed_lease(_rules(), primitive, **publication_arguments) is None:
+                    if lifecycle.borrowed_lease(
+                        _rules(), primitive, operation=arguments.lifecycle_operation or "publish",
+                        **publication_arguments,
+                    ) is None:
                         raise CommandOwnershipConflict("Runtime lifecycle ticket is missing.")
                     return 0
                 command = arguments.command
@@ -430,6 +442,7 @@ def main() -> int:
                 return lifecycle.run_lifecycle(
                     _rules(), primitive, command,
                     deferred_runtime=arguments.deferred_runtime,
+                    managed_deployment=arguments.managed_deployment,
                     timeout=arguments.lifecycle_timeout,
                     teardown=arguments.teardown, **publication_arguments,
                     human_operation=arguments.human_operation,
