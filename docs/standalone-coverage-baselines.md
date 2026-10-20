@@ -31,6 +31,22 @@ generated runtime modules map to the canonical library resources declared by
 literal resource mapping without importing build-time setuptools, and still
 rejects missing, extra, changed or ambiguously named modules. Only verified
 installed paths receive repository line coordinates.
+Each manifest also binds the source digest. Before the child prelude endpoint,
+the tracer recompiles those verified bytes with the interpreter's actual
+optimization level and checks executing code objects against the resulting code
+trees. Strong code-object references prevent recycled object IDs from inheriting
+attribution. A timestamp/size-valid stale `.pyc` therefore invalidates collection
+even when the installed `.py` bytes still match the checkout. The parent applies
+the same guard through an independently monitored profile hook alongside
+coverage.py's trace hook; neither path changes what code the application imports.
+The fast unit selector checks code-tree and cache identity without launching
+interpreters. In a prepared collector environment, set
+`CGS_RUN_STANDALONE_INTEGRATION=1` and run
+`python -m pytest tools/test_child_stream.py -k real_timestamp_valid_bytecode`
+to exercise the actual parent driver and child importer with fresh and stale
+timestamp/size-valid caches at each interpreter optimization level. The
+application must still pass with the code it actually imported; stale caches
+must prevent the collector from producing a baseline.
 Source/build/test inputs must be clean at the named `HEAD`.
 
 The `collection` record includes native platform, Python version, source/test-input

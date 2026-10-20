@@ -168,7 +168,10 @@ def test_artifact_requires_actual_constructor_relocation_and_entry_identity(tmp_
     assert result["static_shape_only"] and "all_admitted" not in result
 
 
-@pytest.mark.parametrize("fault", ["missing-init", "unresolved-init", "changed-entry", "unknown-relocation", "wrong-abi"])
+@pytest.mark.parametrize("fault", [
+    "missing-init", "unresolved-init", "changed-entry", "unknown-relocation", "wrong-abi",
+    "missing-relocations", "duplicate-relocation", "null-relocated-init",
+])
 def test_missing_or_changed_native_initialization_refuses(tmp_path, fault):
     data = elf_content()
     if fault == "missing-init":
@@ -179,6 +182,15 @@ def test_missing_or_changed_native_initialization_refuses(tmp_path, fault):
         data[912:976] = b"2" * 64
     elif fault == "unknown-relocation":
         struct.pack_into("<Q", data, 800 + 8, 7)
+    elif fault == "missing-relocations":
+        # A plausible executable offset is still an unresolved absolute pointer.
+        struct.pack_into("<Q", data, 768, 896)
+        struct.pack_into("<q", data, 512 + 2 * 16, 0)
+    elif fault == "duplicate-relocation":
+        struct.pack_into("<Q", data, 512 + 3 * 16 + 8, 48)
+        struct.pack_into("<QQq", data, 824, 768, 8, 896)
+    elif fault == "null-relocated-init":
+        struct.pack_into("<q", data, 800 + 16, 0)
     else:
         struct.pack_into("<H", data, 18, 183)
     artifact = tmp_path / "helper.so"

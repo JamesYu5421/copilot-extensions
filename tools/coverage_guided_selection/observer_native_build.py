@@ -201,6 +201,7 @@ def verify_artifact(path, entry_sha):
     initializers = at(tags[25], tags[27])
     targets = [struct.unpack_from("<Q", initializers, offset)[0]
                for offset in range(0, len(initializers), 8)]
+    relocated = set()
     if tags.get(7):
         if tags.get(9) != 24 or tags.get(8, 0) > 1_048_576 or tags.get(8, 0) % 24:
             raise ValueError("unsupported observer constructor relocations")
@@ -210,8 +211,14 @@ def verify_artifact(path, entry_sha):
             if tags[25] <= address < tags[25] + tags[27]:
                 if info != 8 or (address - tags[25]) % 8:
                     raise ValueError("unknown observer constructor relocation")
-                targets[(address - tags[25]) // 8] = addend
-    if not all(any(row[0] == 1 and row[1] & 1 and row[3] <= target < row[3] + row[5]
+                index = (address - tags[25]) // 8
+                if index in relocated:
+                    raise ValueError("duplicate observer constructor relocation")
+                relocated.add(index)
+                targets[index] = addend
+    if relocated != set(range(len(targets))):
+        raise ValueError("unresolved observer constructor relocation")
+    if not all(target > 0 and any(row[0] == 1 and row[1] & 1 and row[3] <= target < row[3] + row[5]
                    for row in segments) for target in targets):
         raise ValueError("observer constructor does not resolve to executable code")
     if entry_sha.encode("ascii") not in content:

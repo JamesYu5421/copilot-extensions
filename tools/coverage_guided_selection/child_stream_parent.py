@@ -3,6 +3,7 @@
 import os
 import sys
 import time
+import threading
 
 if "_cgs_child_stream" in sys.modules:
     _runtime = sys.modules["_cgs_child_stream"]
@@ -19,6 +20,8 @@ _contexts = {}
 _inventory = {}
 _nonce = None
 _helpers = {}
+_guard_active = False
+_guard_arming = False
 
 
 def source_inventory(mapping):
@@ -49,7 +52,7 @@ def manifest_text(*, nonce, context, directory, inventory):
         VERSION, nonce, context, str(directory).encode().hex(), root.encode().hex(),
     ])
     rows = [header] + [
-        f"{identifier}\t{row['lines']}\t{row['installed'].encode().hex()}"
+        f"{identifier}\t{row['lines']}\t{row['installed'].encode().hex()}\t{row['sha256']}"
         for identifier, row in sorted(inventory.items(), key=lambda item: int(item[0]))
     ]
     return "\n".join(rows) + "\n"
@@ -175,13 +178,42 @@ def merge_coverage(parent, child):
 
 
 def configure_parent(control, python, nonce, inventory, helpers):
-    global _control, _nonce, _inventory, _helpers
+    global _control, _nonce, _inventory, _helpers, _guard_active, _guard_arming
     _control, _nonce = control, nonce
     _helpers = helpers
     _inventory = {int(identifier): row for identifier, row in inventory.items()}
     for name in ("COVERAGE_PROCESS_START", "COVERAGE_PROCESS_CONFIG"):
         os.environ.pop(name, None)
     _auditor().install(control, python, nonce)
+    if sys.getprofile() is not None or threading.getprofile() is not None:
+        raise ValueError("parent executable-source guard requires an unclaimed profile hook")
+    _runtime._prepare_sources({
+        row["installed"]: (identifier, row["lines"], row["sha256"])
+        for identifier, row in _inventory.items()
+    })
+    root = os.path.commonpath([os.path.dirname(row["installed"]) for row in _inventory.values()])
+    _runtime._root = os.path.normcase(root + os.sep)
+    _runtime._package = os.path.basename(root)
+    sys.addaudithook(_profile_event)
+    _guard_active = _guard_arming = True
+    try:
+        threading.setprofile(_profile)
+        sys.setprofile(_profile)
+    finally:
+        _guard_arming = False
+
+
+def _profile(frame, event, arg):
+    if event == "call":
+        _runtime._frame_source(frame)
+
+
+def _profile_event(event, args):
+    if _guard_active and not _guard_arming and event == "sys.setprofile":
+        caller = sys._getframe(1)
+        if (caller.f_code is not threading.Thread._bootstrap_inner.__code__
+                or threading.getprofile() is not _profile):
+            _auditor().error("parent executable-source guard was replaced")
 
 
 def register_context(node):
@@ -200,8 +232,15 @@ def register_context(node):
 
 
 def finish_parent():
+    global _guard_active
     import hashlib
     from pathlib import Path
+    if _guard_active:
+        if sys.getprofile() is not _profile or threading.getprofile() is not _profile:
+            _auditor().error("parent executable-source guard was replaced")
+        _guard_active = False
+        sys.setprofile(None)
+        threading.setprofile(None)
     if any(hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected
            for path, expected in _helpers.items()):
         raise ValueError("child instrumentation source changed")

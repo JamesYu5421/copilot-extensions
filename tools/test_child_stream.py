@@ -15,6 +15,7 @@ def test_child_runtime_has_only_runtime_functions_and_parent_reuses_constants():
     names={node.name for node in ast.parse(Path(runtime.__file__).read_text()).body
            if isinstance(node,ast.FunctionDef)}
     assert names=={"_phase","_auditor","_write","_fail","_source","_frame_source",
+                   "_code_tree","_prepare_sources",
                    "_line","_call","_after_fork","start"}
     assert stream._auditor is runtime._auditor
     assert (stream.ENV,stream.VERSION,stream.MAX_RECORDS,stream.MAX_MANIFEST)==(
@@ -46,8 +47,8 @@ def test_sparse_seen_fast_path_only_publishes_committed_records(monkeypatch):
     stream = runtime
     import threading
     from types import SimpleNamespace
-    frame=SimpleNamespace(f_lineno=2,f_code=SimpleNamespace(co_filename="source.py"))
-    monkeypatch.setattr(stream,"_source",lambda name:(1,3))
+    frame=SimpleNamespace(f_lineno=2)
+    monkeypatch.setattr(stream,"_frame_source",lambda frame:(1,3))
     monkeypatch.setattr(stream,"_failed",False)
     monkeypatch.setattr(stream,"_seen",set())
     monkeypatch.setattr(stream,"_lock",threading.Lock())
@@ -73,7 +74,9 @@ def test_distinct_actual_code_objects_do_not_alias_shared_string_filename(monkey
     from types import SimpleNamespace
     first=compile("first=1\n","<string>","exec",dont_inherit=True)
     second=compile("second=2\n","<string>","exec",dont_inherit=True)
-    monkeypatch.setattr(runtime,"_code_sources",{id(first):(500,1),id(second):(501,1)})
+    monkeypatch.setattr(runtime,"_code_sources",{
+        id(first):(first,(500,1)),id(second):(second,(501,1)),
+    })
     monkeypatch.setattr(runtime,"_sources",{})
     monkeypatch.setattr(runtime,"_root","owned-source-root/")
     assert runtime._frame_source(SimpleNamespace(f_code=first))==(500,1)
@@ -102,6 +105,50 @@ def test_owned_package_shadow_cannot_be_a_successful_zero_hit_producer(monkeypat
     assert len(failures) == 1
 
 
+@pytest.mark.parametrize("stale", [False, True])
+def test_executed_code_requires_verified_source_tree_and_strong_identity(tmp_path, monkeypatch, stale):
+    import hashlib
+    from types import SimpleNamespace
+
+    source = tmp_path / "source.py"
+    canonical = b"def value():\n    return 22\n"
+    source.write_bytes(canonical)
+    failures = []
+    for key, value in (("_sources", {}), ("_expected_codes", {}), ("_code_sources", {}),
+                       ("_root", ""), ("_package", "")):
+        monkeypatch.setattr(runtime, key, value)
+    monkeypatch.setattr(child_audit, "error", failures.append)
+    runtime._prepare_sources({str(source): (1, 2, hashlib.sha256(canonical).hexdigest())})
+    code = compile(canonical.replace(b"22", b"11") if stale else canonical,
+                   str(source), "exec", dont_inherit=True)
+    nested = next(value for value in code.co_consts if isinstance(value, type(code)))
+    # A cache entry for another object cannot license this frame, even at its id.
+    runtime._code_sources[id(nested)] = (code, (999, 999))
+    result = runtime._frame_source(SimpleNamespace(f_code=nested))
+    assert result == (None if stale else (1, 2))
+    assert bool(failures) is stale
+    assert runtime._code_sources[id(nested)][0] is nested
+    assert runtime._frame_source(SimpleNamespace(f_code=nested)) == result
+    assert len(failures) == int(stale)
+    source.write_bytes(canonical.replace(b"22", b"11"))
+    with pytest.raises(ValueError, match="source differs"):
+        runtime._prepare_sources({str(source): (1, 2, hashlib.sha256(canonical).hexdigest())})
+
+
+def test_parent_guard_replacement_is_reported_without_application_exception(monkeypatch):
+    from types import SimpleNamespace
+
+    failures = []
+    monkeypatch.setattr(stream, "_guard_active", True)
+    monkeypatch.setattr(stream, "_guard_arming", False)
+    monkeypatch.setattr(stream, "_auditor", lambda: SimpleNamespace(error=failures.append))
+    stream._profile_event("sys.setprofile", ())
+    assert failures == ["parent executable-source guard was replaced"]
+    monkeypatch.setattr(stream, "_guard_arming", True)
+    stream._profile_event("sys.setprofile", ())
+    assert len(failures) == 1
+
+
 def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evidence, monkeypatch):
     from types import SimpleNamespace
 
@@ -111,7 +158,8 @@ def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evide
     events = []
     monkeypatch.setenv(runtime.ENV, str(control / "manifests" / ("b" * 64 + ".manifest")))
     monkeypatch.setenv("_CGS_PRELUDE_NS", "1000")
-    for key, value in (("_started", False), ("_sources", {}), ("_package", ""), ("_root", ""), ("_fd", None)):
+    for key, value in (("_started", False), ("_sources", {}), ("_expected_codes", {}),
+                       ("_package", ""), ("_root", ""), ("_fd", None)):
         monkeypatch.setattr(runtime, key, value)
     monkeypatch.setattr(runtime, "_write", lambda data: events.append(("write", data)))
     original_trace = lambda _function: events.append(("thread-trace", None))
@@ -137,6 +185,110 @@ def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evide
     assert names.index("process-trace") < names.index("endpoint")
     writes = [data for name, data in events if name == "write"]
     assert writes[-1] == b"\0\0" + (10).to_bytes(4, "big")
+
+
+@pytest.mark.skipif(
+    os.environ.get("CGS_RUN_STANDALONE_INTEGRATION") != "1",
+    reason="real parent/child importer matrix belongs to deliberate native qualification",
+)
+@pytest.mark.parametrize("stale", [False, True])
+@pytest.mark.parametrize("location", ["parent", "child"])
+@pytest.mark.parametrize("optimization", ["", "-O", "-OO"])
+def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
+    tmp_path, stale, location, optimization,
+):
+    """Exercise the real driver and importer, not a synthetic filename-only frame."""
+    import hashlib
+    import json
+    import struct
+    import subprocess
+    import sys
+    from pathlib import Path
+    from tools.coverage_guided_selection import standalone
+
+    package = tmp_path / "fixture_package"
+    package.mkdir()
+    (package / "__init__.py").write_bytes(b"")
+    source = package / "source.py"
+    old = b"def value():\n    return 11\n"
+    canonical = b"def value():\n    return 22\n"
+    source.write_bytes(old if stale else canonical)
+    timestamp = source.stat().st_mtime_ns
+    level = {"": 0, "-O": 1, "-OO": 2}[optimization]
+    flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    compiled = subprocess.run(
+        [sys.executable, "-I", "-c",
+         "import py_compile,sys;print(py_compile.compile(sys.argv[1],doraise=True,"
+         "invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP,optimize=int(sys.argv[2])))",
+         str(source), str(level)],
+        capture_output=True, text=True, timeout=20, **flags,
+    )
+    assert compiled.returncode == 0, compiled.stderr
+    cache = Path(compiled.stdout.strip())
+    source.write_bytes(canonical)
+    os.utime(source, ns=(timestamp, timestamp))
+    header = cache.read_bytes()[:16]
+    assert struct.unpack("<III", header[4:]) == (0, int(source.stat().st_mtime), len(canonical))
+    expected_hash = hashlib.sha256(canonical).hexdigest()
+    sandbox = tmp_path / "collection"
+    sandbox.mkdir()
+    mapping = {
+        str(path): "fixture_package/" + path.name for path in package.glob("*.py")
+    }
+    _, options = standalone.coverage_files(sandbox, mapping)
+    driver = sandbox / "driver.py"
+    driver.write_text(standalone._DRIVER_SCRIPT, encoding="utf-8")
+    child_program = (
+        f"import sys;sys.path[:0]=[{str(tmp_path)!r},{str(sandbox)!r}];"
+        "import _cgs_child_audit,_cgs_child_stream;"
+        f"_cgs_child_stream.start({options['child_stream_control']!r});"
+        "from fixture_package.source import value;print(value())"
+    )
+    test = sandbox / "test_consumer.py"
+    prefix = f"import sys;sys.path.insert(0,{str(tmp_path)!r})\n"
+    if location == "child":
+        body = (
+            " import subprocess\n"
+            f" result=subprocess.run([sys.executable,'-I',*{[optimization] if optimization else []!r},"
+            f"'-c',{child_program!r}],capture_output=True,text=True,timeout=20,"
+            f"**{flags!r})\n"
+            " assert result.returncode==0,result.stderr\n"
+            f" assert result.stdout.strip()=={str(11 if stale else 22)!r}\n"
+        )
+    else:
+        body = (
+            " from fixture_package.source import value\n"
+            f" assert value()=={11 if stale else 22}\n"
+            # A real thread must retain the same guard without a false replacement.
+            " import threading\n"
+            " thread=threading.Thread(target=value);thread.start();thread.join()\n"
+        )
+    test.write_text(prefix + "def test_consumer():\n" + body, encoding="utf-8")
+    output = sandbox / "result.json"
+    report = sandbox / "report.json"
+    command = [
+        sys.executable, "-I", *([optimization] if optimization else []),
+        str(driver), json.dumps([str(test)]), str(package), str(tmp_path),
+        str(sandbox / ".coverage"), str(report), str(output), str(sandbox / "p"),
+        json.dumps({"installed_source": str(package), "source_mapping": mapping, **options}),
+    ]
+    environment = dict(os.environ)
+    for name in ("PYTEST_ADDOPTS", "_CGS_CHILD_MANIFEST", "_CGS_CHILD_AUDITOR",
+                 "COVERAGE_PROCESS_START", "COVERAGE_PROCESS_CONFIG"):
+        environment.pop(name, None)
+    result = subprocess.run(command, env=environment, capture_output=True, text=True,
+                            timeout=40, **flags)
+    assert json.loads(report.read_text())["summary"].get("passed") == 1, result.stdout + result.stderr
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == expected_hash
+    if stale:
+        assert result.returncode != 0 and not output.exists(), result.stdout + result.stderr
+        errors = [json.loads(path.read_text()) for path in
+                  (sandbox / "child-lines" / "audit").glob("*.error")]
+        assert any("executed code differs" in row["reason"] for row in errors), errors
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        data = json.loads(output.read_text())
+        assert data["coverage"]["fixture_package/source.py"]["2"]
 
 @pytest.mark.parametrize("corruption",["collision","foreign-path","wrong-hash","fake-canonical"])
 def test_generated_source_extension_identity_is_strict(evidence,corruption):

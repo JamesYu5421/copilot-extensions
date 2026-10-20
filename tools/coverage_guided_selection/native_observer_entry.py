@@ -137,7 +137,9 @@ def native_source_event(event, args, origin, offset):
                     generated_ids[identifier] = digest
                     for actual_code in code_tree(code):
                         generated_code_refs[id(actual_code)] = actual_code
-                        stream._code_sources[id(actual_code)] = (identifier, len(content.splitlines()))
+                        stream._code_sources[id(actual_code)] = (
+                            actual_code, (identifier, len(content.splitlines())),
+                        )
                     record.update(generated_source_admitted=True, source_id=identifier)
         os.write(source_event_fd, (json.dumps(record) + "\n").encode("utf-8"))
         break
@@ -163,6 +165,10 @@ def source_check(event, args):
         if actual != code:
             raise ValueError("SDK executable code differs from canonical source bytes")
         stream._sources[filename] = (expected["id"], expected["lines"])
+        for actual_code in code_tree(code):
+            stream._code_sources[id(actual_code)] = (
+                actual_code, (expected["id"], expected["lines"]),
+            )
     except Exception as error:
         auditor.error("native SDK code/source identity refused: " + type(error).__name__)
 

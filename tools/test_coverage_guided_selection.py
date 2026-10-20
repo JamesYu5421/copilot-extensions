@@ -57,7 +57,7 @@ from tools.coverage_baseline_chunk_contract import (
     test_real_parallel_matches_serial_contexts_tiers_and_fixture_phases as test_real_parallel_matches_serial_contexts_tiers_and_fixture_phases,
     test_two_workers_overlap_without_reordering_or_queuing_extra_work as test_two_workers_overlap_without_reordering_or_queuing_extra_work,
     test_workers_share_one_unchanged_containment_budget as test_workers_share_one_unchanged_containment_budget,
-    test_workflow_keeps_deadline_enrollment_and_only_two_heavy_opt_ins as test_workflow_keeps_deadline_enrollment_and_only_two_heavy_opt_ins,
+    test_coverage_collection_is_independent_of_source_promotion as test_coverage_collection_is_independent_of_source_promotion,
 )
 from tools.test_coverage_standalone import TestStandaloneCoverage  # noqa: E402,F401
 from tools.test_child_stream import (  # noqa: E402,F401
@@ -66,6 +66,9 @@ from tools.test_child_stream import (  # noqa: E402,F401
     test_staged_parent_source_is_byte_exact_and_end_checked,
     test_sparse_seen_fast_path_only_publishes_committed_records,
     test_distinct_actual_code_objects_do_not_alias_shared_string_filename,
+    test_executed_code_requires_verified_source_tree_and_strong_identity,
+    test_parent_guard_replacement_is_reported_without_application_exception,
+    test_real_timestamp_valid_bytecode_is_bound_to_executed_source,
     test_generated_source_extension_identity_is_strict,
     test_interpreter_options_do_not_exempt_site_disabled_code,
     test_verified_records_merge_without_replacing_parent_evidence,

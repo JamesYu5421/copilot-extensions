@@ -4,13 +4,15 @@ The parent owns source equivalence, context identities, bounds and schema-v3
 merging. This module grants no baseline publication or selection authority.
 """
 
+import hashlib
 import os
 import sys
 import threading
 import time
+from types import CodeType
 
 ENV = "_CGS_CHILD_MANIFEST"
-VERSION = "CGS-LINES/2"
+VERSION = "CGS-LINES/3"
 MAX_RECORDS = 100_000
 MAX_MANIFEST = 65_536
 _started = False
@@ -20,6 +22,7 @@ _seen = set()
 _lock = threading.Lock()
 _sources = {}
 _code_sources = {}
+_expected_codes = {}
 _root = ""
 _package = ""
 _control = None
@@ -71,12 +74,43 @@ def _source(filename):
     return value
 
 
+def _code_tree(code):
+    yield code
+    for value in code.co_consts:
+        if isinstance(value, CodeType):
+            yield from _code_tree(value)
+
+
+def _prepare_sources(inventory):
+    """Bind executable code before tracing, inside the caller's setup clock."""
+    for filename, (identifier, maximum, digest) in inventory.items():
+        with open(filename, "rb") as source:
+            content = source.read()
+        if hashlib.sha256(content).hexdigest() != digest:
+            raise ValueError("executable source differs from verified source inventory")
+        reference = compile(content, filename, "exec", dont_inherit=True,
+                            optimize=sys.flags.optimize)
+        key = os.path.normcase(filename)
+        _sources[filename] = _sources[key] = (identifier, maximum)
+        _expected_codes[key] = frozenset(_code_tree(reference))
+
+
 def _frame_source(frame):
-    source = _code_sources.get(id(frame.f_code)) or _source(frame.f_code.co_filename)
+    code = frame.f_code
+    cached = _code_sources.get(id(code))
+    if cached is not None and cached[0] is code:
+        return cached[1]
+    source = _source(code.co_filename)
+    if source is not None and code not in _expected_codes.get(os.path.normcase(code.co_filename), ()):
+        _auditor().error("executed code differs from verified source inventory")
+        source = None
     if source is None and _package:
         module = getattr(frame, "f_globals", {}).get("__name__", "")
         if isinstance(module, str) and (module == _package or module.startswith(_package + ".")):
             _auditor().error("owned package executed outside verified source inventory")
+    if source is not None or os.path.normcase(code.co_filename) in _expected_codes:
+        # Retain the object itself: recycled ids must never inherit an attribution.
+        _code_sources[id(code)] = (code, source)
     return source
 
 
@@ -155,19 +189,21 @@ def start(control):
         raise ValueError("unowned child stream directory")
     _root = os.path.normcase(root)
     _package = os.path.basename(root.rstrip("/\\"))
-    identifiers = set()
+    identifiers, filenames, inventory = set(), set(), {}
     for row in rows[1:]:
-        identifier, maximum, filename = row.split("\t")
+        identifier, maximum, filename, digest = row.split("\t")
         identifier, maximum = int(identifier), int(maximum)
         filename = bytes.fromhex(filename).decode("utf-8")
         if (
             not 0 < identifier < 65535 or maximum < 0 or not filename.startswith(root)
-            or identifier in identifiers or filename in _sources
+            or identifier in identifiers or os.path.normcase(filename) in filenames
+            or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)
         ):
             raise ValueError("invalid child source bounds")
         identifiers.add(identifier)
-        _sources[filename] = (identifier, maximum)
-        _sources[os.path.normcase(filename)] = (identifier, maximum)
+        filenames.add(os.path.normcase(filename))
+        inventory[filename] = (identifier, maximum, digest)
+    _prepare_sources(inventory)
     if not _sources:
         raise ValueError("empty child coverage source map")
     _phase("source-map-ready")
