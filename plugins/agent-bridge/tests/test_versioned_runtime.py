@@ -478,7 +478,10 @@ def test_list_versions_sorted(tmp_path):
 
 @pytest.mark.parametrize("old,new", [
     ("1.0.0-dev2+base", "1.0.0+base"),
+    ("1.0.0.dev2+base", "1.0.0+base"),
     ("1.0.0-dev10+provider-exec", "1.0.0"),
+    ("1.0.0.dev10+provider-exec", "1.0.0"),
+    ("1.0.0.dev9", "1.0.0.dev10"),
     ("1.0.0+provider-exec", "1.0.1-dev1+base"),
 ])
 def test_profiled_recovery_orders_package_version_before_qualifier(tmp_path, old, new):
@@ -1118,6 +1121,31 @@ def test_windows_gc_reclaims_junction_slot_under_nonzero_min_age(tmp_path):
 # ---------------------------------------------------------------------------
 # fingerprint_source / check_admission (phase-3-runtime-admission, #5472/#5788)
 # ---------------------------------------------------------------------------
+
+def test_fingerprint_explicit_files_label_linearly_without_changing_digest(tmp_path, monkeypatch):
+    import hashlib
+
+    files = []
+    expected = hashlib.sha256()
+    for number in range(32):
+        path = tmp_path / f"{number:02}.py"
+        path.write_bytes(f"VALUE = {number}\n".encode())
+        files.append(path)
+        for value in (f"{path.name}/.".encode(), b"file", path.read_bytes()):
+            expected.update(len(value).to_bytes(8, "big") + value)
+    relative_to = Path.relative_to
+    calls = 0
+
+    def count_relative_to(path, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return relative_to(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "relative_to", count_relative_to)
+    assert vr.fingerprint_source(files) == expected.hexdigest()
+    assert calls < 10 * len(files)
+    assert vr.fingerprint_source([tmp_path, *reversed(files)]) == expected.hexdigest()
+
 
 def test_fingerprint_source_is_stable_for_identical_content(tmp_path):
     src = tmp_path / "src"
