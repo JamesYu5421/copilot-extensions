@@ -86,60 +86,60 @@ Detailed design, sequence and validation below are **agent-recommended**.
 ## Plan
 
 ### Phase 0 - Review the finite qualification contract
-- [ ] Land this plan through ordinary current-head review and merge.
-- [ ] Preserve the completed predecessor and record the admitted native venue
+- [x] Land this plan through ordinary current-head review and merge.
+- [x] Preserve the completed predecessor and record the admitted native venue
   and exact source ownership without publishing private inventory.
 
 ### Phase 1 - Explicit native architecture selection
-- [ ] Add explicit bounded amd64/ARM64 selection to the existing runner,
+- [x] Add explicit bounded amd64/ARM64 selection to the existing runner,
   retaining amd64 as its unchanged default and refusing unknown selections.
-- [ ] Require selected architecture, native Linux engine, built image and actual
+- [x] Require selected architecture, native Linux engine, built image and actual
   installed-process architecture agreement. Normalize documented aliases only;
   do not infer native execution from Buildx platform advertisement or image tags.
-- [ ] Make build platform, source/image receipts, pre-execution state and final
-  report truthful for either architecture. Mismatch fails without a PASS or
+- [x] Make build platform, source/image receipts, pre-execution state and final
+  report truthful for either architecture. Mismatch fails without a native-execution PASS or
   network/service composition; failed cleanup cannot become successful proof.
-- [ ] Keep any new helper in the exact Git source closure, preserving canonical
+- [x] Keep any new helper in the exact Git source closure, preserving canonical
   build resources and the existing command/resource/credential boundaries.
-- [ ] Add focused regression coverage and update the existing witness/image/
+- [x] Add focused regression coverage and update the existing witness/image/
   readiness documentation without growing unconditional CI integration lanes.
 
 ### Phase 2 - Actual native qualification
-- [ ] Run the exact committed candidate on the admitted native amd64 engine,
+- [x] Run the exact committed candidate on the admitted native amd64 engine,
   checking the existing default and all assembled contract stages.
-- [ ] Execute the same committed candidate on the explicitly admitted native
+- [x] Execute the same committed candidate on the explicitly admitted native
   ARM64 venue, with installed wheel and actual Gateway/two-service behavior.
-- [ ] Inspect architecture, source/image and stable Gateway process receipts,
+- [x] Inspect architecture, source/image and stable Gateway process receipts,
   all ten stage outcomes and exact-owned cleanup on each venue. Retain private
   results and publish only a generic, non-secret conclusion.
-- [ ] Preserve truthful failures; do not install emulation, weaken deadlines,
+- [x] Preserve truthful failures; do not install emulation, weaken deadlines,
   touch unrelated workloads or claim a live target ready to force completion.
 
 ### Completion
 - [ ] Resolve every Plan/Validation item or transfer a concrete residual to a
   named tracked objective before marking Done and archiving.
-- [ ] Promote durable architecture truth into the living readiness docs, retaining
+- [x] Promote durable architecture truth into the living readiness docs, retaining
   #7257 provider/live-edge gates and existing lifecycle/deployment ownership.
 - [ ] Merge the implementation and completion record, settle owned remote/local
   resources, release effort focus and finalize the source worktree.
 
 ## Validation Plan
 
-- [ ] **Selection:** default amd64 compatibility, explicit amd64/ARM64 and
+- [x] **Selection:** default amd64 compatibility, explicit amd64/ARM64 and
   supported aliases, unsupported platforms/OS and wrong-engine refusal.
-- [ ] **Build:** selected native platform reaches the Docker build; wrong
+- [x] **Build:** selected native platform reaches the Docker build; wrong
   image architecture, OS or source revision refuses before service composition.
-- [ ] **Execution:** installed process machine/platform must match the selected
+- [x] **Execution:** installed process machine/platform must match the selected
   native architecture before native execution is reported.
-- [ ] **Custody:** exact-source helpers and canonical resources remain complete;
+- [x] **Custody:** exact-source helpers and canonical resources remain complete;
   existing source/argv/private-results/deadline/termination/cleanup guards pass.
-- [ ] **Native amd64:** actual assembled API/HTML/SSE, policy, role/caller denial,
+- [x] **Native amd64:** actual assembled API/HTML/SSE, policy, role/caller denial,
   replacement, restart/reconnect and revocation pass under stable Gateway identity.
-- [ ] **Native ARM64:** the same real assembled assertions pass on native ARM64,
+- [x] **Native ARM64:** the same real assembled assertions pass on native ARM64,
   not emulation, with source/image/process evidence and complete exact-ID cleanup.
 - [ ] **Contribution:** focused bounded tests, lint, relevant repository guards,
   complete current-head review and actual merge cover the changed source.
-- [ ] **Boundary:** no production identity, key, DNS, Access, firewall, service,
+- [x] **Boundary:** no production identity, key, DNS, Access, firewall, service,
   enrollment or deployment change is included or implied.
 
 ## Proposal
@@ -167,3 +167,42 @@ revision custody and real adoption remain separately tracked.
   operator approved the canonical slug and bounded synthetic execution scope.
 - Reused and synchronized the owned source worktree. Native witness code and
   proof execution remain pending this plan's review; no runtime was deployed.
+
+### 2026-10-20 - Plan reviewed; native selection implementation
+- Plan PR #7390 merged as `f3d585d79d0955bd788f14501e81e74b1bc5424b`
+  after exact-head Copilot approval and successful required CI.
+- Re-read the canonical effort and selected Phase 1. Extend only the existing
+  witness's native architecture contract and its exact-source closure; real
+  amd64/ARM64 proof and implementation review remain pending.
+- Added explicit selection and engine/image/installed-process agreement with
+  pre-execution `UNRUN` receipts and value-free wrong-architecture refusals.
+  The new helper is part of the fixed Git-only witness source closure.
+- The focused native-selection and retained runner/probe portfolio passes
+  eighty-eight cases. Lint, install-contract and documentation consistency
+  guards pass. These are mechanical guards, not native execution evidence.
+
+### 2026-10-20 - Exact-source amd64 proof; ARM64 qualification assigned
+- Candidate `7a6e0614034814708297935660866b8e3eb7186d` passed all ten
+  assembled stages on native Linux amd64. Selected architecture, engine,
+  inspected image and installed process agreed; seven Gateway identity samples
+  were identical and exact-owned cleanup completed without errors.
+- Assigned that same committed candidate to the explicitly admitted native
+  ARM64 qualifier. Retained allocation and conversation identity through a
+  supported startup-registration recovery; durable task admission is not
+  proof execution. Actual ARM64 receipts remain pending.
+- Private run results and image IDs stay with the executing owners. No
+  production configuration, identity enrollment or runtime deployment changed.
+
+### 2026-10-20 - Native ARM64 proof independently verified
+- The same candidate passed all ten stages on an actual Linux/aarch64 engine,
+  with an inspected ARM64 image and noneditable installed wheel. Engine, image
+  and installed-process architecture agreed; no emulation was used.
+- The coordinator independently verified report/receipt hashes, exact source
+  and source-manifest custody, retained image identity/revision, unfinished
+  backend SSE and all stage outcomes. Seven Gateway identity samples matched.
+  All six receipted containers and the one receipted network were independently
+  confirmed absent; cleanup was complete with no errors.
+- Updated the living readiness and image qualification boundaries for both
+  native architectures. Implementation review/merge and final resource
+  settlement remain open; provider/live-edge, lifecycle and adoption owners
+  retain their existing gates.
