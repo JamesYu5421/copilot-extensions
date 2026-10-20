@@ -175,7 +175,7 @@ def test_generated_identity_requires_proven_emitter_owner_and_executed_bytes(tmp
     ):
         monkeypatch.setattr(runtime, key, value)
     monkeypatch.setattr(child_audit, "error", failures.append)
-    monkeypatch.setattr(runtime.sys, "_getframe", lambda depth: emitter)
+    monkeypatch.setattr(runtime.sys, "_getframe", lambda depth: SimpleNamespace(f_back=emitter))
     content = "def method():\n    return 22\n"
     runtime._generated_event("compile", (content, "<string>"))
     actual = compile(content, "<string>", "exec", dont_inherit=True)
@@ -192,6 +192,9 @@ def test_generated_identity_requires_proven_emitter_owner_and_executed_bytes(tmp
     emitter.f_back = None
     other = compile(content.replace("22", "33"), "<string>", "exec", dont_inherit=True)
     runtime._generated_event("compile", (content.replace("22", "33"), "<string>"))
+    runtime._generated_event("exec", (other,))
+    assert id(other) not in runtime._code_sources
+    monkeypatch.setattr(runtime.sys, "_getframe", lambda depth: SimpleNamespace(f_back=None))
     runtime._generated_event("exec", (other,))
     assert id(other) not in runtime._code_sources
 
@@ -282,6 +285,32 @@ def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evide
     assert names.index("thread-profile") < names.index("process-profile") < names.index("endpoint")
     writes = [data for name, data in events if name == "write"]
     assert writes[-1] == b"\0\0" + (10).to_bytes(4, "big")
+
+
+@pytest.mark.skipif(
+    os.environ.get("CGS_RUN_STANDALONE_INTEGRATION") != "1",
+    reason="real parent/child importer matrix belongs to deliberate native qualification",
+)
+def test_generated_audit_guard_preserves_native_first_main_execution(tmp_path):
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    (tmp_path / "sitecustomize.py").write_text(
+        "from tools.coverage_guided_selection import child_stream\n"
+        "child_stream._install_generated_guard()\n",
+        encoding="utf-8",
+    )
+    environment = dict(os.environ, PYTHONPATH=os.pathsep.join([str(tmp_path), str(root)]))
+    for name in (runtime.ENV, child_audit.OWNER):
+        environment.pop(name, None)
+    result = subprocess.run(
+        [sys.executable, "-c", "print('native main reached')"], env=environment,
+        capture_output=True, text=True, timeout=20,
+        **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
+    )
+    assert result.returncode == 0 and result.stdout.strip() == "native main reached", result.stderr
 
 
 @pytest.mark.skipif(

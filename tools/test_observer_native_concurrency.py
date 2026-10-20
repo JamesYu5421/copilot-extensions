@@ -34,7 +34,7 @@ def test_python_generated_guard_preserves_actual_native_dispatch_mapping(tmp_pat
         ("_code_sources", {}), ("_sources", {}), ("_root", ""), ("_package", "fixture_package"),
     ):
         monkeypatch.setattr(stream, key, value)
-    monkeypatch.setattr(stream.sys, "_getframe", lambda depth: frame)
+    monkeypatch.setattr(stream.sys, "_getframe", lambda depth: SimpleNamespace(f_back=frame))
     (tmp_path / "generated").mkdir()
     entry = Path(build.__file__).with_name("native_observer_entry.py")
     functions = [node for node in ast.parse(entry.read_text()).body

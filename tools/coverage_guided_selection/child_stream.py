@@ -127,8 +127,8 @@ def _generated_event(event, args):
     global _generated_busy, _generated_count
     if not _generated_active or _generated_busy or event not in {"compile", "exec"}:
         return
-    emitter = sys._getframe(1)
-    if emitter.f_code not in _generator_codes:
+    emitter = sys._getframe(0).f_back
+    if emitter is None or emitter.f_code not in _generator_codes:
         return
     owner = emitter.f_back
     while owner is not None:

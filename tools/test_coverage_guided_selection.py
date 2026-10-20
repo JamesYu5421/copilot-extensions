@@ -69,6 +69,7 @@ from tools.test_child_stream import (  # noqa: E402,F401
     test_executed_code_requires_verified_source_tree_and_strong_identity,
     test_parent_guard_replacement_is_reported_without_application_exception,
     test_generated_identity_requires_proven_emitter_owner_and_executed_bytes,
+    test_generated_audit_guard_preserves_native_first_main_execution,
     test_low_level_thread_refusal_preserves_call_and_catches_cached_parent_alias,
     test_child_thread_profile_preserves_then_stops_only_prior_diagnostic_callbacks,
     test_real_timestamp_valid_bytecode_is_bound_to_executed_source,

@@ -43,8 +43,11 @@ Dataclass-generated methods are admitted only after matching the actual
 standard-library emitter and a verified owning-source frame, pairing its
 compile/exec events, and comparing the executing generated code tree with those
 observed bytes. These exact objects do not invent fixed repository coordinates;
-unrelated `<string>` code still fails owned-package verification. Temporary
-removal of the parent thread-profile hook invalidates collection even if restored.
+unrelated `<string>` code still fails owned-package verification. Native audit
+events can have no Python emitter frame; those are not verified generator
+candidates, and must not prevent ordinary interpreter entry. Fixed-source
+verification remains active. Temporary removal of the parent thread-profile
+hook invalidates collection even if restored.
 Direct low-level thread starts are an unsupported lifecycle: they still run
 normally, but invalidate collection instead of silently omitting their execution.
 The child also observes C-call starts through a monitored process/thread
