@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from agent_worktrees import config as cfg
 from agent_worktrees import reconcile
 
 MKT = reconcile.MARKETPLACE
@@ -684,6 +685,146 @@ def test_machine_gated_disallowed_machine(env):
         env.repo, machine="host-book2", cache={}, save=False
     )
     assert _services(plan, phase="runtime") == set()
+
+
+@pytest.mark.parametrize("platform", ["windows", "wsl"])
+@pytest.mark.parametrize("allowed", [False, True])
+def test_machine_gate_uses_physical_host_without_changing_execution_id(
+    env: Any, monkeypatch: pytest.MonkeyPatch, platform: str, allowed: bool,
+) -> None:
+    env.write_settings({f"agent-bridge@{MKT}": True})
+    env.install_payload("agent-bridge", "3.0.0", scope="machine-gated")
+    env.deploy_runtime("agent-bridge", "2.0.0")
+    (env.repo / "machines.yaml").write_text(json.dumps({
+        "machines": {
+            "custom-execution": {
+                "execution_platform": platform,
+                "physical_host": "physical-host-wsl",
+                "hostname": "Independent-Hostname",
+            },
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(cfg, "detect_platform", lambda: platform)
+    env.write_gate({"agent-bridge": [
+        "physical-host-wsl" if allowed else "foreign-host",
+    ]})
+
+    plan = reconcile.build_plan(
+        env.repo, machine="custom-execution", cache={}, save=False,
+    )
+    assert _services(plan, phase="runtime") == ({"agent-bridge"} if allowed else set())
+    assert plan["machine"] == "custom-execution"
+
+
+@pytest.mark.parametrize("resident_project", [None, "unrelated-project"])
+@pytest.mark.parametrize("registry_location", ["repository", "knowledge", "machine"])
+@pytest.mark.parametrize("linked", [False, True])
+def test_deferred_runtime_admission_uses_target_project_without_ambient_state(
+    env: Any, monkeypatch: pytest.MonkeyPatch, resident_project: str | None,
+    registry_location: str, linked: bool,
+) -> None:
+    from types import SimpleNamespace
+    import threading
+
+    from agent_worktrees import __main__ as main, front_door_cli, state_root
+    from agent_procutil import no_window_kwargs
+
+    env.write_settings({f"agent-bridge@{MKT}": True})
+    env.install_payload("agent-bridge", "3.0.0", scope="machine-gated")
+    env.deploy_runtime("agent-bridge", "2.0.0")
+    env.write_gate({"agent-bridge": ["physical-host"]})
+    launch_dir = env.repo
+    if linked:
+        for args in (
+            ["init", "-q"],
+            ["-c", "user.name=Test", "-c", "user.email=test@example.com",
+             "commit", "--allow-empty", "-qm", "Synthetic anchor"],
+            ["worktree", "add", "--detach", "--no-checkout", str(env.home / "linked"), "HEAD"],
+        ):
+            subprocess.run(
+                ["git", "-C", str(env.repo), *args], check=True,
+                capture_output=True, timeout=10, **no_window_kwargs(),
+            )
+        launch_dir = env.home / "linked"
+        shutil.copytree(env.repo / ".github", launch_dir / ".github")
+        shutil.copyfile(env.repo / "external-repos.yaml", launch_dir / "external-repos.yaml")
+        env.write_gate({"agent-bridge": ["foreign-host"]})
+        assert front_door_cli._git_toplevel(launch_dir) == env.repo
+    knowledge = env.home / "knowledge"
+    knowledge.mkdir()
+    if registry_location == "machine":
+        registry = cfg.project_dir("target-project") / cfg.INREPO_CONFIG_DIRNAME
+        registry.mkdir(parents=True)
+        foreign_registry = cfg.project_dir("unrelated-project") / cfg.INREPO_CONFIG_DIRNAME
+        foreign_registry.mkdir(parents=True)
+        (foreign_registry / "machines.yaml").write_text(json.dumps({
+            "machines": {"custom-execution": {
+                "execution_platform": "wsl", "physical_host": "foreign-host",
+            }},
+        }), encoding="utf-8")
+    else:
+        registry = knowledge if registry_location == "knowledge" else env.repo
+    (registry / "machines.yaml").write_text(json.dumps({
+        "machines": {"custom-execution": {
+            "execution_platform": "wsl", "physical_host": "physical-host",
+        }},
+    }), encoding="utf-8")
+    config = cfg.Config(
+        srcroot=str(env.home), machine="custom-execution", platform="wsl",
+        repo_name="target-project", configured_machine="custom-execution",
+        knowledge_repo="knowledge" if registry_location == "knowledge" else "",
+        repos={"target-project": cfg.RepoConfig(
+            anchor=str(env.repo), worktree_root=str(env.home / "trees"),
+            stateless=registry_location == "knowledge",
+        )},
+    )
+    monkeypatch.setattr(cfg, "detect_platform", lambda: "wsl")
+    monkeypatch.setattr(
+        state_root, "_checkout_path",
+        lambda name: str(knowledge) if name == "knowledge" else None,
+    )
+    if not linked:
+        monkeypatch.setattr(front_door_cli, "_git_toplevel", lambda path: env.repo)
+    monkeypatch.setattr(front_door_cli, "_reverse_lookup_project", lambda anchor: "target-project")
+    expected_path = cfg.project_dir("target-project") / "config.yaml"
+
+    def load(
+        path: Path | None = None, *, project: str | None = None, **kwargs: Any,
+    ) -> Any:
+        if path != expected_path or project != "target-project":
+            raise RuntimeError("No active project could be resolved")
+        return config
+
+    monkeypatch.setattr(cfg, "load_config", load)
+    monkeypatch.setattr(cfg, "_ACTIVE_PROJECT", "target-project")
+    monkeypatch.setattr(main, "_aw_runtime_home", lambda: env.home / ".agent-worktrees")
+    monkeypatch.setattr(main, "_provisioning_status_diagnostic", lambda cwd: "")
+    workers, spawned = [], []
+    monkeypatch.setattr(
+        main.threading, "Thread",
+        lambda *, target, **kwargs: SimpleNamespace(start=lambda: workers.append(target)),
+    )
+
+    real_popen = main.subprocess.Popen
+
+    def spawn(argv: list[str], **kwargs: Any) -> Any:
+        if "reconcile-plugins" in argv:
+            spawned.append(argv)
+            return SimpleNamespace(wait=lambda: None)
+        return real_popen(argv, **kwargs)
+
+    monkeypatch.setattr(main.subprocess, "Popen", spawn)
+    release = threading.Event()
+    assert main._schedule_provisioning_if_needed(
+        str(launch_dir), {}, start_event=release,
+    ) == ""
+    cfg.set_active_project(resident_project)
+    release.set()
+    assert len(workers) == 1
+    workers[0]()
+    assert len(spawned) == 1
+    assert spawned[0][spawned[0].index("--repo") + 1] == str(launch_dir)
+    assert cfg.active_project() == resident_project
 
 
 def test_machine_gated_no_manifest_provisions_locally(env):
