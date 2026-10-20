@@ -242,6 +242,8 @@ _DRIVER_SCRIPT = textwrap.dedent(
         cov.start()
         cov.save()  # force schema creation now, single-threaded
 
+        if child_stream is not None:
+            child_stream.begin_collection(cov)
         exit_code = pytest.main(
             [
                 *test_paths,
@@ -268,6 +270,8 @@ _DRIVER_SCRIPT = textwrap.dedent(
             ],
         )
 
+        if child_stream is not None:
+            child_stream.end_collection()
         cov.stop()
         cov.save()
 

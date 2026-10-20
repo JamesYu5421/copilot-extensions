@@ -70,6 +70,8 @@ class ScopedRecoveryClient:
 
             def __init__(self, args, *positional, **kwargs):
                 bound = signature.bind(args, *positional, **kwargs)
+                arguments = [args] if isinstance(args, (str, bytes, os.PathLike)) else args
+                digest = hashlib.sha256("\0".join(os.fsdecode(value) for value in arguments[1:]).encode()).hexdigest()
                 label = context()
                 if client.plan is not None and label in client.plan["controls"]:
                     environment = dict(os.environ if bound.arguments.get("env") is None else bound.arguments["env"])
@@ -81,7 +83,6 @@ class ScopedRecoveryClient:
                     bound.arguments["env"] = environment
                 super().__init__(*bound.args, **bound.kwargs)
                 client.processes[self.pid] = self
-                digest = hashlib.sha256("\0".join(os.fsdecode(value) for value in args[1:]).encode()).hexdigest()
                 client._send({"op": "LAUNCHED", "case": label, "pid": self.pid, "argv_key": digest})
         subprocess.Popen = RecordedPopen
 

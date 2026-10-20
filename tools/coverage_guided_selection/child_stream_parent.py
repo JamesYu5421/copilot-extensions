@@ -22,6 +22,9 @@ _nonce = None
 _helpers = {}
 _guard_active = False
 _guard_arming = False
+_tracing = False
+_coverage_owner = None
+_parent_trace = _parent_thread_trace = None
 
 
 def source_inventory(mapping):
@@ -225,6 +228,38 @@ def _profile_event(event, args):
         if (caller.f_code is not threading.Thread._bootstrap_inner.__code__
                 or threading.getprofile() is not _profile):
             _auditor().error("parent executable-source guard was replaced")
+    if _tracing and event == "sys.settrace":
+        caller = sys._getframe(1)
+        installers = [getattr(_coverage_owner, name, None)
+                      for name in ("_installation_trace", "_start_tracer")]
+        if (caller.f_code is threading.Thread._bootstrap_inner.__code__
+                and threading.gettrace() is _parent_thread_trace):
+            return
+        if (caller.f_locals.get("self") is _coverage_owner and any(
+                method is not None and caller.f_code is method.__func__.__code__
+                for method in installers)):
+            return
+        _auditor().error("parent line tracer was replaced: " + caller.f_code.co_name[:64])
+
+
+def begin_collection(coverage):
+    global _tracing, _coverage_owner, _parent_trace, _parent_thread_trace
+    _coverage_owner = coverage._collector
+    _parent_trace, _parent_thread_trace = sys.gettrace(), threading.gettrace()
+    original = threading.settrace
+    def set_thread_trace(function):
+        if _tracing and function is not _parent_thread_trace:
+            _auditor().error("parent thread line tracer was replaced")
+        return original(function)
+    threading.settrace = set_thread_trace
+    _tracing = True
+
+
+def end_collection():
+    global _tracing
+    if sys.gettrace() is not _parent_trace or threading.gettrace() is not _parent_thread_trace:
+        _auditor().error("parent line tracer was replaced")
+    _tracing = False
 
 
 def register_context(node):

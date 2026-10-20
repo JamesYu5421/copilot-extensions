@@ -189,7 +189,9 @@ def _frame_source(frame):
         source = None
     if source is None and _package:
         module = getattr(frame, "f_globals", {}).get("__name__", "")
-        if isinstance(module, str) and (module == _package or module.startswith(_package + ".")):
+        package_path = os.path.normcase(code.co_filename).replace("\\", "/").split("/")[:-1]
+        if (isinstance(module, str) and (module == _package or module.startswith(_package + "."))
+                or os.path.normcase(_package) in package_path):
             _auditor().error("owned package executed outside verified source inventory")
     if source is not None or os.path.normcase(code.co_filename) in _expected_codes:
         # Retain the object itself: recycled ids must never inherit an attribution.

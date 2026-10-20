@@ -47,6 +47,11 @@ unrelated `<string>` code still fails owned-package verification. Temporary
 removal of the parent thread-profile hook invalidates collection even if restored.
 Direct low-level thread starts are an unsupported lifecycle: they still run
 normally, but invalidate collection instead of silently omitting their execution.
+Owned-package script paths are checked even when `runpy` names the module
+`__main__`; shadow paths never earn repository coordinates. The parent also
+monitors temporary process/thread line-tracer changes during pytest collection,
+while permitting its own coverage start/stop and the active collector's ordinary
+new-thread tracer installation.
 The fast unit selector checks code-tree and cache identity without launching
 interpreters. In a prepared collector environment, set
 `CGS_RUN_STANDALONE_INTEGRATION=1` and run

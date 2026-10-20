@@ -86,7 +86,8 @@ def test_distinct_actual_code_objects_do_not_alias_shared_string_filename(monkey
     assert runtime._frame_source(SimpleNamespace(f_code=unknown)) is None
 
 
-def test_owned_package_shadow_cannot_be_a_successful_zero_hit_producer(monkeypatch):
+@pytest.mark.parametrize("module", ["fleet_manager.planning", "__main__"])
+def test_owned_package_shadow_cannot_be_a_successful_zero_hit_producer(monkeypatch, module):
     from types import SimpleNamespace
 
     failures = []
@@ -97,11 +98,12 @@ def test_owned_package_shadow_cannot_be_a_successful_zero_hit_producer(monkeypat
     monkeypatch.setattr(child_audit, "error", failures.append)
     frame = SimpleNamespace(
         f_code=SimpleNamespace(co_filename="checkout/src/fleet_manager/planning.py"),
-        f_globals={"__name__": "fleet_manager.planning"},
+        f_globals={"__name__": module},
     )
     assert runtime._frame_source(frame) is None
     assert failures == ["owned package executed outside verified source inventory"]
     frame.f_globals["__name__"] = "unrelated"
+    frame.f_code.co_filename = "unrelated/module.py"
     runtime._frame_source(frame)
     assert len(failures) == 1
 
@@ -148,6 +150,13 @@ def test_parent_guard_replacement_is_reported_without_application_exception(monk
     monkeypatch.setattr(stream, "_guard_arming", True)
     stream._profile_event("sys.setprofile", ())
     assert len(failures) == 1
+    monkeypatch.setattr(stream, "_tracing", True)
+    monkeypatch.setattr(stream, "_coverage_owner", None)
+    stream._profile_event("sys.settrace", ())
+    assert len(failures) == 2 and failures[-1].startswith("parent line tracer was replaced")
+    monkeypatch.setattr(stream, "_tracing", False)
+    stream._profile_event("sys.settrace", ())
+    assert len(failures) == 2
 
 
 def test_generated_identity_requires_proven_emitter_owner_and_executed_bytes(tmp_path, monkeypatch):
@@ -258,6 +267,10 @@ def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evide
 ] + [
     (location, mode == "temporary-removal", "", mode)
     for location in ("parent", "child") for mode in ("temporary-removal", "low-level")
+] + [
+    ("parent", False, "", "trace-removal"),
+    ("parent", False, "", "shadow-script"),
+    ("child", False, "", "shadow-script"),
 ])
 def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
     tmp_path, stale, location, optimization, thread_mode,
@@ -300,6 +313,9 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
     header = cache.read_bytes()[:16]
     assert struct.unpack("<III", header[4:]) == (0, int(source.stat().st_mtime), len(canonical))
     expected_hash = hashlib.sha256(canonical).hexdigest()
+    shadow = tmp_path / "shadow" / "fixture_package" / "source.py"
+    shadow.parent.mkdir(parents=True)
+    shadow.write_bytes(canonical)
     sandbox = tmp_path / "collection"
     sandbox.mkdir()
     mapping = {
@@ -325,7 +341,7 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
             f"finally: threading.set{hook}(original)\n"
             "observed=values[0]\n"
         )
-    else:
+    elif thread_mode == "low-level":
         consumer = (
             "import _thread,importlib\nvalues=[]\ngate=_thread.allocate_lock();gate.acquire()\n"
             "def consume():\n"
@@ -334,6 +350,14 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
             "_thread.start_new_thread(consume,())\nassert gate.acquire(timeout=20)\n"
             "observed=values[0]\n"
         )
+    elif thread_mode == "trace-removal":
+        consumer = (
+            "import sys\noriginal=sys.gettrace();sys.settrace(None)\n"
+            "try:\n from fixture_package.source import value\n observed=value()\n"
+            "finally: sys.settrace(original)\n"
+        )
+    else:
+        consumer = f"import runpy\nobserved=runpy.run_path({str(shadow)!r},run_name='__main__')['value']()\n"
     child_program = (
         f"import sys;sys.path[:0]=[{str(tmp_path)!r},{str(sandbox)!r}];"
         "import _cgs_child_audit,_cgs_child_stream;"
@@ -377,7 +401,9 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
         reason = ("executed code differs" if thread_mode == "normal" else
                   "guard was replaced" if thread_mode == "temporary-removal" and location == "parent" else
                   "tracer was replaced" if thread_mode == "temporary-removal" else
-                  "unsupported low-level thread")
+                  "unsupported low-level thread" if thread_mode == "low-level" else
+                  "parent line tracer was replaced" if thread_mode == "trace-removal" else
+                  "owned package executed outside")
         assert any(reason in row["reason"] for row in errors), errors
     else:
         assert result.returncode == 0, result.stdout + result.stderr
