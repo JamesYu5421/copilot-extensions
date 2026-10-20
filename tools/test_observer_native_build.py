@@ -187,8 +187,9 @@ def test_native_prelude_phase_diagnostics_are_opt_in_bounded_and_keep_original_c
     monkeypatch.setenv("CGS_PRELUDE_PHASE_PROFILE", "1")
     monkeypatch.setenv("_CGS_PRELUDE_CPU_NS", "10")
     namespace["phase"]("native-entry-first")
+    (tmp_path / "compile").mkdir()
     namespace["report_prelude"](tmp_path, start_ns=50, end_ns=300, end_cpu_ns=150, duration_us=0)
-    report = json.loads(next(tmp_path.glob("prelude-phases-*.json")).read_text())
+    report = json.loads(next((tmp_path / "compile").glob("prelude-phases-*.json")).read_text())
     assert report["diagnostic_only"] and report["start_ns"] == 50 and report["end_ns"] == 300
     assert report["start_cpu_ns"] == 10 and report["end_cpu_ns"] == 150
     assert report["phases"] == [{"phase": "native-entry-first", "wall_ns": 200, "cpu_ns": 100}]

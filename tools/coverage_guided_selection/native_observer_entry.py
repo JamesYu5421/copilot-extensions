@@ -191,7 +191,7 @@ def report_prelude(control, *, start_ns, end_ns, end_cpu_ns, duration_us):
         "start_cpu_ns": int(os.environ["_CGS_PRELUDE_CPU_NS"]),
         "duration_us": duration_us, "phases": _phases,
     }
-    with (Path(control) / f"prelude-phases-{os.getpid()}.json").open("x") as output:
+    with (Path(control) / "compile" / f"prelude-phases-{os.getpid()}.json").open("x") as output:
         json.dump(report, output, sort_keys=True)
 
 
