@@ -1,12 +1,17 @@
 """Real standalone artifact/installation boundaries, without hosting effects."""
 
+from __future__ import annotations
+
 import base64
 import csv
+import fnmatch
 import hashlib
+import importlib.util
 import inspect
 import io
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -22,6 +27,10 @@ from packaging.utils import canonicalize_name
 PROJECT = Path(__file__).absolute().parents[1]
 LIBRARY = PROJECT.parent / "libs" / "versioned-runtime"
 FLAGS = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+COMPANIONS = (
+    "versioned_runtime_leases.py", "versioned_runtime_construction.py",
+    "versioned_runtime_source.py", "versioned_runtime_publication.py",
+)
 
 
 def run(argv, *, cwd=None, env=None):
@@ -38,11 +47,7 @@ def project_at(root, *, nested=False):
     shutil.copytree(PROJECT / "src", project / "src", ignore=shutil.ignore_patterns("__pycache__"))
     library = root / "libs" / "versioned-runtime"
     library.mkdir(parents=True)
-    for name in (
-        "versioned_runtime.py", "versioned_runtime_leases.py",
-        "versioned_runtime_construction.py", "standalone_build.py",
-        "versioned_runtime_source.py",
-    ):
+    for name in ("versioned_runtime.py", "standalone_build.py", *COMPANIONS):
         shutil.copy2(LIBRARY / name, library / name)
     return project, library
 
@@ -98,10 +103,7 @@ def test_wheel_contains_record_bound_exact_primitive_and_no_runtime_dependencies
         rows = list(csv.reader(io.StringIO(archive.read(name).decode())))
         expected = "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
         assert [row for row in rows if row[0] == member] == [[member, expected, str(len(data))]]
-        for name in (
-            "versioned_runtime_leases.py", "versioned_runtime_construction.py",
-            "versioned_runtime_source.py",
-        ):
+        for name in COMPANIONS:
             member = f"fleet_manager/{name}"
             content = (library / name).read_bytes()
             assert archive.namelist().count(member) == 1
@@ -144,6 +146,7 @@ def test_sdist_rebuild_is_self_contained_after_repository_removal(tmp_path):
     result = build(project, output, "build_sdist")
     assert result.returncode == 0, result.stderr
     expected = (library / "versioned_runtime.py").read_bytes()
+    companions = {name: (library / name).read_bytes() for name in COMPANIONS}
     helper = (library / "standalone_build.py").read_bytes()
     extracted = tmp_path / "extracted"
     extracted.mkdir()
@@ -151,6 +154,11 @@ def test_sdist_rebuild_is_self_contained_after_repository_removal(tmp_path):
         assert archive.extractfile(next(
             name for name in archive.getnames() if name.endswith("/_standalone_runtime_build.py")
         )).read() == helper
+        for name, content in companions.items():
+            assert archive.extractfile(next(
+                member for member in archive.getnames()
+                if member.endswith(f"/src/fleet_manager/{name}")
+            )).read() == content
         if "filter" in inspect.signature(archive.extractall).parameters:
             archive.extractall(extracted, filter="data")
         else:
@@ -170,6 +178,8 @@ def test_sdist_rebuild_is_self_contained_after_repository_removal(tmp_path):
     assert result.returncode == 0, result.stderr
     with zipfile.ZipFile(next(output.glob("*.whl"))) as archive:
         assert archive.read("fleet_manager/_versioned_runtime.py") == expected
+        for name, content in companions.items():
+            assert archive.read(f"fleet_manager/{name}") == content
 
 
 @pytest.mark.client_distribution_full
@@ -182,13 +192,13 @@ def test_nested_service_directory_uses_same_canonical_resource(tmp_path):
         assert archive.read("fleet_manager/_versioned_runtime.py") == (
             library / "versioned_runtime.py"
         ).read_bytes()
+        for name in COMPANIONS:
+            assert archive.read(f"fleet_manager/{name}") == (library / name).read_bytes()
 
 
 @pytest.mark.client_distribution_full
 @pytest.mark.parametrize("resource", [
-    "versioned_runtime.py", "versioned_runtime_leases.py",
-    "versioned_runtime_construction.py", "standalone_build.py",
-    "versioned_runtime_source.py",
+    "versioned_runtime.py", "standalone_build.py", *COMPANIONS,
 ])
 @pytest.mark.parametrize("included_copy", [False, True])
 def test_missing_build_resource_is_not_a_successful_partial_wheel(tmp_path, resource, included_copy):
@@ -322,3 +332,82 @@ def test_real_client_install_doctor_and_package_manager_removal_preserve_config(
     result = client("--version")
     assert result.returncode != 0
     assert not list(state.glob("*komodo*"))
+
+
+@pytest.mark.parametrize("context_kind", ["repository", "pinned"])
+def test_gateway_build_inputs_deliver_the_complete_runtime_family(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, context_kind: str,
+) -> None:
+    repository = PROJECT.parent
+    recipe = repository / "fleet-manager" / "containers" / "gateway"
+    if context_kind == "repository":
+        project, library = project_at(tmp_path / "context")
+    else:
+        path = repository / "tools" / "clean-room" / "gateway-role-tunnels" / "source.py"
+        spec = importlib.util.spec_from_file_location("gateway_build_source", path)
+        assert spec and spec.loader
+        source = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(source)
+        checkout = tmp_path / "checkout"
+        for name in source.REQUIRED:
+            target = checkout / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(repository / name, target)
+        hooks = tmp_path / "empty-hooks"
+        hooks.mkdir()
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+
+        def git(root: Path, *arguments: str) -> bytes:
+            return subprocess.run(
+                ["git", "-C", str(root), "-c", "core.autocrlf=false",
+                 "-c", f"core.hooksPath={hooks}", "-c", "commit.gpgsign=false",
+                 "-c", "user.name=Gateway test", "-c", "user.email=gateway-test@example.invalid",
+                 *arguments],
+                env=environment, capture_output=True, timeout=30, check=True, **FLAGS,
+            ).stdout
+
+        git(checkout, "init", "-q", "--template", str(hooks))
+        (checkout / ".git" / "info").mkdir(exist_ok=True)
+        (checkout / ".git" / "info" / "attributes").write_text(
+            "* -text -filter -ident -working-tree-encoding\n", encoding="utf-8",
+        )
+        git(checkout, "add", "--all")
+        git(checkout, "commit", "-qm", "Gateway build input fixture")
+        run_root = tmp_path / "pinned"
+        run_root.mkdir()
+        monkeypatch.setattr(source, "git", git)
+        manifest = source.materialize(checkout, "HEAD", run_root)
+        assert manifest["source_commit"] == git(checkout, "rev-parse", "HEAD").decode().strip()
+        context = run_root / "context"
+        project, library = context / "fleet-manager", context / "libs" / "versioned-runtime"
+        recipe = context / "fleet-manager" / "containers" / "gateway"
+
+    copied = set()
+    for line in (recipe / "Dockerfile").read_text(encoding="utf-8").replace("\\\n", " ").splitlines():
+        if not line.startswith("COPY "):
+            continue
+        words = shlex.split(line)
+        copied.update(name for name in words[1:-1] if name.startswith("libs/versioned-runtime/"))
+    patterns = (recipe / "Dockerfile.dockerignore").read_text(encoding="utf-8").splitlines()
+    for resource in library.iterdir():
+        name = f"libs/versioned-runtime/{resource.name}"
+        included = True
+        for pattern in patterns:
+            if pattern and not pattern.startswith("#"):
+                allow = pattern.startswith("!")
+                if fnmatch.fnmatchcase(name, pattern.removeprefix("!").rstrip("/")):
+                    included = allow
+        if name not in copied or not included:
+            resource.unlink()
+
+    output = tmp_path / "artifacts"
+    result = build(project, output)
+    assert result.returncode == 0, result.stderr
+    spec = importlib.util.spec_from_file_location("gateway_build_runtime", LIBRARY / "standalone_build.py")
+    assert spec and spec.loader
+    runtime = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runtime)
+    with zipfile.ZipFile(next(output.glob("*.whl"))) as artifact:
+        for name, member in runtime.RUNTIME_RESOURCES.items():
+            assert artifact.read(f"fleet_manager/{member}") == (LIBRARY / name).read_bytes()
