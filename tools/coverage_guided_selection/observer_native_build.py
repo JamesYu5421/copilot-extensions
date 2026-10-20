@@ -18,7 +18,7 @@ import zipfile
 
 WHEEL = "ziglang-0.14.1-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.musllinux_1_1_x86_64.whl"
 WHEEL_SHA256 = "6eb9d4d759b292c83810dbee2e9e8e3fbfbf01d864e6e9811bae711fd74e1c2f"
-C_SHA256 = "3f5b80b9507b3fa7b36c64843cb5b186d94c7d91899785c47f84c33edd982c2b"
+C_SHA256 = "a50ead8c94601ef94a77407deb02b178d77acf81d603f284fd190f2404c3140e"
 RUNTIME_SYMBOLS = (
     "clock_gettime", "getenv", "socket", "strlen", "close", "strcpy", "snprintf",
     "getpid", "getppid", "sendmsg", "dlsym", "strcmp", "open", "memcpy",

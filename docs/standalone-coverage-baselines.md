@@ -131,6 +131,15 @@ setup clocks. The builder is not a parallel release publisher or trust root;
 any publication must use the existing governed artifact mechanism.
 The prototype has no native Windows implementation or default activation.
 
+The exact container-fixture inputs are versioned beside the builder as
+`native_observer_entry.c` and `native_observer_entry.py`; the C build pin binds
+the checked-in LF bytes on both hosts. The native entry still requires the
+explicit `/work` fixture paths, catalog and constrained worker posture; it is
+not a host-wide injector or importable default collector. Building a bundle
+does not install that entry or grant its caller process-observation rights.
+Required source and worker-posture checks use explicit refusals rather than
+Python assertions, so original `-O`/`-OO` arguments cannot disable them.
+
 ### Opt-in measurement-launch prototype
 
 `measurement_launch.py` is an explicit experiment, not a default collector or an

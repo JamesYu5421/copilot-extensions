@@ -1,0 +1,185 @@
+"""Pre-user-code line-entry proof; uses the existing sparse tracer, not a new parser."""
+import hashlib
+import importlib.util
+import json
+import marshal
+import os
+from pathlib import Path
+import sys
+import types
+
+
+def require(condition, message):
+    if not condition:
+        raise RuntimeError(message)
+
+
+with open("/proc/self/status") as status_file:
+    posture = {line.split(":", 1)[0]: line.split(":", 1)[1].strip() for line in status_file
+               if line.startswith(("CapEff:", "CapBnd:", "NoNewPrivs:"))}
+require(os.getuid() == 1000 and int(posture["CapEff"], 16) == int(posture["CapBnd"], 16) == 0,
+        "native entry worker identity or capabilities differ")
+require(posture["NoNewPrivs"] == "1", "native entry requires no-new-privileges")
+require(Path("/sys/fs/cgroup/cpu.max").read_text().strip() == "200000 100000",
+        "native entry CPU limit differs")
+require(Path("/sys/fs/cgroup/memory.max").read_text().strip() == "6442450944",
+        "native entry memory limit differs")
+require(Path("/sys/fs/cgroup/pids.max").read_text().strip() == "256",
+        "native entry process limit differs")
+control = Path(os.environ["CGS_NATIVE_CONTROL"])
+with (control / "catalog.json").open() as file:
+    catalog = json.load(file)
+for name in ("_cgs_child_audit", "_cgs_child_stream"):
+    path = catalog["helpers"][name]["path"]
+    with open(path, "rb") as file:
+        content = file.read()
+    require(hashlib.sha256(content).hexdigest() == catalog["helpers"][name]["sha256"],
+            "native entry helper source identity differs")
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    exec(compile(content, path, "exec", dont_inherit=True), module.__dict__, module.__dict__)
+
+stream = sys.modules["_cgs_child_stream"]
+auditor = sys.modules["_cgs_child_audit"]
+os.environ["_CGS_CHILD_MANIFEST"] = catalog["manifest"]
+os.environ["_CGS_CHILD_AUDITOR"] = str(os.getppid())
+compile_receipts = []
+generated_code_refs = {}
+generated_ids = {}
+source_events = control / "compile" / ("source-events-" + str(os.getpid()) + ".jsonl")
+source_event_fd = os.open(source_events, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+
+
+def code_digest(code):
+    return hashlib.sha256(marshal.dumps(code)).hexdigest()
+
+
+def code_tree(code):
+    yield code
+    for value in code.co_consts:
+        if isinstance(value, types.CodeType):
+            yield from code_tree(value)
+
+
+def origin_identity(code, offset):
+    result = {"code_sha256": code_digest(code), "code_name": code.co_name,
+              "instruction_offset": offset, "file": Path(code.co_filename).name,
+              "source_bound": False}
+    try:
+        with open(code.co_filename, "rb") as source:
+            content = source.read(1_048_577)
+        if len(content) > 1_048_576:
+            return result
+        reference = compile(content, code.co_filename, "exec", dont_inherit=True,
+                            optimize=sys.flags.optimize)
+        result.update(source_sha256=hashlib.sha256(content).hexdigest(),
+                      source_bound=any(candidate == code for candidate in code_tree(reference)))
+    except (OSError, ValueError, SyntaxError):
+        pass
+    return result
+
+
+def native_source_event(event, args, origin, offset):
+    """Diagnostic-only native emission context; this does not admit generated code."""
+    if event == "compile":
+        source, filename = args
+        if not isinstance(source, (bytes, str)) or len(compile_receipts) >= 512:
+            return
+        content = source.encode("utf-8", "surrogatepass") if isinstance(source, str) else source
+        if len(content) > 65_536:
+            return
+        compile_receipts.append((content, filename, origin, offset))
+        return
+    code = args[0]
+    for content, filename, creator, creator_offset in reversed(compile_receipts):
+        if filename != code.co_filename or creator is not origin:
+            continue
+        try:
+            # Observed compiler flags are explicit; no caller-derived ambient inheritance.
+            reference = compile(content, filename, "exec", flags=code.co_flags,
+                                dont_inherit=True, optimize=sys.flags.optimize)
+        except (ValueError, SyntaxError):
+            continue
+        if reference != code:
+            continue
+        record = {
+            "schema": "ACTUAL-COMPILE-EXEC/1", "pid": os.getpid(),
+            "compile_source_sha256": hashlib.sha256(content).hexdigest(),
+            "compile_source_utf8": content.decode("utf-8", "surrogatepass"),
+            "filename": filename, "executing_code_sha256": code_digest(code),
+            "actual_compile_exec_code_equal": True,
+            "same_native_emitting_code_object": True,
+            "creator": origin_identity(origin, creator_offset),
+            "exec_instruction_offset": offset,
+            "generated_source_admitted": False,
+        }
+        if record["creator"]["source_bound"] and record["creator"].get("source_sha256") in catalog["origin_source_sha256"]:
+            digest = record["compile_source_sha256"]
+            identifier = 1 + int(digest[:4], 16) % 65534
+            reserved = {row["id"] for row in catalog["sources"].values()}
+            if identifier in reserved or (identifier in generated_ids and generated_ids[identifier] != digest):
+                auditor.error("actual generated-source identifier collision")
+                record["generated_refusal"] = "identifier collision"
+            elif len(generated_code_refs) + len(list(code_tree(code))) > 4096:
+                auditor.error("actual generated code-object bound exceeded")
+                record["generated_refusal"] = "code-object bound"
+            else:
+                target = control / "generated" / (digest + ".py")
+                try:
+                    with target.open("xb") as output:
+                        output.write(content)
+                except FileExistsError:
+                    if target.read_bytes() != content:
+                        auditor.error("actual generated source changed")
+                        record["generated_refusal"] = "source changed"
+                if "generated_refusal" not in record:
+                    generated_ids[identifier] = digest
+                    for actual_code in code_tree(code):
+                        generated_code_refs[id(actual_code)] = actual_code
+                        stream._code_sources[id(actual_code)] = (identifier, len(content.splitlines()))
+                    record.update(generated_source_admitted=True, source_id=identifier)
+        os.write(source_event_fd, (json.dumps(record) + "\n").encode("utf-8"))
+        break
+
+
+def source_check(event, args):
+    if event != "exec":
+        return
+    code = args[0]
+    filename = code.co_filename
+    normalized = filename.replace("\\", "/")
+    if "/fleet_manager/" not in normalized and not normalized.startswith("fleet_manager/"):
+        return
+    relative = normalized if normalized.startswith("fleet_manager/") else (
+        "fleet_manager/" + normalized.split("/fleet_manager/", 1)[1])
+    expected = catalog["sources"].get(relative)
+    try:
+        with open(filename, "rb") as file:
+            content = file.read()
+        if expected is None or hashlib.sha256(content).hexdigest() != expected["sha256"]:
+            raise ValueError("SDK source bytes do not match canonical catalog")
+        actual = compile(content, filename, "exec", dont_inherit=True, optimize=sys.flags.optimize)
+        if actual != code:
+            raise ValueError("SDK executable code differs from canonical source bytes")
+        stream._sources[filename] = (expected["id"], expected["lines"])
+    except Exception as error:
+        auditor.error("native SDK code/source identity refused: " + type(error).__name__)
+
+
+sys.addaudithook(source_check)
+original_call = stream._call
+
+
+def scoped_call(frame, event, arg):
+    name = frame.f_globals.get("__name__", "")
+    if isinstance(name, str) and (name == "fleet_manager" or name.startswith("fleet_manager.")):
+        if id(frame.f_code) not in stream._code_sources and frame.f_code.co_filename not in stream._sources:
+            auditor.error("SDK frame lacks actual verified source identity: " +
+                          Path(frame.f_code.co_filename).name + "::" + frame.f_code.co_name)
+            return None
+    return original_call(frame, event, arg)
+
+
+stream._call = scoped_call
+stream.start(str(control))

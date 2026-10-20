@@ -15,6 +15,52 @@ from tools.coverage_guided_selection import observer_native_build as build
 ENTRY = "1" * 64
 
 
+def test_canonical_native_source_is_versioned_and_matches_its_build_pin():
+    source = Path(build.__file__).with_name("native_observer_entry.c").read_bytes()
+    assert b"\r" not in source
+    assert hashlib.sha256(source).hexdigest() == build.C_SHA256
+    entry = Path(build.__file__).with_name("native_observer_entry.py")
+    assert entry.is_file() and b"\r" not in entry.read_bytes()
+
+
+@pytest.mark.parametrize("optimize", [0, 1, 2])
+def test_native_entry_required_guards_survive_original_optimization_flags(optimize):
+    import ast
+    import re
+    root = Path(build.__file__).parent
+    text = (root / "native_observer_entry.py").read_text()
+    tree = ast.parse(text)
+    assert not any(isinstance(node, ast.Assert) for node in ast.walk(tree))
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "require")
+    namespace = {}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), "<native-entry-guard>",
+                 "exec", optimize=optimize), namespace)
+    namespace["require"](True, "accepted")
+    with pytest.raises(RuntimeError, match="source differs"):
+        namespace["require"](False, "source differs")
+    source = (root / "native_observer_entry.c").read_text()
+    native_check = re.search(r'"(if hashlib[^\n]+)\\n"', source).group(1).replace(
+        '" ENTRY_SHA "', hashlib.sha256(b"original").hexdigest(),
+    )
+    exec(compile(native_check, "<native-entry-source-guard>", "exec", optimize=optimize),
+         {"hashlib": hashlib, "source": b"original"})
+    with pytest.raises(RuntimeError, match="native entry source identity differs"):
+        exec(compile(native_check, "<native-entry-source-guard>", "exec", optimize=optimize),
+             {"hashlib": hashlib, "source": b"must refuse"})
+
+
+def test_native_scoped_entry_preserves_nonstring_module_globals():
+    import ast
+    entry = Path(build.__file__).with_name("native_observer_entry.py")
+    tree = ast.parse(entry.read_text())
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "scoped_call")
+    marker = object()
+    namespace = {"original_call": lambda *_args: marker}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), "<native-entry-scope>", "exec"), namespace)
+    frame = SimpleNamespace(f_globals={"__name__": 71})
+    assert namespace["scoped_call"](frame, "call", None) is marker
+
+
 def wheel(tmp_path, monkeypatch, entries=None):
     path = tmp_path / build.WHEEL
     with zipfile.ZipFile(path, "w") as archive:
