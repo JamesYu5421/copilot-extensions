@@ -46,6 +46,7 @@ class SetupPhaseAccounting:
         "fixture-build", "native-build", "component-import", "source-equivalence",
         "executable-catalog", "signed-fixture-inputs", "controls-catalog",
         "compiler-extract-verify", "runtime-link-inputs", "native-artifact-verification",
+        "immutable-artifact-stage",
     })
 
     def __init__(self):

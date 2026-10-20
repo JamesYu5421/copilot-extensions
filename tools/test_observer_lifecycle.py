@@ -231,9 +231,37 @@ def test_setup_phase_names_and_count_are_bounded_and_active_reports_refuse():
         phases.run("unbounded-private-phase",lambda:pytest.fail("unknown operation"))
     for name in sorted(phases.NAMES-{"component-extraction"}):
         phases.run(name,lambda:None)
-    assert len(phases.rows)==len(phases.NAMES)==13
+    assert len(phases.rows)==len(phases.NAMES)==14
     with pytest.raises(ValueError,match="excessive"):
         phases.run("native-build",lambda:pytest.fail("excessive operation"))
+
+
+def test_immutable_staging_remains_inside_owned_setup_and_cleanup():
+    import json
+    phases = SetupPhaseAccounting()
+    calls = []
+    marker = object()
+
+    def stage():
+        calls.append(("stage", time.monotonic_ns()))
+        return marker
+
+    def initialize():
+        assert phases.run("immutable-artifact-stage", stage) is marker
+
+    lifecycle = OwnedObserverLifecycle(
+        initialize, lambda: object(), lambda _session: {"all_admitted": True},
+        lambda _session: calls.append(("cleanup", time.monotonic_ns())),
+    )
+    assert lifecycle.begin()
+    outcome = lifecycle.complete()
+    report = phases.serialize()
+    row, = json.loads(report["phases_json"])
+    assert row["phase"] == "immutable-artifact-stage" and row["outcome"] == "returned"
+    assert outcome["setup_started_ns"] <= row["started_ns"] <= calls[0][1] <= row["completed_ns"]
+    assert row["completed_ns"] <= outcome["setup_completed_ns"] <= outcome["capture_started_ns"]
+    assert outcome["parse_completed_ns"] <= calls[1][1] <= outcome["all_cleanup_completed_ns"]
+    assert outcome["all_cleanup_completed_ns"] <= report["serialization_started_ns"]
 
 
 def test_first_setup_error_and_subprocess_stderr_survive_secondary_cleanup_failure():
