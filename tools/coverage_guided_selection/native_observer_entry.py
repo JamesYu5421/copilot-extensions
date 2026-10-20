@@ -1,11 +1,27 @@
 """Pre-user-code line-entry proof; uses the existing sparse tracer, not a new parser."""
+import os
+import time
+
+_phases = []
+
+
+def phase(name):
+    if os.environ.get("CGS_PRELUDE_PHASE_PROFILE") == "1":
+        if len(_phases) >= 64:
+            raise RuntimeError("native prelude phase bound exceeded")
+        _phases.append({"phase": name, "wall_ns": time.perf_counter_ns(),
+                        "cpu_ns": time.process_time_ns()})
+
+
+phase("native-entry-first")
 import hashlib
 import importlib.util
 import json
 import marshal
-import os
 from pathlib import Path
 import sys
+
+phase("native-entry-imports-ready")
 
 
 def require(condition, message):
@@ -38,9 +54,11 @@ for name in ("_cgs_child_audit", "_cgs_child_stream"):
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     exec(compile(content, path, "exec", dont_inherit=True), module.__dict__, module.__dict__)
+    phase("native-entry-helper-" + name)
 
 stream = sys.modules["_cgs_child_stream"]
 code_tree = stream._code_tree
+phase("native-entry-helpers-ready")
 auditor = sys.modules["_cgs_child_audit"]
 os.environ["_CGS_CHILD_MANIFEST"] = catalog["manifest"]
 os.environ["_CGS_CHILD_AUDITOR"] = str(os.getppid())
@@ -166,6 +184,17 @@ def source_check(event, args):
         auditor.error("native SDK code/source identity refused: " + type(error).__name__)
 
 
+def report_prelude(control, *, start_ns, end_ns, end_cpu_ns, duration_us):
+    report = {
+        "schema": "CGS-NATIVE-PRELUDE-PHASES/1", "diagnostic_only": True,
+        "start_ns": start_ns, "end_ns": end_ns, "end_cpu_ns": end_cpu_ns,
+        "start_cpu_ns": int(os.environ["_CGS_PRELUDE_CPU_NS"]),
+        "duration_us": duration_us, "phases": _phases,
+    }
+    with (Path(control) / f"prelude-phases-{os.getpid()}.json").open("x") as output:
+        json.dump(report, output, sort_keys=True)
+
+
 sys.addaudithook(source_check)
 original_call = stream._call
 
@@ -181,4 +210,7 @@ def scoped_call(frame, event, arg):
 
 
 stream._call = scoped_call
+if os.environ.get("CGS_PRELUDE_PHASE_PROFILE") == "1":
+    stream._phase_marker, stream._phase_reporter = phase, report_prelude
+phase("native-entry-guards-ready")
 stream.start(str(control))

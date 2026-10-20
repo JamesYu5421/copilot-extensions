@@ -105,7 +105,9 @@ static int audit(const char *event, PyObject *args, void *context) {
     decref(name);
     const char *source =
         "__import__('os').environ['_CGS_PRELUDE_NS']=str(__import__('time').perf_counter_ns())\n"
-        "import os,time,hashlib\n"
+        "import os,time\n"
+        "if os.environ.get('CGS_PRELUDE_PHASE_PROFILE')=='1': os.environ['_CGS_PRELUDE_CPU_NS']=str(time.process_time_ns())\n"
+        "import hashlib\n"
         "with open('/work/native-entry.py','rb') as file: source=file.read()\n"
         "if hashlib.sha256(source).hexdigest()!='" ENTRY_SHA "': raise RuntimeError('native entry source identity differs')\n"
         "exec(compile(source,'/work/native-entry.py','exec',dont_inherit=True),globals(),globals())\n";

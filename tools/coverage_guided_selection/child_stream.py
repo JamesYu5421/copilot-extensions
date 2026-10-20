@@ -287,7 +287,9 @@ def start(control):
         filenames.add(os.path.normcase(filename))
         inventory[filename] = (identifier, maximum, digest)
     _prepare_sources(inventory)
+    _phase("source-code-ready")
     _install_generated_guard()
+    _phase("generated-code-ready")
     _install_thread_guard()
     if not _sources:
         raise ValueError("empty child coverage source map")

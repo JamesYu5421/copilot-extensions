@@ -75,6 +75,11 @@ The duration endpoint follows fork-cleanup registration, both tracer
 installations and the thread-tracer guard. The existing sparse-writer lock
 keeps the duration record before any source-line record while charging all
 required initialization to the measured prelude.
+For an explicitly diagnostic native-entry run, `CGS_PRELUDE_PHASE_PROFILE=1`
+retains bounded wall/CPU phase records from the original prelude start through
+the same tracer-ready endpoint. This includes source compilation and
+generated-code guard preparation; it does not defer required work past the
+endpoint. Phase reports are diagnostic only, never performance admission.
 
 `child_audit.py` observes CPython `subprocess.Popen`/`os.posix_spawn` audit events,
 without wrapping Popen or waiting for initialization. Each intent is matched to

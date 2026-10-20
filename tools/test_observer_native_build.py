@@ -168,6 +168,36 @@ def test_artifact_requires_actual_constructor_relocation_and_entry_identity(tmp_
     assert result["static_shape_only"] and "all_admitted" not in result
 
 
+def test_native_prelude_phase_diagnostics_are_opt_in_bounded_and_keep_original_clock(tmp_path, monkeypatch):
+    import ast
+    import json
+
+    path = Path(build.__file__).with_name("native_observer_entry.py")
+    tree = ast.parse(path.read_text())
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                 and node.name in {"phase", "report_prelude"}]
+    namespace = {
+        "os": os, "Path": Path, "json": json, "_phases": [],
+        "time": SimpleNamespace(perf_counter_ns=lambda: 200, process_time_ns=lambda: 100),
+    }
+    exec(compile(ast.Module(body=functions, type_ignores=[]), str(path), "exec"), namespace)
+    monkeypatch.delenv("CGS_PRELUDE_PHASE_PROFILE", raising=False)
+    namespace["phase"]("disabled")
+    assert namespace["_phases"] == []
+    monkeypatch.setenv("CGS_PRELUDE_PHASE_PROFILE", "1")
+    monkeypatch.setenv("_CGS_PRELUDE_CPU_NS", "10")
+    namespace["phase"]("native-entry-first")
+    namespace["report_prelude"](tmp_path, start_ns=50, end_ns=300, end_cpu_ns=150, duration_us=0)
+    report = json.loads(next(tmp_path.glob("prelude-phases-*.json")).read_text())
+    assert report["diagnostic_only"] and report["start_ns"] == 50 and report["end_ns"] == 300
+    assert report["start_cpu_ns"] == 10 and report["end_cpu_ns"] == 150
+    assert report["phases"] == [{"phase": "native-entry-first", "wall_ns": 200, "cpu_ns": 100}]
+    for _ in range(63):
+        namespace["phase"]("bounded")
+    with pytest.raises(RuntimeError, match="phase bound"):
+        namespace["phase"]("excess")
+
+
 @pytest.mark.parametrize("fault", [
     "missing-init", "unresolved-init", "changed-entry", "unknown-relocation", "wrong-abi",
     "missing-relocations", "duplicate-relocation", "null-relocated-init",
