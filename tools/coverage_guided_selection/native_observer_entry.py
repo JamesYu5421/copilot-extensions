@@ -6,7 +6,6 @@ import marshal
 import os
 from pathlib import Path
 import sys
-import types
 
 
 def require(condition, message):
@@ -41,6 +40,7 @@ for name in ("_cgs_child_audit", "_cgs_child_stream"):
     exec(compile(content, path, "exec", dont_inherit=True), module.__dict__, module.__dict__)
 
 stream = sys.modules["_cgs_child_stream"]
+code_tree = stream._code_tree
 auditor = sys.modules["_cgs_child_audit"]
 os.environ["_CGS_CHILD_MANIFEST"] = catalog["manifest"]
 os.environ["_CGS_CHILD_AUDITOR"] = str(os.getppid())
@@ -53,13 +53,6 @@ source_event_fd = os.open(source_events, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0
 
 def code_digest(code):
     return hashlib.sha256(marshal.dumps(code)).hexdigest()
-
-
-def code_tree(code):
-    yield code
-    for value in code.co_consts:
-        if isinstance(value, types.CodeType):
-            yield from code_tree(value)
 
 
 def origin_identity(code, offset):

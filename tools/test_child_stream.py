@@ -16,6 +16,7 @@ def test_child_runtime_has_only_runtime_functions_and_parent_reuses_constants():
            if isinstance(node,ast.FunctionDef)}
     assert names=={"_phase","_auditor","_write","_fail","_source","_frame_source",
                    "_code_tree","_prepare_sources",
+                   "_install_generated_guard","_generated_event","_start_thread","_install_thread_guard",
                    "_line","_call","_after_fork","start"}
     assert stream._auditor is runtime._auditor
     assert (stream.ENV,stream.VERSION,stream.MAX_RECORDS,stream.MAX_MANIFEST)==(
@@ -149,6 +150,61 @@ def test_parent_guard_replacement_is_reported_without_application_exception(monk
     assert len(failures) == 1
 
 
+def test_generated_identity_requires_proven_emitter_owner_and_executed_bytes(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    owned = compile("owned=1\n", str(tmp_path / "source.py"), "exec", dont_inherit=True)
+    emitter_code = compile("emitter=1\n", "dataclasses.py", "exec", dont_inherit=True)
+    emitter = SimpleNamespace(f_code=emitter_code, f_back=SimpleNamespace(f_code=owned, f_back=None))
+    failures = []
+    for key, value in (
+        ("_generated_active", True), ("_generated_busy", False), ("_generated_receipts", []),
+        ("_generated_count", 0), ("_generator_codes", frozenset([emitter_code])),
+        ("_expected_codes", {os.path.normcase(owned.co_filename): frozenset([owned])}),
+        ("_code_sources", {}), ("_sources", {}), ("_root", ""), ("_package", "fixture_package"),
+    ):
+        monkeypatch.setattr(runtime, key, value)
+    monkeypatch.setattr(child_audit, "error", failures.append)
+    monkeypatch.setattr(runtime.sys, "_getframe", lambda depth: emitter)
+    content = "def method():\n    return 22\n"
+    runtime._generated_event("compile", (content, "<string>"))
+    actual = compile(content, "<string>", "exec", dont_inherit=True)
+    runtime._generated_event("exec", (actual,))
+    method = next(code for code in actual.co_consts if isinstance(code, type(actual)))
+    frame = SimpleNamespace(f_code=method, f_globals={"__name__": "fixture_package.source"})
+    assert runtime._frame_source(frame) is None and not failures
+    assert runtime._code_sources[id(method)][0] is method
+    forged = compile(content.replace("22", "11"), "<string>", "exec", dont_inherit=True)
+    runtime._generated_event("exec", (forged,))
+    assert id(forged) not in runtime._code_sources
+    frame.f_code = forged
+    assert runtime._frame_source(frame) is None and failures
+    emitter.f_back = None
+    other = compile(content.replace("22", "33"), "<string>", "exec", dont_inherit=True)
+    runtime._generated_event("compile", (content.replace("22", "33"), "<string>"))
+    runtime._generated_event("exec", (other,))
+    assert id(other) not in runtime._code_sources
+
+
+def test_low_level_thread_refusal_preserves_call_and_catches_cached_parent_alias(monkeypatch):
+    from types import SimpleNamespace
+
+    failures, calls = [], []
+    monkeypatch.setattr(runtime, "_thread_guard_active", True)
+    monkeypatch.setattr(runtime, "_auditor", lambda: SimpleNamespace(error=failures.append))
+    monkeypatch.setattr(stream, "_auditor", lambda: SimpleNamespace(error=failures.append))
+    monkeypatch.setattr(runtime, "_start_thread_original", lambda *args: calls.append(args) or 42)
+    assert runtime._start_thread("target", ()) == 42
+    assert calls == [("target", ())]
+    assert failures == ["unsupported low-level thread coverage lifecycle"]
+    frame = SimpleNamespace(f_code=compile("pass", "<caller>", "exec"))
+    stream._profile(frame, "c_call", runtime._start_thread_original)
+    assert len(failures) == 2
+    frame.f_code = runtime._thread_start_code
+    stream._profile(frame, "c_call", runtime._start_thread_original)
+    assert len(failures) == 2
+
+
 def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evidence, monkeypatch):
     from types import SimpleNamespace
 
@@ -172,6 +228,8 @@ def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evide
         context=lambda _env: "b" * 64, argv_key=lambda _args: "d" * 64,
     )
     monkeypatch.setattr(runtime, "_auditor", lambda: auditor)
+    monkeypatch.setattr(runtime, "_install_generated_guard", lambda: events.append(("generated-guard", None)))
+    monkeypatch.setattr(runtime, "_install_thread_guard", lambda: events.append(("thread-guard", None)))
 
     def endpoint():
         assert runtime.threading.settrace is not original_trace
@@ -181,6 +239,8 @@ def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evide
     monkeypatch.setattr(runtime.time, "perf_counter_ns", endpoint)
     runtime.start(str(control))
     names = [name for name, _ in events]
+    assert names.index("generated-guard") < names.index("endpoint")
+    assert names.index("thread-guard") < names.index("endpoint")
     assert names.index("fork") < names.index("thread-trace") < names.index("process-trace")
     assert names.index("process-trace") < names.index("endpoint")
     writes = [data for name, data in events if name == "write"]
@@ -191,11 +251,16 @@ def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evide
     os.environ.get("CGS_RUN_STANDALONE_INTEGRATION") != "1",
     reason="real parent/child importer matrix belongs to deliberate native qualification",
 )
-@pytest.mark.parametrize("stale", [False, True])
-@pytest.mark.parametrize("location", ["parent", "child"])
-@pytest.mark.parametrize("optimization", ["", "-O", "-OO"])
+@pytest.mark.parametrize("location,stale,optimization,thread_mode", [
+    (location, stale, optimization, "normal")
+    for optimization in ("", "-O", "-OO")
+    for location in ("parent", "child") for stale in (False, True)
+] + [
+    (location, mode == "temporary-removal", "", mode)
+    for location in ("parent", "child") for mode in ("temporary-removal", "low-level")
+])
 def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
-    tmp_path, stale, location, optimization,
+    tmp_path, stale, location, optimization, thread_mode,
 ):
     """Exercise the real driver and importer, not a synthetic filename-only frame."""
     import hashlib
@@ -203,6 +268,7 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
     import struct
     import subprocess
     import sys
+    import textwrap
     from pathlib import Path
     from tools.coverage_guided_selection import standalone
 
@@ -210,8 +276,12 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
     package.mkdir()
     (package / "__init__.py").write_bytes(b"")
     source = package / "source.py"
-    old = b"def value():\n    return 11\n"
-    canonical = b"def value():\n    return 22\n"
+    canonical = (
+        b"from dataclasses import dataclass\n"
+        b"@dataclass\nclass Value:\n    result: int = 22\n"
+        b"def value():\n    return Value().result\n"
+    )
+    old = canonical.replace(b"22", b"11")
     source.write_bytes(old if stale else canonical)
     timestamp = source.stat().st_mtime_ns
     level = {"": 0, "-O": 1, "-OO": 2}[optimization]
@@ -238,11 +308,37 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
     _, options = standalone.coverage_files(sandbox, mapping)
     driver = sandbox / "driver.py"
     driver.write_text(standalone._DRIVER_SCRIPT, encoding="utf-8")
+    if thread_mode == "normal":
+        consumer = (
+            "from fixture_package.source import value\nobserved=value()\n"
+            "import threading\nthread=threading.Thread(target=value);thread.start();thread.join()\n"
+        )
+    elif thread_mode == "temporary-removal":
+        hook = "profile" if location == "parent" else "trace"
+        consumer = (
+            "import importlib,threading\nvalues=[]\n"
+            f"original=threading.get{hook}();threading.set{hook}(None)\n"
+            "try:\n"
+            " thread=threading.Thread(target=lambda: values.append("
+            "importlib.import_module('fixture_package.source').value()))\n"
+            " thread.start();thread.join()\n"
+            f"finally: threading.set{hook}(original)\n"
+            "observed=values[0]\n"
+        )
+    else:
+        consumer = (
+            "import _thread,importlib\nvalues=[]\ngate=_thread.allocate_lock();gate.acquire()\n"
+            "def consume():\n"
+            " try: values.append(importlib.import_module('fixture_package.source').value())\n"
+            " finally: gate.release()\n"
+            "_thread.start_new_thread(consume,())\nassert gate.acquire(timeout=20)\n"
+            "observed=values[0]\n"
+        )
     child_program = (
         f"import sys;sys.path[:0]=[{str(tmp_path)!r},{str(sandbox)!r}];"
         "import _cgs_child_audit,_cgs_child_stream;"
         f"_cgs_child_stream.start({options['child_stream_control']!r});"
-        "from fixture_package.source import value;print(value())"
+        f"exec({consumer!r});print(observed)"
     )
     test = sandbox / "test_consumer.py"
     prefix = f"import sys;sys.path.insert(0,{str(tmp_path)!r})\n"
@@ -256,13 +352,7 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
             f" assert result.stdout.strip()=={str(11 if stale else 22)!r}\n"
         )
     else:
-        body = (
-            " from fixture_package.source import value\n"
-            f" assert value()=={11 if stale else 22}\n"
-            # A real thread must retain the same guard without a false replacement.
-            " import threading\n"
-            " thread=threading.Thread(target=value);thread.start();thread.join()\n"
-        )
+        body = textwrap.indent(consumer + f"assert observed=={11 if stale else 22}\n", " ")
     test.write_text(prefix + "def test_consumer():\n" + body, encoding="utf-8")
     output = sandbox / "result.json"
     report = sandbox / "report.json"
@@ -280,15 +370,19 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
                             timeout=40, **flags)
     assert json.loads(report.read_text())["summary"].get("passed") == 1, result.stdout + result.stderr
     assert hashlib.sha256(source.read_bytes()).hexdigest() == expected_hash
-    if stale:
+    if stale or thread_mode != "normal":
         assert result.returncode != 0 and not output.exists(), result.stdout + result.stderr
         errors = [json.loads(path.read_text()) for path in
                   (sandbox / "child-lines" / "audit").glob("*.error")]
-        assert any("executed code differs" in row["reason"] for row in errors), errors
+        reason = ("executed code differs" if thread_mode == "normal" else
+                  "guard was replaced" if thread_mode == "temporary-removal" and location == "parent" else
+                  "tracer was replaced" if thread_mode == "temporary-removal" else
+                  "unsupported low-level thread")
+        assert any(reason in row["reason"] for row in errors), errors
     else:
         assert result.returncode == 0, result.stdout + result.stderr
         data = json.loads(output.read_text())
-        assert data["coverage"]["fixture_package/source.py"]["2"]
+        assert data["coverage"]["fixture_package/source.py"]["6"]
 
 @pytest.mark.parametrize("corruption",["collision","foreign-path","wrong-hash","fake-canonical"])
 def test_generated_source_extension_identity_is_strict(evidence,corruption):

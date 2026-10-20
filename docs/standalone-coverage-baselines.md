@@ -39,12 +39,21 @@ attribution. A timestamp/size-valid stale `.pyc` therefore invalidates collectio
 even when the installed `.py` bytes still match the checkout. The parent applies
 the same guard through an independently monitored profile hook alongside
 coverage.py's trace hook; neither path changes what code the application imports.
+Dataclass-generated methods are admitted only after matching the actual
+standard-library emitter and a verified owning-source frame, pairing its
+compile/exec events, and comparing the executing generated code tree with those
+observed bytes. These exact objects do not invent fixed repository coordinates;
+unrelated `<string>` code still fails owned-package verification. Temporary
+removal of the parent thread-profile hook invalidates collection even if restored.
+Direct low-level thread starts are an unsupported lifecycle: they still run
+normally, but invalidate collection instead of silently omitting their execution.
 The fast unit selector checks code-tree and cache identity without launching
 interpreters. In a prepared collector environment, set
 `CGS_RUN_STANDALONE_INTEGRATION=1` and run
 `python -m pytest tools/test_child_stream.py -k real_timestamp_valid_bytecode`
 to exercise the actual parent driver and child importer with fresh and stale
-timestamp/size-valid caches at each interpreter optimization level. The
+timestamp/size-valid caches at each interpreter optimization level, including
+dataclass construction, temporary thread-hook removal and low-level threads. The
 application must still pass with the code it actually imported; stale caches
 must prevent the collector from producing a baseline.
 Source/build/test inputs must be clean at the named `HEAD`.

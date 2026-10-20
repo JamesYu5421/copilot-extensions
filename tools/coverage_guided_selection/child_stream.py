@@ -7,6 +7,7 @@ merging. This module grants no baseline publication or selection authority.
 import hashlib
 import os
 import sys
+import _thread
 import threading
 import time
 from types import CodeType
@@ -23,6 +24,14 @@ _lock = threading.Lock()
 _sources = {}
 _code_sources = {}
 _expected_codes = {}
+_generator_codes = frozenset()
+_generated_receipts = []
+_generated_count = 0
+_generated_busy = False
+_generated_active = False
+_thread_guard_active = False
+_start_thread_original = _thread.start_new_thread
+_thread_start_code = threading.Thread.start.__code__
 _root = ""
 _package = ""
 _control = None
@@ -93,6 +102,80 @@ def _prepare_sources(inventory):
         key = os.path.normcase(filename)
         _sources[filename] = _sources[key] = (identifier, maximum)
         _expected_codes[key] = frozenset(_code_tree(reference))
+
+
+def _install_generated_guard():
+    global _generator_codes, _generated_active
+    path = os.path.join(os.path.dirname(os.__file__), "dataclasses.py")
+    with open(path, "rb") as source:
+        content = source.read(1_048_577)
+    if len(content) > 1_048_576:
+        raise ValueError("standard-library generator source exceeds bound")
+    reference = compile(content, path, "exec", dont_inherit=True, optimize=sys.flags.optimize)
+    _generator_codes = frozenset(code for code in _code_tree(reference)
+                                if code.co_name == "_create_fn")
+    if not _generator_codes:
+        raise ValueError("unsupported standard-library dataclass generator")
+    _generated_active = True
+    sys.addaudithook(_generated_event)
+
+
+def _generated_event(event, args):
+    global _generated_busy, _generated_count
+    if not _generated_active or _generated_busy or event not in {"compile", "exec"}:
+        return
+    emitter = sys._getframe(1)
+    if emitter.f_code not in _generator_codes:
+        return
+    owner = emitter.f_back
+    while owner is not None:
+        if owner.f_code in _expected_codes.get(os.path.normcase(owner.f_code.co_filename), ()):
+            break
+        owner = owner.f_back
+    if owner is None:
+        return
+    if event == "compile":
+        content, filename = args
+        if not isinstance(content, (bytes, str)) or len(content) > MAX_MANIFEST:
+            _auditor().error("generated source exceeds verified bounds")
+        elif len(_generated_receipts) >= 512:
+            _auditor().error("generated source receipt bound exceeded")
+        else:
+            _generated_receipts.append((content, filename, emitter.f_code))
+        return
+    code = args[0]
+    for content, filename, origin in reversed(_generated_receipts):
+        if filename != code.co_filename or origin is not emitter.f_code:
+            continue
+        _generated_busy = True
+        try:
+            reference = compile(content, filename, "exec", flags=code.co_flags,
+                                dont_inherit=True, optimize=sys.flags.optimize)
+        finally:
+            _generated_busy = False
+        if reference != code:
+            continue
+        actual = tuple(_code_tree(code))
+        if _generated_count + len(actual) > 4096:
+            _auditor().error("verified generated code-object bound exceeded")
+            return
+        _generated_count += len(actual)
+        for value in actual:
+            # Proven generated methods have no fixed repository line coordinates.
+            _code_sources[id(value)] = (value, None)
+        return
+
+
+def _start_thread(*args, **kwargs):
+    if _thread_guard_active and sys._getframe(1).f_code is not _thread_start_code:
+        _auditor().error("unsupported low-level thread coverage lifecycle")
+    return _start_thread_original(*args, **kwargs)
+
+
+def _install_thread_guard():
+    global _thread_guard_active
+    _thread_guard_active = True
+    _thread.start_new_thread = _thread.start_new = threading._start_new_thread = _start_thread
 
 
 def _frame_source(frame):
@@ -204,6 +287,8 @@ def start(control):
         filenames.add(os.path.normcase(filename))
         inventory[filename] = (identifier, maximum, digest)
     _prepare_sources(inventory)
+    _install_generated_guard()
+    _install_thread_guard()
     if not _sources:
         raise ValueError("empty child coverage source map")
     _phase("source-map-ready")

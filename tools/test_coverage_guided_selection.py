@@ -68,6 +68,8 @@ from tools.test_child_stream import (  # noqa: E402,F401
     test_distinct_actual_code_objects_do_not_alias_shared_string_filename,
     test_executed_code_requires_verified_source_tree_and_strong_identity,
     test_parent_guard_replacement_is_reported_without_application_exception,
+    test_generated_identity_requires_proven_emitter_owner_and_executed_bytes,
+    test_low_level_thread_refusal_preserves_call_and_catches_cached_parent_alias,
     test_real_timestamp_valid_bytecode_is_bound_to_executed_source,
     test_generated_source_extension_identity_is_strict,
     test_interpreter_options_do_not_exempt_site_disabled_code,

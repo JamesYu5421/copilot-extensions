@@ -194,8 +194,16 @@ def configure_parent(control, python, nonce, inventory, helpers):
     root = os.path.commonpath([os.path.dirname(row["installed"]) for row in _inventory.values()])
     _runtime._root = os.path.normcase(root + os.sep)
     _runtime._package = os.path.basename(root)
+    _runtime._install_generated_guard()
+    _runtime._install_thread_guard()
     sys.addaudithook(_profile_event)
     _guard_active = _guard_arming = True
+    original = threading.setprofile
+    def set_thread_profile(function):
+        if _guard_active and not _guard_arming and function is not _profile:
+            _auditor().error("parent thread executable-source guard was replaced")
+        return original(function)
+    threading.setprofile = set_thread_profile
     try:
         threading.setprofile(_profile)
         sys.setprofile(_profile)
@@ -206,6 +214,9 @@ def configure_parent(control, python, nonce, inventory, helpers):
 def _profile(frame, event, arg):
     if event == "call":
         _runtime._frame_source(frame)
+    elif event == "c_call" and arg is _runtime._start_thread_original:
+        if frame.f_code not in (_runtime._thread_start_code, _runtime._start_thread.__code__):
+            _auditor().error("unsupported low-level thread coverage lifecycle")
 
 
 def _profile_event(event, args):
@@ -239,6 +250,7 @@ def finish_parent():
         if sys.getprofile() is not _profile or threading.getprofile() is not _profile:
             _auditor().error("parent executable-source guard was replaced")
         _guard_active = False
+        _runtime._generated_active = _runtime._thread_guard_active = False
         sys.setprofile(None)
         threading.setprofile(None)
     if any(hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected
