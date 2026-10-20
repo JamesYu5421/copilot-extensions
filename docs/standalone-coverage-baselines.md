@@ -1,6 +1,6 @@
 # Native standalone coverage baselines
 
-Fleet Manager's baseline/full promotion lane earns coverage with the same
+Fleet Manager's explicit native qualification lane earns coverage with the same
 installed-package preparation, environment lease and native host containment
 as `tools/run-standalone-tests.py`. It does not change that runner or activate
 per-PR selection. The existing coverage engine's context driver and schema-v3
@@ -300,24 +300,34 @@ cannot hold setup or completion past the existing fixture deadline.
 Inventory derivation may reuse the exact bytes just checked for source equivalence,
 but launch-time equivalence and end-of-run source rechecks remain mandatory.
 
-`validate-and-promote.yml` earns separate Linux and Windows evidence under
-`fleet-manager-linux` and `fleet-manager-windows`. Its two independent
+`standalone-coverage-qualification.yml` is a manually dispatched qualification
+lane, independent of Source promotion. It requires one exact full source SHA
+and earns separate Linux and Windows evidence under `fleet-manager-linux` and
+`fleet-manager-windows`. Its two independent
 `fleet-manager-baselines-linux`/`fleet-manager-baselines-windows` jobs use literal
 GitHub-hosted runner labels, not dynamic runner expressions, preserving the
-trusted-routing contract. Both jobs must succeed and both
-artifacts must exist before promotion. Artifact names retain the existing
+trusted-routing contract. Both jobs must succeed and both artifacts must exist
+for native full-baseline qualification. Artifact names retain the existing
 `coverage-baseline-` prefix; JSON filenames match the embedded baseline identity.
-The existing publisher writes the small main-history pointers and publishes their
-full JSON maps as Release assets at `coverage-baselines-<measured-dev-SHA>`.
+The lane has read-only repository permission, does not publish a Release or write
+main-history pointers, and is not a prerequisite of `validate-and-promote.yml`.
+That workflow retains its source-unit evidence architecture. There is no new
+publisher, Main activation or automatic qualification dispatch.
 
 This is **stage 1**. A locally produced JSON is validation evidence, not an admitted
-production baseline. Stage 2 may activate strict required selection only after a
-real promotion has published both assets and qualifying main-history pointers.
-It must resolve the appropriate platform identity, verify freshness and attribution,
+production baseline; an uploaded Actions artifact is not a published baseline
+either. Both native full-baseline and all original performance obligations remain
+required before merge or strict Stage 2. Governed immutable Release assets and
+qualifying main-history pointers remain required, not replaced by the manual
+lane's artifact names. The existing publication helpers retain the
+`coverage-baselines-<measured-dev-SHA>` contract, but this experiment does not
+reactivate removed promotion ingestion or supply a parallel publication path.
+Until that governed publication is actually qualified, strict selection stays
+disabled. Any later Stage 2 consumer must resolve the appropriate platform
+identity, verify freshness and attribution,
 and fail visibly on unavailable/untrusted evidence rather than run a full suite
 or treat a null decision as a successful empty run. Existing shadow consumers
 remain unchanged.
 
-Workflow-structure assertions require PyYAML in the prepared tooling environment.
-The manual integration lane declares it through governed dependency admission;
+Workflow-structure assertions require PyYAML in the prepared test environment;
 missing YAML support fails visibly rather than skipping required assertions.

@@ -237,21 +237,28 @@ class TestStandaloneCoverage:
     @pytest.mark.parametrize("platform,label", [
         ("linux", "ubuntu-latest"), ("windows", "windows-latest"),
     ])
-    def test_promotion_enrolls_both_platforms_and_blocks_on_full_collection(self, platform, label):
+    def test_independent_qualification_requires_both_full_native_collections(self, platform, label):
         import yaml
 
         root = Path(__file__).resolve().parents[1]
-        text = (root / ".github/workflows/validate-and-promote.yml").read_text()
-        jobs = yaml.safe_load(text)["jobs"]
+        text = (root / ".github/workflows/standalone-coverage-qualification.yml").read_text()
+        workflow = yaml.safe_load(text)
+        jobs = workflow["jobs"]
+        # PyYAML's YAML 1.1 loader treats the Actions "on" key as True.
+        triggers = workflow.get("on", workflow.get(True))
+        assert set(triggers) == {"workflow_dispatch"}
+        assert workflow["permissions"] == {"contents": "read"}
+        assert set(jobs) == {"gate", "fleet-manager-baselines-linux", "fleet-manager-baselines-windows"}
         identity = f"fleet-manager-{platform}"
         job_name = f"fleet-manager-baselines-{platform}"
         job = jobs[job_name]
         assert job["runs-on"] == label
         assert "strategy" not in job
         assert job["needs"] == "gate"
-        assert job["if"] == "needs.gate.outputs.is_dev == 'true'"
+        assert "if" not in job
         assert job["steps"][0]["with"] == {
             "fetch-depth": 0, "ref": "${{ needs.gate.outputs.sha }}",
+            "persist-credentials": False,
         }
         assert job["timeout-minutes"] == 15
         run = next(step["run"] for step in job["steps"] if "run" in step)
@@ -264,45 +271,44 @@ class TestStandaloneCoverage:
             "name": f"coverage-baseline-{identity}", "path": f"{identity}.json",
             "if-no-files-found": "error", "retention-days": 7,
         }
-        for owner in ("build-python-artifacts", "report-failure", "promote"):
-            assert job_name in jobs[owner]["needs"]
-        promotion_runs = "\n".join(step.get("run", "") for step in jobs["promote"]["steps"])
-        assert f"needs.{job_name}.result" in promotion_runs
-        assert "fleet-manager-linux fleet-manager-windows; do" in promotion_runs
-        assert f"needs.{job_name}.result == 'failure'" in jobs["report-failure"]["if"]
+        promotion = (root / ".github/workflows/validate-and-promote.yml").read_text()
+        assert job_name not in promotion
+        assert "coverage-baseline-" not in promotion
+        assert "source-units" in yaml.safe_load(promotion)["jobs"]
 
-    def test_manual_integration_declares_required_workflow_parser(self):
+    @pytest.mark.parametrize("source,valid", [
+        ("a" * 40, True), ("a" * 39, False), ("A" * 40, False),
+        ("dev", False), ("a" * 40 + "\n", False),
+    ])
+    def test_qualification_validates_immutable_input_before_native_jobs(self, tmp_path, monkeypatch, source, valid):
         import yaml
 
         root = Path(__file__).resolve().parents[1]
-        jobs = yaml.safe_load((root / ".github/workflows/ci.yml").read_text())["jobs"]
-        job = jobs["coverage-guided-selection-integration"]
-        invocation = next(
-            step["run"] for step in job["steps"]
-            if "test_coverage_guided_selection.py" in step.get("run", "")
-        )
-        assert "python tools/seasoned_uv.py --uv uv -- --system pytest pyyaml" in invocation
-        assert "python -m pytest -q" in invocation
-        assert not any(step.get("continue-on-error") for step in job["steps"])
+        workflow = yaml.safe_load((root / ".github/workflows/standalone-coverage-qualification.yml").read_text())
+        gate = workflow["jobs"]["gate"]
+        script = next(step["run"] for step in gate["steps"] if "run" in step)
+        body = script.split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+        output = tmp_path / "output"
+        monkeypatch.setenv("MEASURED_COMMIT", source)
+        monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+        if valid:
+            exec(compile(body, "<qualification-input>", "exec"), {})
+            assert output.read_text() == "sha=" + source + "\n"
+        else:
+            with pytest.raises(ValueError, match="exact full source SHA"):
+                exec(compile(body, "<qualification-input>", "exec"), {})
+            assert not output.exists()
 
     def test_stage_one_does_not_activate_required_fleet_coverage_selection(self):
         import yaml
 
         root = Path(__file__).resolve().parents[1]
         jobs = yaml.safe_load((root / ".github/workflows/ci.yml").read_text())["jobs"]
-        for platform in ("linux", "windows"):
-            job = jobs[f"fleet-native-{platform}"]
-            assert job["needs"] == "discover"
-            assert "needs.discover.outputs.fleet_contracts == 'true'" in job["if"]
-            run = next(
-                step["run"] for step in job["steps"]
-                if "run-standalone-tests.py fleet-manager" in step.get("run", "")
-            )
-            assert (
-                "--timeout ${{ github.event_name == 'workflow_dispatch' && "
-                "inputs.promotion_run == '' && 600 || 120 }}"
-            ) in run
-            assert "--selection-file" not in run and "run-coverage-selected-tests.py" not in run
+        assert "unit-plan" in jobs and "unit-tests" in jobs
+        assert not any(name.startswith("fleet-native-") for name in jobs)
+        runs = "\n".join(step.get("run", "") for job in jobs.values() for step in job.get("steps", []))
+        assert "coverage_guided_selection/standalone.py" not in runs
+        assert "fleet-manager-linux" not in runs and "fleet-manager-windows" not in runs
 
     @pytest.mark.parametrize("initially_compatible", [False, True])
     def test_reused_environment_checks_and_provisions_parent_context_capability(
