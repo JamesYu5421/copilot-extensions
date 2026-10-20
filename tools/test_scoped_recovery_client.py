@@ -2,7 +2,9 @@
 
 import io
 import json
+import os
 import subprocess
+import time
 
 import pytest
 
@@ -64,3 +66,49 @@ def test_empty_or_refused_completion_cannot_claim_producers():
     client.completion = {"all_admitted": False}
     assert client.evidence()["admitted"] is False
     assert client.evidence()["producer_count"] == 0
+
+
+@pytest.mark.skipif(os.name == "nt", reason="owned observer uses POSIX control pipes")
+def test_reply_prefix_without_newline_cannot_block_beyond_deadline():
+    reader_fd, writer_fd = os.pipe()
+    with os.fdopen(reader_fd, "rb", buffering=0) as reader, os.fdopen(writer_fd, "wb", buffering=0) as writer:
+        client = ScopedRecoveryClient(reader, None, "token", [])
+        writer.write(b'{"token":"token"')
+        started = time.monotonic()
+        client.deadline = started + 0.05
+        with pytest.raises(RuntimeError, match="fixture guard expired"):
+            client._reply()
+        assert time.monotonic() - started < 0.20
+
+
+@pytest.mark.skipif(os.name == "nt", reason="owned observer uses POSIX control pipes")
+def test_multiple_bounded_reply_frames_preserve_buffered_next_reply():
+    reader_fd, writer_fd = os.pipe()
+    with os.fdopen(reader_fd, "rb", buffering=0) as reader, os.fdopen(writer_fd, "wb", buffering=0) as writer:
+        client = ScopedRecoveryClient(reader, None, "token", [])
+        client.deadline = time.monotonic() + 1
+        writer.write(b'{"token":"token","op":"READY"}\n{"token":"token","op":"COMPLETED"}\n')
+        assert client._reply()["op"] == "READY"
+        assert client._reply()["op"] == "COMPLETED"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="owned observer uses POSIX control pipes")
+def test_reply_bound_applies_before_json_parsing():
+    import threading
+
+    reader_fd, writer_fd = os.pipe()
+    with os.fdopen(reader_fd, "rb", buffering=0) as reader, os.fdopen(writer_fd, "wb", buffering=0) as writer:
+        client = ScopedRecoveryClient(reader, None, "token", [])
+        client.deadline = time.monotonic() + 1
+
+        def send():
+            writer.write(b"x" * 65536)
+
+        thread = threading.Thread(target=send)
+        thread.start()
+        try:
+            with pytest.raises(RuntimeError, match="invalid owned observer reply"):
+                client._reply()
+        finally:
+            thread.join(timeout=1)
+        assert not thread.is_alive()

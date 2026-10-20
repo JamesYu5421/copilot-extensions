@@ -21,6 +21,7 @@ _lock = threading.Lock()
 _sources = {}
 _code_sources = {}
 _root = ""
+_package = ""
 _control = None
 _arming = False
 _phase_marker = None
@@ -71,7 +72,12 @@ def _source(filename):
 
 
 def _frame_source(frame):
-    return _code_sources.get(id(frame.f_code)) or _source(frame.f_code.co_filename)
+    source = _code_sources.get(id(frame.f_code)) or _source(frame.f_code.co_filename)
+    if source is None and _package:
+        module = getattr(frame, "f_globals", {}).get("__name__", "")
+        if isinstance(module, str) and (module == _package or module.startswith(_package + ".")):
+            _auditor().error("owned package executed outside verified source inventory")
+    return source
 
 
 def _line(frame, event, arg):
@@ -115,7 +121,7 @@ def _after_fork():
 
 
 def start(control):
-    global _started, _fd, _root, _control, _arming
+    global _started, _fd, _root, _package, _control, _arming
     value = os.environ.get(ENV)
     if _started or not value:
         return
@@ -126,7 +132,8 @@ def start(control):
         != os.path.realpath(os.path.join(control, "manifests"))
     ):
         raise ValueError("unowned child context manifest")
-    started = int(os.environ.get("_CGS_PRELUDE_NS", time.perf_counter_ns()))
+    start_marker = os.environ.get("_CGS_PRELUDE_NS")
+    started = int(start_marker) if start_marker is not None else time.perf_counter_ns()
     with open(value, "rb") as stream:
         content = stream.read(MAX_MANIFEST + 1)
     _phase("manifest-read")
@@ -147,6 +154,7 @@ def start(control):
     ):
         raise ValueError("unowned child stream directory")
     _root = os.path.normcase(root)
+    _package = os.path.basename(root.rstrip("/\\"))
     identifiers = set()
     for row in rows[1:]:
         identifier, maximum, filename = row.split("\t")
@@ -179,24 +187,25 @@ def start(control):
     _write(f"R {VERSION} {nonce} {context} {os.getpid()} {owner} {arguments} {born}\n".encode("ascii"))
     _started = True
     _phase("stream-header-written")
-    # ID zero is the one initialization-duration record (microseconds).
-    finished = time.perf_counter_ns()
-    finished_cpu = time.process_time_ns() if _phase_reporter is not None else None
-    duration = (finished - started) // 1000
-    _write(b"\0\0" + duration.to_bytes(4, "big"))
+    with _lock:
+        if hasattr(os, "register_at_fork"):
+            os.register_at_fork(after_in_child=_after_fork)
+        _arming = True
+        try:
+            threading.settrace(_call)
+            sys.settrace(_call)
+        finally:
+            _arming = False
+        original = threading.settrace
+        def set_thread_trace(function):
+            if function is not _call:
+                auditor.error("child thread tracer was replaced")
+            return original(function)
+        threading.settrace = set_thread_trace
+        # Publish timing after all required setup, before any line writer can run.
+        finished = time.perf_counter_ns()
+        finished_cpu = time.process_time_ns() if _phase_reporter is not None else None
+        duration = (finished - started) // 1000
+        _write(b"\0\0" + duration.to_bytes(4, "big"))
     if _phase_reporter is not None:
         _phase_reporter(control,start_ns=started,end_ns=finished,end_cpu_ns=finished_cpu,duration_us=duration)
-    if hasattr(os, "register_at_fork"):
-        os.register_at_fork(after_in_child=_after_fork)
-    _arming = True
-    try:
-        threading.settrace(_call)
-        sys.settrace(_call)
-    finally:
-        _arming = False
-    original = threading.settrace
-    def set_thread_trace(function):
-        if function is not _call:
-            auditor.error("child thread tracer was replaced")
-        return original(function)
-    threading.settrace = set_thread_trace

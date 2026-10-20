@@ -17,6 +17,7 @@ class ScopedRecoveryClient:
         self.pytest_result = None
         self.started = self.caller_end = self.pair_evidence = None
         self.processes, self.exits = {}, {}
+        self._reply_buffer = bytearray()
 
     def _send(self, value):
         value = dict(value, token=self.token)
@@ -24,12 +25,27 @@ class ScopedRecoveryClient:
         self.writer.flush()
 
     def _reply(self):
-        if not select.select([self.reader], [], [], max(0, self.deadline-time.monotonic()))[0]:
-            raise RuntimeError("owned observer fixture guard expired")
-        raw = self.reader.readline(65537)
-        if not raw or len(raw) > 65536:
-            raise RuntimeError("invalid owned observer reply")
-        value = json.loads(raw)
+        raw = self._reply_buffer
+        while True:
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("owned observer fixture guard expired")
+            newline = raw.find(b"\n")
+            if newline >= 0:
+                if newline + 1 > 65536:
+                    raise RuntimeError("invalid owned observer reply")
+                line = bytes(raw[:newline + 1])
+                del raw[:newline + 1]
+                break
+            if len(raw) >= 65536:
+                raise RuntimeError("invalid owned observer reply")
+            if not select.select([self.reader], [], [], remaining)[0]:
+                raise RuntimeError("owned observer fixture guard expired")
+            block = os.read(self.reader.fileno(), min(4096, 65537 - len(raw)))
+            if not block:
+                raise RuntimeError("invalid owned observer reply")
+            raw.extend(block)
+        value = json.loads(line.decode("utf-8"))
         if value.get("token") != self.token:
             raise RuntimeError("unowned observer reply")
         return value

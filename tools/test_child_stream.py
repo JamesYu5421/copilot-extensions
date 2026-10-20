@@ -82,6 +82,62 @@ def test_distinct_actual_code_objects_do_not_alias_shared_string_filename(monkey
     assert runtime._frame_source(SimpleNamespace(f_code=unknown)) is None
 
 
+def test_owned_package_shadow_cannot_be_a_successful_zero_hit_producer(monkeypatch):
+    from types import SimpleNamespace
+
+    failures = []
+    monkeypatch.setattr(runtime, "_package", "fleet_manager")
+    monkeypatch.setattr(runtime, "_sources", {})
+    monkeypatch.setattr(runtime, "_code_sources", {})
+    monkeypatch.setattr(runtime, "_root", "verified-installed-root/")
+    monkeypatch.setattr(child_audit, "error", failures.append)
+    frame = SimpleNamespace(
+        f_code=SimpleNamespace(co_filename="checkout/src/fleet_manager/planning.py"),
+        f_globals={"__name__": "fleet_manager.planning"},
+    )
+    assert runtime._frame_source(frame) is None
+    assert failures == ["owned package executed outside verified source inventory"]
+    frame.f_globals["__name__"] = "unrelated"
+    runtime._frame_source(frame)
+    assert len(failures) == 1
+
+
+def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evidence, monkeypatch):
+    from types import SimpleNamespace
+
+    _, _, _, _, options = evidence
+    control = options["audit_control"]
+    (control / "run").write_text(options["nonce"], encoding="ascii")
+    events = []
+    monkeypatch.setenv(runtime.ENV, str(control / "manifests" / ("b" * 64 + ".manifest")))
+    monkeypatch.setenv("_CGS_PRELUDE_NS", "1000")
+    for key, value in (("_started", False), ("_sources", {}), ("_package", ""), ("_root", ""), ("_fd", None)):
+        monkeypatch.setattr(runtime, key, value)
+    monkeypatch.setattr(runtime, "_write", lambda data: events.append(("write", data)))
+    original_trace = lambda _function: events.append(("thread-trace", None))
+    monkeypatch.setattr(runtime.threading, "settrace", original_trace)
+    monkeypatch.setattr(runtime.sys, "settrace", lambda _function: events.append(("process-trace", None)))
+    monkeypatch.setattr(runtime.os, "register_at_fork", lambda **_kwargs: events.append(("fork", None)), raising=False)
+    monkeypatch.setattr(runtime.os, "open", lambda *_args: 123)
+    auditor = SimpleNamespace(
+        owner_pid=lambda: 1, install=lambda *_a, **_k: None,
+        context=lambda _env: "b" * 64, argv_key=lambda _args: "d" * 64,
+    )
+    monkeypatch.setattr(runtime, "_auditor", lambda: auditor)
+
+    def endpoint():
+        assert runtime.threading.settrace is not original_trace
+        events.append(("endpoint", None))
+        return 11_000
+
+    monkeypatch.setattr(runtime.time, "perf_counter_ns", endpoint)
+    runtime.start(str(control))
+    names = [name for name, _ in events]
+    assert names.index("fork") < names.index("thread-trace") < names.index("process-trace")
+    assert names.index("process-trace") < names.index("endpoint")
+    writes = [data for name, data in events if name == "write"]
+    assert writes[-1] == b"\0\0" + (10).to_bytes(4, "big")
+
 @pytest.mark.parametrize("corruption",["collision","foreign-path","wrong-hash","fake-canonical"])
 def test_generated_source_extension_identity_is_strict(evidence,corruption):
     import hashlib
@@ -491,6 +547,7 @@ class TestChildStreamNative:
             env["CGS_TEST_AUDIT"] = options["_cgs_child_audit"]
             env["CGS_TEST_CONTROL"] = options["child_stream_control"]
             env["CGS_TEST_INSTALLED"] = str(installed)
+            env["CGS_TEST_SOURCE"] = str(repo / "fleet-manager/src")
             test = sandbox / "test_native_stream.py"
             if source is not None:
                 test.write_text(source, encoding="utf-8")
@@ -607,6 +664,7 @@ def test_zero():
         "bootstrap", "audit-disabled", "missing", "unknown", "write", "trace", "thread-trace", "live",
         "site-disabled", "site-disabled-bundled",
         "parent-context-stripped", "site-disabled-stdin",
+        "source-shadow",
     ])
     def test_opted_in_failure_never_emits_successful_result(self, failure):
         source = r'''
@@ -649,6 +707,9 @@ def test_expected_application_behavior():
     elif CASE=='parent-context-stripped':
         os.environ.pop('_CGS_CHILD_MANIFEST')
         environment.pop('_CGS_CHILD_MANIFEST')
+    elif CASE=='source-shadow':
+        environment['PYTHONPATH']=os.environ['CGS_TEST_SOURCE']
+        arguments=[sys.executable,'-c']
     elif CASE.startswith('site-disabled'):
         package=str(Path(os.environ['CGS_TEST_INSTALLED']).parent)
         code="import sys;sys.path.insert(0,"+repr(package)+");"+code

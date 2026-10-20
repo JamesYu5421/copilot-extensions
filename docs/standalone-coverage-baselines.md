@@ -46,6 +46,10 @@ termination; timing framing is emitted before line events. Future Python threads
 use the same source-scoped tracer. Replacing the process/thread tracer invalidates
 collection. Child backend/audit versions, helper hashes, producer counts, zero-hit
 counts and initialization durations are recorded in provenance.
+The duration endpoint follows fork-cleanup registration, both tracer
+installations and the thread-tracer guard. The existing sparse-writer lock
+keeps the duration record before any source-line record while charging all
+required initialization to the measured prelude.
 
 `child_audit.py` observes CPython `subprocess.Popen`/`os.posix_spawn` audit events,
 without wrapping Popen or waiting for initialization. Each intent is matched to
@@ -57,6 +61,9 @@ The auditor retains the active parent test context independently of mutable
 environment variables. Removing the parent's context marker cannot exempt later
 child launches, fork/exec or opaque system commands. Stdin `-` ends interpreter
 option parsing, so a following program `--help` never exempts site-disabled code.
+An owned package loaded from an unverified checkout or shadow `PYTHONPATH` is
+refused rather than recorded as a successful zero-hit producer. Its module
+identity does not grant source coordinates outside the verified inventory.
 
 The parent validates every manifest against its source inventory and context map,
 rechecks installed bytes, rejects a filename-bound live writer **before** reading
@@ -102,6 +109,27 @@ used: those prefixes change SQLite's file-URI semantics. Other collectors and
 platforms retain their ordinary pytest temporary-path behavior.
 
 ## Publication and the bootstrap gate
+
+### Explicit immutable observer artifact experiment
+
+`observer_artifact.py` separates the Linux x86-64 observer build from the
+owned workload. `build_bundle` uses the existing hash-pinned compiler wheel
+and canonical native source to produce an exclusively created bundle.
+The manifest binds the library bytes, entry source, compiler, native platform
+and actual Python image. It remains explicitly **unqualified**: a successful
+build or ELF constructor check is not native execution, baseline admission,
+release authentication or permission to activate the artifact.
+
+`stage_bundle` requires a manifest digest supplied independently by the
+owning caller, not a digest discovered in the bundle. It freshly checks that
+pin, current source and interpreter identities, bounded ordinary input files
+and ELF constructor identity, then stages an exclusive read-only copy. Input
+replacement, content changes, links and existing destinations are refused.
+Staging never extracts, compiles, installs, downloads or loads native code.
+All staging and source verification still belong inside the original caller's
+setup clocks. The builder is not a parallel release publisher or trust root;
+any publication must use the existing governed artifact mechanism.
+The prototype has no native Windows implementation or default activation.
 
 ### Opt-in measurement-launch prototype
 
@@ -266,6 +294,9 @@ An abrupt exit after authentic entry can retain valid source records only when
 the real kernel birth/exec/exit ledger and source evidence match. Its exit code
 alone never establishes “no SDK.” Missing exit, missing entry, unknown source or
 observer loss remains refusal even when the application reported success.
+Owned-test completion replies use bounded frame reads with deadline checks
+throughout the frame, not just before its first byte. A prefix without a newline
+cannot hold setup or completion past the existing fixture deadline.
 Inventory derivation may reuse the exact bytes just checked for source equivalence,
 but launch-time equivalence and end-of-run source rechecks remain mandatory.
 
