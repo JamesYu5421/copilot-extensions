@@ -7,7 +7,7 @@ exclude-newer = "7 days"
 
 [project]
 name = "agent-chat-service"
-version = "0.1.1-dev1"
+version = "0.1.2-dev1"
 description = "Portable, bounded conversation state and RPC core for agent-chat."
 readme = "README.md"
 license = "MIT"
