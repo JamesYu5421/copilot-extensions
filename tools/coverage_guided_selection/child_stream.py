@@ -32,6 +32,9 @@ _generated_active = False
 _thread_guard_active = False
 _start_thread_original = _thread.start_new_thread
 _thread_start_code = threading.Thread.start.__code__
+_profile_arming = False
+_profile_owner = None
+_prior_profile = _prior_thread_profile = None
 _root = ""
 _package = ""
 _control = None
@@ -180,6 +183,21 @@ def _install_thread_guard():
     _thread.start_new_thread = _thread.start_new = threading._start_new_thread = _start_thread
 
 
+def _thread_profile(frame, event, arg):
+    if event == "c_call" and arg is _start_thread_original:
+        if frame.f_code not in (_thread_start_code, _start_thread.__code__):
+            _auditor().error("unsupported low-level thread coverage lifecycle")
+    if _prior_profile is not None or _prior_thread_profile is not None:
+        previous = _prior_profile if threading.get_ident() == _profile_owner else _prior_thread_profile
+        if previous is not None:
+            previous(frame, event, arg)
+
+
+def stop_import_profile():
+    global _prior_profile, _prior_thread_profile
+    _prior_profile = _prior_thread_profile = None
+
+
 def _frame_source(frame):
     code = frame.f_code
     cached = _code_sources.get(id(code))
@@ -231,7 +249,7 @@ def _call(frame, event, arg):
 
 
 def _after_fork():
-    global _fd, _failed, _lock, _seen
+    global _fd, _failed, _lock, _seen, _profile_arming
     # Fork is explicitly refused by the audit contract. Never reuse its lock,
     # descriptor or sparse seen-set while the application finishes normally.
     if _fd is not None:
@@ -239,10 +257,18 @@ def _after_fork():
     _fd, _failed, _lock, _seen = None, True, threading.Lock(), set()
     sys.settrace(None)
     threading.settrace(None)
+    _profile_arming = True
+    try:
+        sys.setprofile(None)
+        threading.setprofile(None)
+    finally:
+        _profile_arming = False
+    stop_import_profile()
 
 
 def start(control):
     global _started, _fd, _root, _package, _control, _arming
+    global _profile_arming, _profile_owner, _prior_profile, _prior_thread_profile
     value = os.environ.get(ENV)
     if _started or not value:
         return
@@ -329,6 +355,25 @@ def start(control):
                 auditor.error("child thread tracer was replaced")
             return original(function)
         threading.settrace = set_thread_trace
+        _prior_profile, _prior_thread_profile = sys.getprofile(), threading.getprofile()
+        if any(value is not None and not callable(value)
+               for value in (_prior_profile, _prior_thread_profile)):
+            raise ValueError("child thread-start guard cannot preserve an opaque profiler")
+        _profile_owner = threading.get_ident()
+        _profile_arming = True
+        try:
+            threading.setprofile(_thread_profile)
+            sys.setprofile(_thread_profile)
+        finally:
+            _profile_arming = False
+        original_profile = threading.setprofile
+        def set_thread_profile(function):
+            if not _profile_arming and function is not _thread_profile:
+                auditor.error("child thread-start profile guard was replaced")
+            return original_profile(function)
+        threading.setprofile = set_thread_profile
+        if sys.getprofile() is not _thread_profile or threading.getprofile() is not _thread_profile:
+            raise ValueError("child thread-start profile guard was not installed")
         # Publish timing after all required setup, before any line writer can run.
         finished = time.perf_counter_ns()
         finished_cpu = time.process_time_ns() if _phase_reporter is not None else None

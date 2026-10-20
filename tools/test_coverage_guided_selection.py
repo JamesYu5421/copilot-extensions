@@ -70,6 +70,7 @@ from tools.test_child_stream import (  # noqa: E402,F401
     test_parent_guard_replacement_is_reported_without_application_exception,
     test_generated_identity_requires_proven_emitter_owner_and_executed_bytes,
     test_low_level_thread_refusal_preserves_call_and_catches_cached_parent_alias,
+    test_child_thread_profile_preserves_then_stops_only_prior_diagnostic_callbacks,
     test_real_timestamp_valid_bytecode_is_bound_to_executed_source,
     test_generated_source_extension_identity_is_strict,
     test_interpreter_options_do_not_exempt_site_disabled_code,
@@ -87,6 +88,7 @@ from tools.test_child_stream import (  # noqa: E402,F401
 )
 from tools.test_measurement_launch import (  # noqa: E402,F401
     TestMeasurementContainer,
+    test_import_profile_reporting_preserves_active_child_thread_guard,
     test_child_json_encoding_is_byte_exact_to_stdlib,
     test_child_json_decoding_preserves_types_duplicates_numbers_and_unicode,
     test_child_json_bytes_encoding_detection_matches_stdlib,

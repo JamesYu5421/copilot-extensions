@@ -17,6 +17,7 @@ def test_child_runtime_has_only_runtime_functions_and_parent_reuses_constants():
     assert names=={"_phase","_auditor","_write","_fail","_source","_frame_source",
                    "_code_tree","_prepare_sources",
                    "_install_generated_guard","_generated_event","_start_thread","_install_thread_guard",
+                   "_thread_profile","stop_import_profile",
                    "_line","_call","_after_fork","start"}
     assert stream._auditor is runtime._auditor
     assert (stream.ENV,stream.VERSION,stream.MAX_RECORDS,stream.MAX_MANIFEST)==(
@@ -209,9 +210,27 @@ def test_low_level_thread_refusal_preserves_call_and_catches_cached_parent_alias
     frame = SimpleNamespace(f_code=compile("pass", "<caller>", "exec"))
     stream._profile(frame, "c_call", runtime._start_thread_original)
     assert len(failures) == 2
+    runtime._thread_profile(frame, "c_call", runtime._start_thread_original)
+    assert len(failures) == 3
     frame.f_code = runtime._thread_start_code
     stream._profile(frame, "c_call", runtime._start_thread_original)
-    assert len(failures) == 2
+    runtime._thread_profile(frame, "c_call", runtime._start_thread_original)
+    assert len(failures) == 3
+
+
+def test_child_thread_profile_preserves_then_stops_only_prior_diagnostic_callbacks(monkeypatch):
+    calls = []
+    monkeypatch.setattr(runtime, "_profile_owner", 1)
+    monkeypatch.setattr(runtime.threading, "get_ident", lambda: 1)
+    monkeypatch.setattr(runtime, "_prior_profile", lambda *args: calls.append("process"))
+    monkeypatch.setattr(runtime, "_prior_thread_profile", lambda *args: calls.append("thread"))
+    runtime._thread_profile(None, "call", None)
+    monkeypatch.setattr(runtime.threading, "get_ident", lambda: 2)
+    runtime._thread_profile(None, "call", None)
+    assert calls == ["process", "thread"]
+    runtime.stop_import_profile()
+    runtime._thread_profile(None, "call", None)
+    assert calls == ["process", "thread"]
 
 
 def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evidence, monkeypatch):
@@ -230,6 +249,14 @@ def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evide
     original_trace = lambda _function: events.append(("thread-trace", None))
     monkeypatch.setattr(runtime.threading, "settrace", original_trace)
     monkeypatch.setattr(runtime.sys, "settrace", lambda _function: events.append(("process-trace", None)))
+    profiles = {"process": None, "thread": None}
+    def set_profile(kind, function):
+        profiles[kind] = function
+        events.append((kind + "-profile", None))
+    monkeypatch.setattr(runtime.sys, "getprofile", lambda: profiles["process"])
+    monkeypatch.setattr(runtime.threading, "getprofile", lambda: profiles["thread"])
+    monkeypatch.setattr(runtime.sys, "setprofile", lambda function: set_profile("process", function))
+    monkeypatch.setattr(runtime.threading, "setprofile", lambda function: set_profile("thread", function))
     monkeypatch.setattr(runtime.os, "register_at_fork", lambda **_kwargs: events.append(("fork", None)), raising=False)
     monkeypatch.setattr(runtime.os, "open", lambda *_args: 123)
     auditor = SimpleNamespace(
@@ -252,6 +279,7 @@ def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evide
     assert names.index("thread-guard") < names.index("endpoint")
     assert names.index("fork") < names.index("thread-trace") < names.index("process-trace")
     assert names.index("process-trace") < names.index("endpoint")
+    assert names.index("thread-profile") < names.index("process-profile") < names.index("endpoint")
     writes = [data for name, data in events if name == "write"]
     assert writes[-1] == b"\0\0" + (10).to_bytes(4, "big")
 
@@ -271,6 +299,9 @@ def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evide
     ("parent", False, "", "trace-removal"),
     ("parent", False, "", "shadow-script"),
     ("child", False, "", "shadow-script"),
+    ("child", False, "", "cached-low-level"),
+    ("child", False, "", "profile-removal"),
+    ("child", False, "", "thread-profile-removal"),
 ])
 def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
     tmp_path, stale, location, optimization, thread_mode,
@@ -341,15 +372,27 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
             f"finally: threading.set{hook}(original)\n"
             "observed=values[0]\n"
         )
-    elif thread_mode == "low-level":
+    elif thread_mode in {"low-level", "cached-low-level", "profile-removal", "thread-profile-removal"}:
+        starter = "_thread.start_new_thread" if thread_mode == "low-level" else "pre_captured_start"
         consumer = (
             "import _thread,importlib\nvalues=[]\ngate=_thread.allocate_lock();gate.acquire()\n"
             "def consume():\n"
             " try: values.append(importlib.import_module('fixture_package.source').value())\n"
             " finally: gate.release()\n"
-            "_thread.start_new_thread(consume,())\nassert gate.acquire(timeout=20)\n"
-            "observed=values[0]\n"
         )
+        if thread_mode == "profile-removal":
+            consumer += "original=sys.getprofile();sys.setprofile(None)\n"
+        elif thread_mode == "thread-profile-removal":
+            consumer += "original=threading.getprofile();threading.setprofile(None)\n"
+        if thread_mode == "thread-profile-removal":
+            consumer += f"thread=threading.Thread(target=lambda: {starter}(consume,()))\nthread.start();thread.join()\n"
+        else:
+            consumer += f"{starter}(consume,())\n"
+        consumer += "assert gate.acquire(timeout=20)\nobserved=values[0]\n"
+        if thread_mode == "profile-removal":
+            consumer += "sys.setprofile(original)\n"
+        elif thread_mode == "thread-profile-removal":
+            consumer += "threading.setprofile(original)\n"
     elif thread_mode == "trace-removal":
         consumer = (
             "import sys\noriginal=sys.gettrace();sys.settrace(None)\n"
@@ -359,7 +402,8 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
     else:
         consumer = f"import runpy\nobserved=runpy.run_path({str(shadow)!r},run_name='__main__')['value']()\n"
     child_program = (
-        f"import sys;sys.path[:0]=[{str(tmp_path)!r},{str(sandbox)!r}];"
+        "import sys,_thread,threading;pre_captured_start=_thread.start_new_thread;"
+        f"sys.path[:0]=[{str(tmp_path)!r},{str(sandbox)!r}];"
         "import _cgs_child_audit,_cgs_child_stream;"
         f"_cgs_child_stream.start({options['child_stream_control']!r});"
         f"exec({consumer!r});print(observed)"
@@ -401,7 +445,8 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
         reason = ("executed code differs" if thread_mode == "normal" else
                   "guard was replaced" if thread_mode == "temporary-removal" and location == "parent" else
                   "tracer was replaced" if thread_mode == "temporary-removal" else
-                  "unsupported low-level thread" if thread_mode == "low-level" else
+                  "unsupported low-level thread" if thread_mode in {"low-level", "cached-low-level"} else
+                  "thread-start profile guard was replaced" if thread_mode in {"profile-removal", "thread-profile-removal"} else
                   "parent line tracer was replaced" if thread_mode == "trace-removal" else
                   "owned package executed outside")
         assert any(reason in row["reason"] for row in errors), errors

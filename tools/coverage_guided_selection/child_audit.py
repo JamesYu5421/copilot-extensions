@@ -198,6 +198,17 @@ def _event(event, arguments):
                 ):
                     error("child line tracer was replaced")
             return
+        if event == "sys.setprofile" and _child:
+            stream = sys.modules.get("_cgs_child_stream")
+            if stream is not None and not stream._profile_arming:
+                import threading
+                caller = sys._getframe(1)
+                if (
+                    caller.f_code is not threading.Thread._bootstrap_inner.__code__
+                    or threading.getprofile() is not stream._thread_profile
+                ):
+                    error("child thread-start profile guard was replaced")
+            return
         if event not in {"subprocess.Popen", "os.posix_spawn"}:
             return
         if event == "os.posix_spawn":

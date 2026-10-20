@@ -47,6 +47,11 @@ unrelated `<string>` code still fails owned-package verification. Temporary
 removal of the parent thread-profile hook invalidates collection even if restored.
 Direct low-level thread starts are an unsupported lifecycle: they still run
 normally, but invalidate collection instead of silently omitting their execution.
+The child also observes C-call starts through a monitored process/thread
+profile hook, covering native starter aliases captured before activation.
+Removing either profile hook invalidates collection even if later restored.
+Prior callable diagnostic profiles are chained, and import-profile reporting
+stops only that diagnostic callback rather than removing the coverage guard.
 Owned-package script paths are checked even when `runpy` names the module
 `__main__`; shadow paths never earn repository coordinates. The parent also
 monitors temporary process/thread line-tracer changes during pytest collection,

@@ -11,6 +11,41 @@ import pytest
 from tools.coverage_guided_selection import measurement_launch as launch
 
 
+@pytest.mark.parametrize("guard_active", [False, True])
+def test_import_profile_reporting_preserves_active_child_thread_guard(tmp_path, monkeypatch, guard_active):
+    import io
+    from types import SimpleNamespace
+
+    calls = []
+    runtime = SimpleNamespace(
+        _started=True, stop_import_profile=lambda: calls.append(("stop-diagnostic", None)),
+    )
+    monkeypatch.setattr(launch, "sys", SimpleNamespace(
+        _cgs_import_phases=[], modules={"_cgs_child_stream": runtime} if guard_active else {},
+        setprofile=lambda function: calls.append(("setprofile", function)),
+    ))
+    for key, value in (
+        ("CGS_PRELUDE_PHASE_PROFILE", "1"), ("_CGS_PRELUDE_NS", "100"),
+        ("_CGS_PRELUDE_PHASES", "timer-start:100:10;"),
+        ("_CGS_PRELUDE_SCHED_START", "10 20 1"),
+        ("_CGS_PRELUDE_CGROUP_START", "usage_usec 10\n"),
+    ):
+        monkeypatch.setenv(key, value)
+    original_open = builtins.open
+    def opened(path, *args, **kwargs):
+        if path == "/proc/self/schedstat":
+            return io.StringIO("20 30 2")
+        if path == "/sys/fs/cgroup/cpu.stat":
+            return io.StringIO("usage_usec 20\n")
+        return original_open(path, *args, **kwargs)
+    monkeypatch.setattr(launch, "open", opened, raising=False)
+    launch.report_prelude(tmp_path, start_ns=100, end_ns=300, end_cpu_ns=30, duration_us=0)
+    assert calls == [(("stop-diagnostic" if guard_active else "setprofile"), None)]
+    report = json.loads(next(tmp_path.glob("prelude-phases-*.json")).read_text())
+    assert report["diagnostic_only"] and report["imports"] == []
+    assert report["timer_start_ns"] == 100 and report["timer_end_ns"] == 300
+
+
 @pytest.mark.parametrize("value", [
     None, True, False, 0, 1, -1, 2**100, 0.0, -0.0, 5e-324, 1.7976931348623157e308,
     "\0\b\f\n\r\t\"\\/\U0001f680\ud800\udfff", [],

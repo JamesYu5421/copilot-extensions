@@ -293,7 +293,11 @@ def rewritten(arguments, request):
 def report_prelude(control, *, start_ns, end_ns, end_cpu_ns, duration_us):
     imports = getattr(sys, "_cgs_import_phases", None)
     if imports is not None:
-        sys.setprofile(None)
+        runtime = sys.modules.get("_cgs_child_stream")
+        if runtime is not None and runtime._started:
+            runtime.stop_import_profile()
+        else:
+            sys.setprofile(None)
         del sys._cgs_import_phases
     phase("timer-end", wall_ns=end_ns,cpu_ns=end_cpu_ns)
     events = []
