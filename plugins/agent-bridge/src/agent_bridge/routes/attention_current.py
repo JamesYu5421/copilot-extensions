@@ -11,6 +11,7 @@ from ..attention_current import (
     current_owned_attention,
     current_represented_attention,
 )
+from ..live_backfill import backfill
 
 router = APIRouter()
 
@@ -20,7 +21,7 @@ def get_current_attention(session_ref: str, request: Request) -> CurrentAttentio
     """Owned sessions first (a session id or a worktree handle whose owner
     runs), then the represented session a live registration or worktree head
     names. Never waits."""
-    from ..result_snapshot import build_represented_result_snapshot
+    from ..result_snapshot import build_represented_result_snapshot, represented_tail
     from .live_sessions import _db, _resolve_registration, _result_history, _to_info
     from .sessions import _resolve_result_session
 
@@ -52,8 +53,15 @@ def get_current_attention(session_ref: str, request: Request) -> CurrentAttentio
             fidelity="reduced",
         )
     registration = _to_info(row).model_dump(mode="json")
+    # One captured window for the row and its boundary: a pushed event that lands
+    # mid-read can't pair one request's detail with the next one's position.
+    tail = represented_tail(log)
     snapshot = build_represented_result_snapshot(
         registration=registration, event_log=log, requested_ref=session_ref, position=None,
         max_items=1, retired_ids=frozenset(db.live_session_aliases_to(row["session_id"])),
+        tail=tail,
     )
-    return current_represented_attention(snapshot, registration, session_ref)
+    return current_represented_attention(
+        snapshot, registration, session_ref,
+        tail=tail, replayed_before=backfill(request.app.state).started_at,
+    )
