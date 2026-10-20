@@ -211,7 +211,10 @@ def test_supervisor_serve_forwards_selected_authority_to_daemon(monkeypatch, tmp
             callbacks["on_cycle_start"](1, 10.0)
             return 0
 
-        return SimpleNamespace(serve=serve)
+        return SimpleNamespace(
+            serve=serve,
+            queue_cycle_start=lambda cycle, stamp, writer: writer(cycle, stamp),
+        )
 
     monkeypatch.setattr(supervisor_daemon, "SupervisorDaemon", daemon)
     invocation = core.build_parser().parse_args([
@@ -223,6 +226,8 @@ def test_supervisor_serve_forwards_selected_authority_to_daemon(monkeypatch, tmp
     assert error is None and status["owner"] == {
         "pid": os.getpid(), "authority_target": supervise_cli._supervisor_authority_target(invocation),
     }
+    assert status["generation"]["pid"] == os.getpid()
+    assert status["progress"] == {"phase": "starting", "observed_at": 10.0, "cycle_id": 1}
     with captured[0]["client_factory"]() as client:
         assert client.base_url == "http://127.0.0.1:19847"
 

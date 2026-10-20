@@ -166,6 +166,10 @@ def _sender_repo_for_target(
     agent_name: str, *, agent_inventory: list[dict] | None = None,
 ) -> str | None:
     """Derive a preference only for targets whose resolver consumes it."""
+    from .remote_acp_config import is_remote_address
+
+    if is_remote_address(agent_name):
+        return _core()._sender_repo()
     repo, separator, venue = agent_name.partition("@")
     if separator and repo.strip() and venue.strip():
         return None
@@ -222,6 +226,10 @@ class _SenderPreference:
 def _prepare_sender_preference(
     client, agent_name: str, *, agent_inventory: list[dict] | None = None,
 ) -> _SenderPreference:
+    from .remote_acp_config import is_remote_address
+
+    if is_remote_address(agent_name):
+        return _SenderPreference(agent_name, _core()._sender_repo())
     repo, separator, venue = agent_name.partition("@")
     if separator and repo.strip() and venue.strip():
         return _SenderPreference(agent_name, None)
@@ -250,6 +258,8 @@ def _start_agent_session(
 ) -> str:
     core = _core()
     from .client import BridgeClientError
+    from .protocol import REMOTE_ACP_TARGETS_PROTOCOL_VERSION
+    from .remote_acp_config import is_remote_address
     from .session_targeting_cli import _AgentSessionConflict, _busy_session_message
 
     if sender_preference is not None and sender_preference.agent_name != agent_name:
@@ -257,7 +267,12 @@ def _start_agent_session(
         raise SystemExit(2)
     caller_id = core._get_caller_id()
 
-    if not force_new:
+    daemon_reuse = is_remote_address(agent_name) and (
+        not agent_name.startswith("remote-acp:")
+        or client.daemon_supports(REMOTE_ACP_TARGETS_PROTOCOL_VERSION)
+    )
+    # Older named-target daemons predate binding-aware caller reuse.
+    if not force_new and not daemon_reuse:
         existing = _find_caller_session(client, agent_name, caller_id)
         if existing is not None:
             existing = _await_coming_up_settled(client, existing)

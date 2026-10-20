@@ -12,10 +12,9 @@ the scan into the daemon as a background-refreshed cache means ``GET
 /api/v1/agents`` becomes an O(1) read for a healthy, fresh hit, shared by
 every caller.
 
-This module deliberately does **not** cache the non-namespaced
-(``AgentResolver.list_agents()``) rows -- that listing is a cheap in-memory
-dict walk, not a scan, so caching it would only add a staleness class with
-no benefit.
+This module does not cache the non-namespaced rows. Static rows are an
+in-memory dict walk; remote rows may read project bindings, so composition
+runs off-thread before final namespace assembly and report-identity checks.
 
 See ``efforts/2026/10/07 pivot-streaming-transport/phase-3-design.md``'s (archived) 3b
 section for the full design rationale (last-known-good retention,
@@ -37,6 +36,7 @@ from typing import Any
 from .agent_registry_resolver import AgentResolver
 from .agent_roster_discovery import _DiscoveryMixin
 from .reader_ownership import ProviderReaderOwnership
+from .remote_acp_catalog import reconcile_remote_rows
 
 log = logging.getLogger("agent-bridge")
 
@@ -812,7 +812,9 @@ class AgentRosterCache(_DiscoveryMixin):
 
     # -- read path ------------------------------------------------------------
 
-    async def get_snapshot(self, *, force_refresh: bool = False) -> AgentRosterSnapshot:
+    async def get_snapshot(
+        self, *, force_refresh: bool = False, project: str | None = None,
+    ) -> AgentRosterSnapshot:
         """Build this request's response. Any namespace that is currently
         uninitialized, failed, or past its freshness deadline
         opportunistically joins its single-flight refresh before the
@@ -920,9 +922,20 @@ class AgentRosterCache(_DiscoveryMixin):
         # without this recheck, its last-known-good rows would still
         # publish as current/complete even though the refresh this request
         # itself waited on never actually happened.
+        catalog = getattr(self._resolver, "remote_acp_catalog", None)
+        remote_report = getattr(catalog, "contribution_report", None)
+        if project is None:
+            rows = list(await asyncio.to_thread(self._resolver.list_agents))
+        else:
+            rows = list(await asyncio.to_thread(self._resolver.list_agents, project=project))
+        # Row composition may read repository bindings; reconcile again after
+        # that await so a replaced namespace cannot publish its old rows.
+        self._reconcile_namespace_set()
         now = time.monotonic()
-        rows = list(self._resolver.list_agents())
-        incomplete_namespaces: list[str] = []
+        rows, remote_changed = reconcile_remote_rows(
+            rows, catalog, remote_report, getattr(self._resolver, "remote_acp_catalog", None),
+        )
+        incomplete_namespaces: list[str] = ["remote-acp"] if remote_changed else []
         # Iterate the *live* resolver's own namespace-registration order
         # (not `self._entries`'s own dict order, which a namespace removed
         # and later re-added could leave reordered relative to its

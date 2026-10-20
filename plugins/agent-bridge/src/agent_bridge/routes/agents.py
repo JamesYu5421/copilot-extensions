@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 from fastapi import APIRouter, HTTPException, Request
 
 router = APIRouter(tags=["agents"])
+
+
+async def _list_uncached(resolver, project: str | None) -> list[dict]:
+    list_async = getattr(resolver, "list_agents_async", None)
+    if not callable(list_async):
+        return []
+    return await list_async() if project is None else await list_async(project=project)
 
 
 @router.get("/api/v1/agents")
@@ -12,6 +20,7 @@ async def list_agents(
     request: Request,
     force_refresh: bool = False,
     require_complete: bool = False,
+    project: str | None = None,
 ):
     """List registered agent profiles.
 
@@ -38,8 +47,7 @@ async def list_agents(
     if not topology_ready:
         if require_complete:
             raise HTTPException(status_code=503, detail="agent roster not yet available")
-        list_async = getattr(resolver, "list_agents_async", None)
-        agents = await list_async() if callable(list_async) else []
+        agents = await _list_uncached(resolver, project)
         return {
             "agents": agents,
             "topology_errors": getattr(resolver, "topology_errors", []),
@@ -67,8 +75,7 @@ async def list_agents(
         # longer is -- fall back to the pre-3b per-call scan rather than
         # silently serving a different resolver's cached rows. Safe only
         # because the caller never asked for the fail-closed contract above.
-        list_async = getattr(resolver, "list_agents_async", None)
-        agents = await list_async() if callable(list_async) else []
+        agents = await _list_uncached(resolver, project)
         return {
             "agents": agents,
             "topology_errors": getattr(resolver, "topology_errors", []),
@@ -76,14 +83,22 @@ async def list_agents(
             "incomplete_namespaces": getattr(resolver, "incomplete_namespaces", []),
         }
 
-    snapshot = await cache.get_snapshot(force_refresh=force_refresh)
-    if require_complete and not snapshot.complete:
+    if project is None:
+        snapshot = await cache.get_snapshot(force_refresh=force_refresh)
+    else:
+        snapshot = await cache.get_snapshot(force_refresh=force_refresh, project=project)
+    remote_catalog = getattr(resolver, "remote_acp_catalog", None)
+    remote_incomplete = bool(remote_catalog is not None and remote_catalog.errors)
+    if require_complete and (not snapshot.complete or remote_incomplete):
         raise HTTPException(status_code=503, detail="agent roster incomplete")
     return {
         "agents": snapshot.rows,
         "topology_errors": getattr(resolver, "topology_errors", []),
         "topology_warnings": getattr(resolver, "topology_warnings", []),
-        "incomplete_namespaces": snapshot.incomplete_namespaces,
+        "incomplete_namespaces": [
+            *snapshot.incomplete_namespaces,
+            *(["remote-acp"] if remote_incomplete and "remote-acp" not in snapshot.incomplete_namespaces else []),
+        ],
     }
 
 
@@ -92,11 +107,18 @@ async def get_agent(
     agent_name: str,
     request: Request,
     include_unaddressable: bool = False,
+    project: str | None = None,
 ):
     """Get agent profile detail."""
     resolver = getattr(request.app.state, "resolver", None)
     if not resolver:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+    catalog = getattr(resolver, "remote_acp_catalog", None)
+    if catalog is not None and agent_name.startswith("remote-acp:"):
+        row = await asyncio.to_thread(catalog.detail, agent_name, project)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Remote ACP target not found")
+        return row
 
     lookup = getattr(resolver, "get_agent_config", None)
     config = (

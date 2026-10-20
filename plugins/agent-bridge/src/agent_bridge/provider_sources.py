@@ -63,6 +63,7 @@ from dropin_registry import (
 from plugin_activation import ActivationReport, resolve_active_plugins
 
 from .install_paths import effective_config_dir, normalized_path
+from .remote_acp_sources import RemoteContributionReport
 
 REGISTRY_NAME = "providers.d"
 
@@ -97,6 +98,7 @@ class ProviderManifest:
     schema_version: int = 0
     plugin: str | None = None
     plugin_root: str | None = None
+    http_credentials_version: int = 0
 
 
 class ManifestError(ValueError):
@@ -155,6 +157,12 @@ def parse_manifest(data: object, *, source_path: str = "") -> ProviderManifest:
     elif plugin is not None or plugin_root is not None:
         raise ManifestError("`plugin`/`plugin_root` require schema_version 1")
 
+    http_version = data.get("http_credentials_version", 0)
+    if type(http_version) is not int or http_version not in (0, 1):
+        raise ManifestError("`http_credentials_version` must be 0 or 1")
+    if http_version and schema_version != 1:
+        raise ManifestError("HTTP credential providers require schema_version 1")
+
     return ProviderManifest(
         namespace=ns,
         command=tuple(cmd),
@@ -164,6 +172,7 @@ def parse_manifest(data: object, *, source_path: str = "") -> ProviderManifest:
         schema_version=schema_version,
         plugin=plugin.strip() if isinstance(plugin, str) else None,
         plugin_root=plugin_root.strip() if isinstance(plugin_root, str) else None,
+        http_credentials_version=http_version,
     )
 
 
@@ -175,6 +184,7 @@ class ProviderRegistryReport:
     entries: Mapping[str, ProviderManifest]
     manifests: Mapping[str, ProviderManifest]
     findings: tuple[Finding, ...]
+    remote_acp: RemoteContributionReport | None = None
 
 
 def _inactive(
@@ -372,6 +382,7 @@ def _classify_manifest(
             schema_version=manifest.schema_version,
             plugin=manifest.plugin,
             plugin_root=canonical_root,
+            http_credentials_version=manifest.http_credentials_version,
         )
         return _classify_attribution(path, manifest, activation_report())
 
