@@ -236,7 +236,7 @@ def require_current_execution_space(config: Any) -> None:
 
 
 def require_record_mutation(record: Any, config: Any) -> None:
-    from . import tracking
+    from . import record_machine_identity, tracking
 
     if record is None:
         return
@@ -244,6 +244,49 @@ def require_record_mutation(record: Any, config: Any) -> None:
     entries = registry_for_config(config)
     from .legacy_wsl_record_locality import resolve_legacy_wsl_owner_ref
 
+    identity = record_machine_identity.machine_identity(record)
+    if identity is not None:
+        from .config import detect_platform, project_dir
+
+        try:
+            selected = resolve_machine_selection(entries, identity.execution_machine, identity.environment)
+        except ValueError as exc:
+            raise ExecutionSpaceError(str(exc)) from exc
+        if (
+            selected.entry is None
+            or selected.target.machine != identity.machine
+            or selected.target.environment != identity.environment
+            or selected.entry.key != identity.execution_machine
+        ):
+            raise ExecutionSpaceError("record tuple conflicts with its registered execution identity")
+        if (
+            identity.environment != detect_platform()
+            or identity.environment != config.platform
+            or not require_owner_identity(identity.execution_machine, config)
+        ):
+            raise ExecutionSpaceError("record belongs to a different execution space/platform")
+        if record.repo != config.repo_name:
+            raise ExecutionSpaceError("record does not belong to the receiving project")
+        path = project_dir(record.repo) / "worktrees" / f"{record.worktree_id}.yaml"
+        if path.exists():
+            proven = tracking.load_record(path)
+            if (
+                record_machine_identity.identity_fence(record) != record_machine_identity.identity_fence(proven)
+                or any(
+                    getattr(record, field) != getattr(proven, field)
+                    for field in ("repo", "worktree_id", "worktree_path")
+                )
+            ):
+                raise ExecutionSpaceError("record snapshot identity/platform does not match its proven ledger")
+        if record.owner_ref:
+            owner = tracking.parse_claim_ref(record.owner_ref)
+            if owner is None or not owner.is_qualified:
+                raise ExecutionSpaceError("owned record has an unqualified owner reference")
+            if not require_owner_identity(owner.machine, config):
+                raise ExecutionSpaceError(
+                    "cross-space parent ownership remains unsupported; settlement is blocked"
+                )
+        return
     legacy_path = None
     if (
         getattr(record, "repo", "") and getattr(record, "worktree_id", "")
@@ -317,7 +360,7 @@ def require_project_record_mutation(record: Any) -> None:
 
 
 def require_cleanup_identity(record: Any, anchor: str | Path) -> None:
-    """Cleanup has only repo metadata; require config only for scoped registries.
+    """Require tuple authority before considering legacy registry fallbacks.
 
     Resolves authority for ``record.repo`` (receiving-side), never ambient
     ``cfg.load_config()``: the caller's own active project can differ from
@@ -325,7 +368,11 @@ def require_cleanup_identity(record: Any, anchor: str | Path) -> None:
     unscoped/legacy registry would make ``require_record_mutation``
     silently no-op, letting a foreign record be reaped.
     """
-    from . import config as cfg
+    from . import config as cfg, record_machine_identity
+
+    if record_machine_identity.machine_identity(record) is not None:
+        require_project_record_mutation(record)
+        return
 
     try:
         entries = cfg.load_machines_yaml(anchor)
