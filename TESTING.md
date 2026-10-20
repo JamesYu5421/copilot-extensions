@@ -623,6 +623,13 @@ Native artifact/diagnostic subprocesses and durable planner/ledger tests do not
 consume each other's wall-clock budgets. Gateway TLS/credential tests and
 separate-process acceptance are independently bounded too; none shares the
 unrelated test-runner job's budget.
+The full Worktrees runner gives `test_python_runtime_dev_live.py` and
+`test_python_runtime_install.py` separate file groups. Exact-head native CI
+showed the former shared group consuming 196 seconds through both dev cycles
+before monitor drain began; that left 104 seconds for a drain test independently
+measured at 129 seconds. Splitting those files preserves every collected test
+and all item, 300-second group and whole-plugin deadlines. Filtered invocations
+retain their existing single-group behavior.
 
 ### Native PR-owner installation acceptance
 
