@@ -10,7 +10,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
-def publish_installed_selection(root: Path, version: str) -> list[Path]:
+def publish_install_artifacts(root: Path, version: str, *, select: bool = True) -> list[Path]:
     """Restore launchers and selection if publication fails under the install lease."""
     from . import self_install as si
 
@@ -22,7 +22,8 @@ def publish_installed_selection(root: Path, version: str) -> list[Path]:
         )
     try:
         stubs = si._deploy_binstubs()
-        si._write_marker(root, version)
+        if select:
+            si._write_marker(root, version)
         return stubs
     except BaseException as failure:
         rollback_failures = []

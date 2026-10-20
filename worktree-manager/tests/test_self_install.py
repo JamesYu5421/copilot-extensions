@@ -181,7 +181,7 @@ def test_failed_selection_preserves_legacy_launchers(
 
 
 def test_partial_launcher_deployment_restores_prior_artifacts(tmp_path, monkeypatch):
-    from worktree_manager.self_install_recovery import publish_installed_selection
+    from worktree_manager.self_install_recovery import publish_install_artifacts
 
     root = tmp_path / "root"
     lb = _patch_local_bin(monkeypatch, tmp_path)
@@ -199,11 +199,48 @@ def test_partial_launcher_deployment_restores_prior_artifacts(tmp_path, monkeypa
 
     monkeypatch.setattr(Path, "write_text", refuse_second)
     with pytest.raises(PermissionError, match="second launcher publication refused"):
-        publish_installed_selection(root, "new")
+        publish_install_artifacts(root, "new")
     assert current_version(root) == "retained"
     assert {path.name: path.read_bytes() for path in lb.iterdir()} == {
         first: b"retained launcher\r\n",
     }
+
+
+@pytest.mark.parametrize("failure", [PermissionError, KeyboardInterrupt])
+def test_metadata_repair_holds_lease_and_restores_a_truncated_launcher(tmp_path, monkeypatch, failure):
+    pd = _fake_payload(tmp_path, "1.2.3")
+    root = tmp_path / "root"
+    lb = _patch_local_bin(monkeypatch, tmp_path)
+    _patch_provider_registry(monkeypatch, tmp_path)
+    assert self_install(pd, root=root, dry_run=False).action == "installed"
+    stub = lb / si._primary_binstub_name()
+    stub.write_bytes(b"retained stale launcher\r\n")
+    marker_before = (root / si.MARKER).stat().st_mtime_ns
+    held = {"value": False}
+
+    def acquire(_):
+        held["value"] = True
+        return SimpleNamespace(release=lambda: held.update(value=False)), None
+
+    monkeypatch.setattr(si, "_acquire_install_cutover_lease", acquire)
+    monkeypatch.setattr(si, "_copy_payload", lambda *_: pytest.fail("healthy runtime rebuilt"))
+    monkeypatch.setattr(si, "_write_marker", lambda *_: pytest.fail("metadata repair changed selection"))
+    original_write = Path.write_text
+
+    def refuse(path, *args, **kwargs):
+        if path == stub:
+            assert held["value"], "launcher repair escaped construction ownership"
+            original_write(path, "partial launcher", encoding="utf-8")
+            raise failure("launcher truncated before write failure")
+        return original_write(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", refuse)
+    with pytest.raises(failure, match="launcher truncated before write failure"):
+        self_install(pd, root=root, dry_run=False)
+    assert not held["value"]
+    assert stub.read_bytes() == b"retained stale launcher\r\n"
+    assert current_version(root) == "1.2.3"
+    assert (root / si.MARKER).stat().st_mtime_ns == marker_before
 
 
 def test_apply_reaps_stranded_cutover_passive_before_copying_payload(tmp_path, monkeypatch):

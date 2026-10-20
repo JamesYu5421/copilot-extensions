@@ -1596,6 +1596,11 @@ The contained environment redirects inherited `WORKTREE_MANAGER_ROOT` and
 `AGENT_WORKTREES_CONTROL_PLANE_PROVIDERS_DIR` as well as HOME/USERPROFILE.
 Manager bootstrap checks must keep both their version selector and provider
 registration inside the test sandbox; a changed home alone is insufficient.
+For native engine-to-Manager qualification, set `MANAGER_ENGINE_TEST_PYTHON` to
+the already-prepared Worktrees test interpreter and select
+`test_native_engine_probe_preserves_the_installed_environment` through the
+standalone contained runner. `MANAGER_RUNTIME_WINDOWS_E2E=1` also observes its
+two no-UV probe cycles for visible windows and focus changes.
 
 There is no host-wide test singleton. Each target takes a lease keyed by its
 **concrete environment directory's filesystem identity** (`st_dev`, `st_ino`),

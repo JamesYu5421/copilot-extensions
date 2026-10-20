@@ -1,0 +1,9 @@
+{
+  "comment": "Probe selected Manager slots through their installed interpreter without project synchronization",
+  "changes": [
+    {
+      "plugin": "agent-worktrees",
+      "type": "patch"
+    }
+  ]
+}

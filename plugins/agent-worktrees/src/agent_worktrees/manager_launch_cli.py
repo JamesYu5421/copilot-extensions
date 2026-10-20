@@ -17,6 +17,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from agent_procutil import no_window_kwargs
+
 from . import config as cfg, output
 from . import control_plane_providers as _cpp
 
@@ -109,10 +111,8 @@ def _probe_worktree_manager_version(
 
     Retries on a bare timeout only -- never on a genuine spawn failure (a
     missing/non-executable binstub, which another attempt cannot fix). A cold
-    ``uv run`` resync (e.g. right after a self-update, or under heavy
-    concurrent load from other worktree/session activity on the same
-    machine) has been observed to take several seconds on its own, well
-    within an installed Manager's legitimate startup budget -- treating one
+    interpreter or a host under concurrent worktree/session load can take
+    several seconds within an installed Manager's legitimate startup budget -- treating one
     slow probe as conclusively "unusable" was too quick to call a real,
     working install uninstalled/broken (the loud reinstall-from-scratch
     guidance) when it was really just transient load.
@@ -125,6 +125,7 @@ def _probe_worktree_manager_version(
                 text=True,
                 timeout=timeout,
                 env=_launch_probe_env(),
+                **no_window_kwargs(),
             )
         except subprocess.TimeoutExpired:
             continue
@@ -218,10 +219,13 @@ def _usable_worktree_manager_launcher_dir() -> Path | None:
     )
     if slot is None:
         return None
+    python = slot / ".venv" / ("Scripts" if os.name == "nt" else "bin") / (
+        "python.exe" if os.name == "nt" else "python"
+    )
     version, proc = _core_helper(
         "_probe_worktree_manager_version", _probe_worktree_manager_version
     )(
-        ["uv", "run", "--quiet", "--project", str(slot), "python", "-m", "worktree_manager", "--version"]
+        [str(python), "-I", "-B", "-X", "utf8", "-m", "worktree_manager", "--version"]
     )
     if proc is None:
         output.warn(
@@ -324,7 +328,7 @@ def _run_direct_launch_fallback(project: str | None, passthrough: list[str]) -> 
             if not isinstance(ssh_alias, str) or not isinstance(remote_cmd, str):
                 output.err("Remote launch plan is missing ssh handoff details.")
                 return 1
-            proc = subprocess.Popen(["ssh", "-t", ssh_alias, remote_cmd])
+            proc = subprocess.Popen(["ssh", "-t", ssh_alias, remote_cmd])  # headless-guard: allow interactive SSH in caller's console
             return _wait_for_launch_child(proc)
         if action != "exec":
             output.err(f"Unknown launch action: {action}")

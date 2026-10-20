@@ -1878,8 +1878,10 @@ def test_cmd_launch_uses_relocated_worktree_manager_launcher_when_available(
     )
 
     def fake_run(argv, **kwargs):
-        assert argv[:4] == ["uv", "run", "--quiet", "--project"]
-        assert argv[4] == str(slot)
+        python = slot / ".venv" / ("Scripts" if os.name == "nt" else "bin") / (
+            "python.exe" if os.name == "nt" else "python"
+        )
+        assert argv == [str(python), "-I", "-B", "-X", "utf8", "-m", "worktree_manager", "--version"]
         assert argv[-2:] == ["worktree_manager", "--version"]
         return subprocess.CompletedProcess(argv, 0, stdout="0.1.0-dev35\n", stderr="")
 

@@ -146,6 +146,27 @@ implementation; public-file absence is not proof of unpublished custody.
 
 ## Journal
 
+- **2026-10-20** - Closed the subsequent review's remaining engine consumer
+  and metadata-repair gaps locally. The Worktrees launcher probe now executes
+  the selected Manager interpreter directly with the shared headless helper,
+  preserving its existing retry and actionable-error behavior. The Worktrees
+  release entry covers that tightly coupled consumer change; #7410 retains
+  initializer/profile diagnostics and #7431 retains transport ancestry.
+  Healthy-runtime launcher repair now takes the install lease, rechecks
+  readiness and shares preimage rollback without republishing the selector or
+  rebuilding the environment. Regressions truncate an existing launcher before
+  raising either a write error or cancellation, then prove restoration and
+  lease release.
+  The contained Worktrees consumer/launch selection passes **79 tests**;
+  the Manager install/runtime selection passes **102**, with two Windows
+  symlink-permission skips and the separate opt-in desktop observer disabled
+  for that run. A further opt-in native engine qualification passes both
+  no-UV probe cycles through the real prepared Worktrees interpreter with
+  unchanged Manager environment bytes and zero visible windows/focus changes.
+  No remote or production runtime is changed by these checks. Existing
+  pristine-box/Linux/macOS limitations remain explicit; review, promotion and
+  published local consumers are still open gates.
+
 - **2026-10-20** - The next current-head review identified five internal mux/
   Companion adapters still entering `uv run --project`, which could overwrite
   the same qualified environment with an editable install. Registration,

@@ -349,6 +349,9 @@ The existing cutover lease and live-slot protections remain in place.
 Source-only legacy completion markers are not runtime readiness; a no-op also
 requires actual installed health. Stale binstubs or provider metadata are
 repaired without rebuilding a healthy environment.
+Launcher-only repair takes the same install lease, rechecks readiness there
+and retains the previous launcher bytes through a partial write or interruption;
+it does not republish the selector or reconstruct the environment.
 
 Generated launchers resolve `current-version` and execute that slot's own
 interpreter. Ordinary calls perform no dependency solve and need no `uv` on
@@ -359,6 +362,9 @@ the interpreter belonging to their own script's installed slot, not a
 project-sync command or the globally selected version. They leave the qualified
 environment unchanged and work without `uv`; Windows background calls remain
 headless and preserve argument boundaries.
+The Worktrees engine's selected-Manager launcher probe likewise calls the
+installed interpreter directly, preserving that environment while checking
+its version before pane-wrapper selection.
 First-touch bootstrap uses a temporary qualified runner to enter this
 same self-install contract before importing runtime-dependent CLI modules;
 it removes that runner before launching the installed environment. A healthy

@@ -740,13 +740,6 @@ def self_install(
     if not needs_install(version, r):
         return SelfInstallResult(version=version, action="already-current", root=str(r),
                                  slot=str(slot), marker=version, cleaned=cleaned)
-    if _runtime_install_satisfied(version, r):
-        stubs = _deploy_binstubs() if binstub_present() is None or _binstubs_are_stale() else []
-        _write_control_plane_provider_manifest(pd, root=r)
-        return SelfInstallResult(
-            version=version, action="installed", root=str(r), slot=str(slot),
-            marker=version, binstubs=tuple(str(stub) for stub in stubs), cleaned=cleaned,
-        )
     # Hold the cutover lease across BOTH the stale-passive reap AND
     # _copy_payload itself -- releasing it in between (or skipping it on a
     # busy timeout or missing dependency) would reopen the exact race this
@@ -771,6 +764,17 @@ def self_install(
         if not needs_install(version, r):
             return SelfInstallResult(version=version, action="already-current", root=str(r),
                                      slot=str(slot), marker=version, cleaned=cleaned)
+        from .self_install_recovery import publish_install_artifacts
+
+        if _runtime_install_satisfied(version, r):
+            stubs = publish_install_artifacts(r, version, select=False) if (
+                binstub_present() is None or _binstubs_are_stale()
+            ) else []
+            _write_control_plane_provider_manifest(pd, root=r)
+            return SelfInstallResult(
+                version=version, action="installed", root=str(r), slot=str(slot),
+                marker=version, binstubs=tuple(str(stub) for stub in stubs), cleaned=cleaned,
+            )
         if _currently_running_from(slot):
             # This process's own interpreter lives inside `slot`.
             # `_core_install_satisfied` disagreeing with what `doctor`
@@ -810,9 +814,7 @@ def self_install(
             # (self_update's own contract is best-effort/non-fatal).
             return SelfInstallResult(version=version, action="error", root=str(r),
                                      slot=str(slot), reason=str(e), cleaned=cleaned)
-        from .self_install_recovery import publish_installed_selection
-
-        stubs = publish_installed_selection(r, version)
+        stubs = publish_install_artifacts(r, version)
         _write_control_plane_provider_manifest(pd, root=r)
         return SelfInstallResult(
             version=version, action="installed", root=str(r), slot=str(slot),

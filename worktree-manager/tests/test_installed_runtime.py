@@ -565,6 +565,36 @@ def test_internal_posix_calls_preserve_the_installed_environment(
     )
 
 
+@pytest.mark.skipif(
+    not os.environ.get("MANAGER_ENGINE_TEST_PYTHON"),
+    reason="opt-in engine-to-installed-Manager native qualification",
+)
+def test_native_engine_probe_preserves_the_installed_environment(
+    standalone_runtime, tmp_path, _no_visible_windows,
+):
+    slot = standalone_runtime
+    (slot / "bin").mkdir()
+    shutil.rmtree(slot / "src")
+    si._write_marker(slot.parent.parent, "1.2.3")
+    env = dict(os.environ, WORKTREE_MANAGER_ROOT=str(slot.parent.parent), PATH="")
+    assert shutil.which("uv", path=env["PATH"]) is None
+    before = _environment_snapshot(slot)
+    for _ in range(2):
+        result = subprocess.run(
+            [
+                os.environ["MANAGER_ENGINE_TEST_PYTHON"], "-I", "-B", "-X", "utf8", "-c",
+                "from agent_worktrees.manager_launch_cli import _usable_worktree_manager_launcher_dir;"
+                "print(_usable_worktree_manager_launcher_dir())",
+            ],
+            cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8", timeout=20,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout.strip() == str(slot / "bin")
+        assert not result.stderr.strip()
+        assert _environment_snapshot(slot) == before
+
+
 def test_probe_checks_actual_environment_and_import(standalone_runtime):
     runtime.probe_runtime(standalone_runtime, "1.2.3")
     with pytest.raises(RuntimeError, match="does not match"):
