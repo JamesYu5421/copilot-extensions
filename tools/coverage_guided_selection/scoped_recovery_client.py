@@ -8,6 +8,8 @@ import select
 import subprocess
 import time
 
+from .child_audit import argv_bytes
+
 
 class ScopedRecoveryClient:
     def __init__(self, reader, writer, token, contexts):
@@ -71,7 +73,7 @@ class ScopedRecoveryClient:
             def __init__(self, args, *positional, **kwargs):
                 bound = signature.bind(args, *positional, **kwargs)
                 arguments = [args] if isinstance(args, (str, bytes, os.PathLike)) else args
-                digest = hashlib.sha256("\0".join(os.fsdecode(value) for value in arguments[1:]).encode()).hexdigest()
+                digest = hashlib.sha256(argv_bytes(arguments)).hexdigest()
                 label = context()
                 if client.plan is not None and label in client.plan["controls"]:
                     environment = dict(os.environ if bound.arguments.get("env") is None else bound.arguments["env"])

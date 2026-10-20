@@ -22,11 +22,14 @@ def key(value):
     return os.path.normcase(os.path.abspath(os.fsdecode(value)))
 
 
+def argv_bytes(arguments):
+    return b"\0".join(os.fsencode(value) for value in arguments[1:])
+
+
 def argv_key(arguments):
     if not isinstance(arguments, (list, tuple)):
         raise ValueError("native argv must be a sequence")
-    values = [os.fsdecode(value) for value in arguments[1:]]
-    data = "\0".join(values).encode("utf-8")
+    data = argv_bytes(arguments)
     if len(data) > 65536:
         raise ValueError("native argv exceeds bound")
     return hashlib.sha256(data).hexdigest()

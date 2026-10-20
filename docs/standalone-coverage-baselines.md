@@ -52,6 +52,9 @@ Owned-package script paths are checked even when `runpy` names the module
 monitors temporary process/thread line-tracer changes during pytest collection,
 while permitting its own coverage start/stop and the active collector's ordinary
 new-thread tracer installation.
+Spawn and producer identities share the native filesystem argument encoding.
+Non-UTF-8 POSIX bytes and their surrogate-escaped string equivalents therefore
+hash losslessly without rewriting or rejecting supported application arguments.
 The fast unit selector checks code-tree and cache identity without launching
 interpreters. In a prepared collector environment, set
 `CGS_RUN_STANDALONE_INTEGRATION=1` and run

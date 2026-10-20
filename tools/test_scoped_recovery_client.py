@@ -6,16 +6,20 @@ import json
 import os
 import subprocess
 import time
+import sys
 from pathlib import Path
 
 import pytest
 
 from tools.coverage_guided_selection.scoped_recovery_client import ScopedRecoveryClient
+from tools.coverage_guided_selection.child_audit import argv_key
 
 
 @pytest.mark.parametrize("context", ["owned", "unrecognized"])
 @pytest.mark.parametrize("preloader", [None, "/existing/preloader.so"])
-@pytest.mark.parametrize("argument_kind", ["list", "tuple", "path", "text", "bytes"])
+@pytest.mark.parametrize("argument_kind", [
+    "list", "tuple", "path", "text", "bytes", "nonutf8-bytes", "surrogate-text",
+])
 def test_launch_options_and_actual_exits_preserved(monkeypatch, context, preloader, argument_kind):
     calls = []
 
@@ -49,6 +53,10 @@ def test_launch_options_and_actual_exits_preserved(monkeypatch, context, preload
         argv = argv[0]
     elif argument_kind == "bytes":
         argv = argv[0].encode()
+    elif argument_kind == "nonutf8-bytes":
+        argv.append(b"\xff")
+    elif argument_kind == "surrogate-text":
+        argv.append(b"\xff".decode("utf-8", "surrogateescape"))
     client.install_launch_recorder(lambda: context)
     try:
         child = subprocess.Popen(argv, 0, env=environment, cwd="/original")
@@ -67,9 +75,35 @@ def test_launch_options_and_actual_exits_preserved(monkeypatch, context, preload
     events = [json.loads(line) for line in writer.getvalue().splitlines()]
     assert [row["op"] for row in events] == ["LAUNCHED", "EXIT_OBSERVED"]
     assert events[0]["case"] == context and events[0]["pid"] == 71
-    tail = b"-I\0-c\0raise SystemExit(17)" if argument_kind in {"list", "tuple"} else b""
+    tail = (b"-I\0-c\0raise SystemExit(17)" if
+            argument_kind in {"list", "tuple", "nonutf8-bytes", "surrogate-text"} else b"")
+    if argument_kind in {"nonutf8-bytes", "surrogate-text"}:
+        tail += b"\0" + os.fsencode(argv[-1])
     assert events[0]["argv_key"] == hashlib.sha256(tail).hexdigest()
+    assert events[0]["argv_key"] == argv_key([argv] if isinstance(argv, (str, bytes, os.PathLike)) else argv)
     assert events[1]["returncode"] == 17
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or os.environ.get("CGS_RUN_STANDALONE_INTEGRATION") != "1",
+    reason="deliberate real POSIX native-argument boundary",
+)
+@pytest.mark.parametrize("argument", [b"\xff", b"\xff".decode("utf-8", "surrogateescape")])
+def test_posix_nonutf8_arguments_reach_actual_child_unchanged(argument):
+    writer = io.StringIO()
+    client = ScopedRecoveryClient(None, writer, "token", [])
+    code = "import os,sys;print(os.fsencode(sys.argv[1]).hex())"
+    command = [sys.executable, "-I", "-c", code, argument]
+    client.install_launch_recorder(lambda: "unrecognized")
+    try:
+        child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = child.communicate(timeout=10)
+        assert child.returncode == 0 and stdout.strip() == b"ff", stderr
+    finally:
+        client.restore_launch_recorder()
+    events = [json.loads(line) for line in writer.getvalue().splitlines()]
+    expected = hashlib.sha256(b"-I\0-c\0" + code.encode() + b"\0\xff").hexdigest()
+    assert events[0]["argv_key"] == argv_key(command) == expected
 
 
 def test_empty_or_refused_completion_cannot_claim_producers():
