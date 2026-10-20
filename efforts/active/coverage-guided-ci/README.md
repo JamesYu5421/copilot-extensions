@@ -741,6 +741,93 @@ _Pending review of this plan._
 
 ## Journal
 
+### 2026-10-20 - Land storage accounting and admit verified process teardown
+- C-STORAGE #7371 actually merged as
+  `9ad401dd8c4827a44e2ca5ed1e3bcbd13f94eca8`, this batch's baseline,
+  after fresh full current-head Copilot approval, green required CI and no
+  findings, threads, holds or draft state. The residual tools ledger records
+  the actual disposition without changing its immutable census inputs.
+- C-TEARDOWN owns only S037/S040-S051/S053-S055/S083 and the admitted
+  S081/S084 teardown definitions. POSIX command status travels through a
+  private pipe while the controller retains its PID; teardown checks group
+  and session identity before each signal and verifies no live members
+  remain. Zombie processes still count toward admission. Windows teardown
+  explicitly terminates the Job Object and waits for zero active members.
+  Controller assignment/reap failures and interrupted/uncertain teardown
+  surface as `UnreapedProcessError`, so the runner retains and reports the
+  sandbox instead of deleting potentially owned files.
+- Focused native/portable cases first passed on both Windows and Ubuntu:
+  48 cases each, zero skips, 26.35 and 20.64 seconds respectively. Expanded
+  whole-module checks then passed on Windows (121 passed, one existing
+  POSIX-only skip, two POSIX-only cases deselected; 35.61 seconds) and Ubuntu
+  (113 passed, five existing Windows-only skips, six Windows-native cases
+  deselected; 20.73 seconds). These cover real file-holding descendants on
+  normal exit/deadline/cancellation, windowless Windows stdio, private POSIX
+  parent permissions, identity refusal, status protocol and failure retention.
+  Platform selection is diagnostic validation, not parent qualification.
+- After bounding the fallback `ps` query and tightening fixture-readiness
+  synchronization, the final focused partition passes 54 cases with zero skips
+  on each OS: Windows 23.89 seconds pytest / 26.14 seconds inclusive, Ubuntu
+  19.63 / 22.46 seconds. Unavailable or malformed membership observations
+  refuse cleanup rather than imply an empty group.
+- **Vision/pattern reconciliation:** closes the existing test-portfolio
+  isolation/resource-hygiene contract and follows
+  `ephemeral-process-reaping`'s ownership-before-cleanup discipline.
+  **Documentation impact:** `TESTING.md` describes verified termination and
+  retained-sandbox failure behavior; the effort/ledger record batch scope.
+  **Graceful cutover impact:** no resident daemon or deployment changes;
+  these are attached, per-invocation test workers.
+- Simple end-to-end coverage uses fresh synthetic trees and real native
+  subprocesses on both OSes. No installer/bootstrap is changed; separate
+  installation clean-room coverage is inapplicable. Ubuntu is the available
+  second native venue; Docker was unavailable and was not repaired or
+  bypassed. No separate external service/remote product is involved.
+  Required CI and fresh full current-head review remain publication gates.
+  C-CLEANUP stays separate: no cleanup executor, overlap or aggregate-budget
+  change is imported. Source CI remains unit-only, every existing test and
+  resource budget remains intact, and complete Windows acceptance stays open.
+- Full review of the first published head identified three actual gaps.
+  Linux membership now parses the command-name field as bytes, so unrelated
+  non-ASCII names do not break numeric process-group observation. A separate
+  owner pipe is monitored while the command runs and after status reporting;
+  abrupt owner death, including a status-write race, triggers TERM/KILL of
+  the controller's still-pinned group. The native descendant cases additionally
+  kill the owner before and after reporting and verify no live members remain.
+- The same unreaped exception also reaches standalone and parallel coverage
+  sandbox owners. They now share retention-aware `TestSandbox`; standalone
+  retains instead of calling its custom cleanup, and both detach automatic
+  finalization and report the preserved path. Focused failure-path tests prove
+  the files survive and standalone admission is released. No cleanup scheduling
+  or accounting behavior was added. The review-update partition passed 74
+  cases without skips on Windows, and 69 on Ubuntu with five existing
+  Windows-only cleanup skips; first-touch/native teardown remains diagnostic,
+  not the open complete Windows performance qualification.
+- The second full review identified TERM-phase races in unchanged teardown
+  code: a fork can invalidate an empty census, and the runner can die between
+  TERM and KILL. Final SIGKILL is now mandatory after a fresh identity check;
+  a caught TERM handler keeps the controller's abandonment reaper live without
+  transmitting an ignored TERM disposition through exec. The real native test
+  additionally kills the owner inside TERM grace; the census-race regression
+  requires final kill and post-kill zero-member proof. Updated focused runs
+  pass 75 cases without skips on Windows and 70 on Ubuntu with the same five
+  existing Windows-only cleanup skips. Control-pipe setup also closes already
+  allocated descriptors if the second allocation fails.
+- A subsequent full review found that failure teardown still waited for the
+  controller before releasing its owner pipe. The pipe now closes first, giving
+  the independent controller reaper a chance to kill the group instead of being
+  killed alone. The original unreaped exception still propagates and retains the
+  sandbox. A portable ordering assertion and a native after-status membership
+  failure exercise this exact path. The final focused consumer partition passes
+  77 cases without skips on Windows (25.26 seconds) and 72 on Ubuntu with the
+  same five existing Windows-only cleanup skips (50.00 seconds).
+- Review also found that a subsequent environment-audit failure could mask an
+  unreaped exception. The shared wrapper now preserves the unreaped error type,
+  reports both failures and retains its original cause. Ordinary audit failures
+  still propagate unchanged. The combined permission-error, unexpected-error
+  and cancellation cases prove retention versus normal cleanup; these and the
+  existing audit, cancellation and three sandbox-owner consumers pass eleven
+  targeted cases without skips on each OS (Windows 3.04 seconds, Ubuntu 12.54).
+
 ### 2026-10-20 - Land module isolation and admit fresh bounded storage accounting
 - C-MODULE #7353 actually merged as
   `5500e756bd0add8a028d116aa97228d5bbe1c046`, this batch's baseline.
