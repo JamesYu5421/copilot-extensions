@@ -450,6 +450,8 @@ def _resolve_anchor_owner_ref(config: cfg.Config) -> str | None:
 
 def _claim_from_run_output(stdout: str) -> tracking.ResourceClaim | None:
     """Recognize the resource an inner command produced from its JSON output."""
+    from .worktree_machine_identity import WorktreeMachineIdentityError, execution_machine_from_fields
+
     try:
         data = json.loads(stdout)
     except (ValueError, TypeError):
@@ -458,10 +460,16 @@ def _claim_from_run_output(stdout: str) -> tracking.ResourceClaim | None:
         return None
     wt = data.get("worktree")
     if not isinstance(wt, dict):
-        wt = data if data.get("id") and data.get("machine") else None
+        wt = data if data.get("id") and (
+            data.get("machine") or "machine_identity_version" in data
+        ) else None
     if isinstance(wt, dict):
         wid = wt.get("id")
-        machine = wt.get("machine")
+        try:
+            machine = execution_machine_from_fields(wt)
+        except WorktreeMachineIdentityError as error:
+            output.err(f"run: invalid worktree identity; pending ownership is retained: {error}")
+            return None
         project = wt.get("repo")
         if wid and machine:
             ref = tracking.format_claim_ref(
@@ -556,7 +564,7 @@ def _journal_run_claim(owner_ref: str, stdout: str) -> tracking.ResourceClaim | 
         # and the daemon claim verbs already feed, after the save above
         # is durably confirmed (never before).
         claim_history.record_pr_event(
-            claim.ref, worktree_id=record.worktree_id, machine=record.machine,
+            claim.ref, worktree_id=record.worktree_id, machine=record.execution_machine,
             event="claimed", project=record.repo,
         )
     return claim
@@ -679,7 +687,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 # confirmed.
                 claim_history.record_pr_event(
                     claim.ref, worktree_id=owner_record.worktree_id,
-                    machine=owner_record.machine, event="claimed",
+                    machine=owner_record.execution_machine, event="claimed",
                     project=owner_record.repo,
                 )
             return True
