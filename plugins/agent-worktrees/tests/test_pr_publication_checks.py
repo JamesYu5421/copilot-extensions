@@ -1,5 +1,5 @@
 """Real-Git parity for built-in publication evidence, without provider mutations."""
-from dataclasses import replace
+from dataclasses import asdict, replace
 import json
 from pathlib import Path
 
@@ -67,6 +67,18 @@ def test_unrelated_base_merge_preserves_exact_review(branch):
     git(branch, "checkout", "-q", "change")
     git(branch, "merge", "-q", "--no-edit", "origin/main")
     assert checks.before_publish(branch, BASE, POLICY)["ok"]
+
+
+def test_optional_ssh_binding_preserves_legacy_receipt_identity_when_unset(branch):
+    legacy = asdict(POLICY)
+    del legacy["ssh_url"]
+    expected = checks._hash({"config": legacy, "lenses": checks._lenses(branch, POLICY)})
+    receipt = record(branch)
+    assert receipt["policy_hash"] == expected
+    assert checks.before_publish(branch, BASE, POLICY)["ok"]
+    bound = replace(POLICY, ssh_url="git@forge.invalid:example/project.git")
+    assert not checks.before_publish(branch, BASE, bound)["ok"]
+    assert record(branch, bound)["policy_hash"] != expected
 
 
 def test_dirty_expected_head_policy_and_base_fail_closed(branch):
@@ -258,6 +270,12 @@ def test_ambiguous_merge_base_fails_closed(branch):
     {"allowed_paths": "all"}, {"allowed_paths": ["/absolute"]}, {"allowed_paths": ["C:\\escape"]},
     {"allowed_paths": ["a", "a"]}, {"guidance": []},
     {"features": {"scope_report": False}, "allowed_paths": []},
+    {"ssh_url": None}, {"ssh_url": "https://forge.invalid/owner/repo"},
+    {"ssh_url": "ssh://git:fixture-value@forge.invalid/owner/repo"},
+    {"ssh_url": "ssh://forge.invalid:invalid/owner/repo"},
+    {"ssh_url": "git@forge.invalid:owner/repo?private=value"},
+    {"ssh_url": "git@forge.invalid:owner/repo\n"},
+    {"ssh_url": "C:\\local\\repo"}, {"ssh_url": "git@forge.invalid:owner/repo\x00"},
 ])
 def test_strict_config_rejects_extensions_and_malformed_policy(raw):
     with pytest.raises(ValueError):
@@ -286,7 +304,7 @@ def test_cli_dispatch_records_and_verifies_without_raw_provider(branch, monkeypa
     from agent_worktrees import pr_cli, pr_config, pr_read_context
     git(branch, "remote", "add", "origin", "https://github.com/example/project.git")
     repo = SimpleNamespace(remote="origin", default_branch="main",
-                           pr=SimpleNamespace(publication_checks=POLICY))
+                           pr=SimpleNamespace(publication_checks=POLICY, provider="github", api_base=""))
     monkeypatch.setattr(pr_read_context, "load_read_config", lambda path: object())
     monkeypatch.setattr(pr_config, "resolve_repo_config_for_slug",
                         lambda config, slug: SimpleNamespace(resolved=True, repo_config=repo))

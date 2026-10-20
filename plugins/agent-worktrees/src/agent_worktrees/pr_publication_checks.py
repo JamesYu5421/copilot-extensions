@@ -89,10 +89,13 @@ def _snapshot(workspace: str | Path, base: str, config: PublicationChecksConfig,
         raise CheckError("publication base is missing or ambiguous")
     git_dir = Path(_git(root, "rev-parse", "--absolute-git-dir").strip()).resolve()
     lenses = _lenses(root, config)
+    policy = asdict(config)
+    if not config.ssh_url:
+        policy.pop("ssh_url")
     result = {
         "workspace": str(root), "git_dir": str(git_dir), "base_ref": base,
         "merge_base": bases[0], "head": candidate, "workspace_head": current,
-        "policy_hash": _hash({"config": asdict(config), "lenses": lenses}),
+        "policy_hash": _hash({"config": policy, "lenses": lenses}),
         "diff_hash": _hash(_diff(root, bases[0], candidate)), "lenses_available": sorted(lenses),
     }
     if _commit(root, "HEAD") != current or _commit(root, head) != candidate:
@@ -357,14 +360,17 @@ def dispatch_cli(argv: list[str]) -> int:
     """Only the central facade exposes these built-ins; no external check executables."""
     import argparse
 
-    from . import output, pr_config
-    from .pr_read_context import load_read_config
+    from . import output
+    from .pr_read_context import load_read_config, resolve_read_repo_config
 
     parser = argparse.ArgumentParser(prog="pr-watch checks")
     parser.add_argument("repo")
-    parser.add_argument("operation", choices=("lenses", "record-self-review", "verify-self-review", "scope-report"))
+    parser.add_argument("operation", choices=(
+        "lenses", "record-self-review", "verify-self-review", "scope-report", "export-config",
+    ))
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--config")
+    parser.add_argument("--output", help="New worker config file for export-config only")
     parser.add_argument("--base")
     parser.add_argument("--expected-head")
     parser.add_argument("--lenses", default="")
@@ -379,16 +385,31 @@ def dispatch_cli(argv: list[str]) -> int:
         return int(exc.code or 0)
     try:
         config = load_read_config(Path(args.config) if args.config else None)
-        resolution = pr_config.resolve_repo_config_for_slug(config, args.repo)
+        resolution = resolve_read_repo_config(config, args.repo, explicit=bool(args.config))
         if not resolution.resolved:
             raise CheckError(resolution.error or "repository publication binding is unavailable")
         repo = resolution.repo_config
         policy = getattr(repo.pr, "publication_checks", None)
         if policy is None:
             raise CheckError("this repository has no configured publication checks")
+        if args.operation == "export-config":
+            from .pr_worker_config import export_config
+            if not args.output or any((
+                args.expected_head, args.lenses, args.summary, args.fixed,
+                args.since, args.allowed_path is not None,
+            )):
+                raise CheckError("export-config needs --output and no local review/scope options")
+            result = export_config(args.repo, repo, args.workspace, args.base, Path(args.output))
+            print(json.dumps(result))
+            return 0
+        if args.output:
+            raise CheckError("--output applies only to export-config")
         root = Path(args.workspace).resolve()
-        remote = _git(root, "remote", "get-url", repo.remote).strip()
-        if (git_ops.slug_from_url(remote) or "").casefold() != args.repo.casefold():
+        remotes = _git(root, "remote", "get-url", "--push", "--all", repo.remote).splitlines()
+        if len(remotes) != 1:
+            raise CheckError("workspace publication remote must have exactly one push URL")
+        from .pr_worker_config import matches_remote
+        if not matches_remote(remotes[0], args.repo, repo.pr, str(root)):
             raise CheckError("workspace remote does not match the selected repository")
         base = args.base or f"{repo.remote}/{repo.default_branch}"
         if args.operation != "scope-report" and (args.since or args.allowed_path is not None):
