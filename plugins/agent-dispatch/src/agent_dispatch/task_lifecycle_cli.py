@@ -48,7 +48,9 @@ def _cmd_claim(args: argparse.Namespace) -> int:
     if task is None:
         print("no claimable task", file=sys.stderr)
         return 3
-    return _core()._emit(_core()._enrich(task))
+    from .client_authority import qualify_task
+
+    return _core()._emit(_core()._enrich(qualify_task(args, task)))
 
 def _cmd_worktree_status(args: argparse.Namespace) -> int:
     machine, worktree = _core()._identity(args)
@@ -69,7 +71,7 @@ def _cmd_worktree_status(args: argparse.Namespace) -> int:
 
 def _cmd_claim_status(args: argparse.Namespace) -> int:
     """Claim-provider callback (claim-provider-pattern effort): ``claim-status
-    <task_id>`` for the ``dispatch-task:`` namespace agent-worktrees'
+    <task_id>`` for the task namespaces agent-worktrees'
     claim-provider registry resolves. Returns the small envelope
     ``agent_worktrees.claim_providers`` documents -- ``exists`` (required),
     plus ``state``/``detail`` when the task is known. ``exists: False`` is
@@ -78,6 +80,8 @@ def _cmd_claim_status(args: argparse.Namespace) -> int:
     instead, so the registry's own caller degrades to
     ``{"available": false, ...}`` rather than treating an outage as a
     confirmed absence.
+    Explicit local/central namespaces carry their fixed target flags; an
+    ambiguous legacy reference fails unavailable after explicit mode is enabled.
 
     Passes ``ensure=False`` to ``_client`` -- the default ``ensure=True``
     can spend up to ``_ensure_local_coordinator``'s own lazy-startup wait
@@ -88,10 +92,34 @@ def _cmd_claim_status(args: argparse.Namespace) -> int:
     quickly, not spend most of its budget trying to boot.
     """
     from .client import DispatchError
+    from .client_authority import require_explicit_claim_authority
 
+    require_explicit_claim_authority(args)
+    restart_policy = bool(getattr(args, "native_restart_policy", False))
+    if restart_policy and not any(
+        getattr(args, flag, None) for flag in ("local", "shared", "url")
+    ):
+        raise DispatchError(409, "native restart policy requires an explicit task authority")
+    options = {"ensure": False}
+    if restart_policy:
+        options.update(allow_ssh_failover=False, read_only=True)
     try:
-        with _core()._client(args, ensure=False) as c:
-            task = c.get(args.task_id)
+        with _core()._client(args, **options) as c:
+            task = (
+                c.get(args.task_id, native_restart_policy=True) if restart_policy else c.get(args.task_id)
+            )
+            if restart_policy:
+                policy = task.get("native_restart_policy") if isinstance(task, dict) else None
+                if (
+                    not isinstance(policy, dict) or policy.get("schema") != "native-restart-task-policy"
+                    or type(policy.get("version")) is not int or policy["version"] != 1
+                    or policy.get("task_id") != args.task_id
+                    or type(policy.get("task_qualified")) is not bool
+                    or policy["task_qualified"] and policy.get("pending_steer") is not False
+                    or policy.get("launch_authorized") is not False
+                    or policy.get("automatic_eligible") is not False
+                ):
+                    raise DispatchError(502, "coordinator does not confirm native restart policy")
     except DispatchError as exc:
         if exc.status_code == 404:
             return _core()._emit({"exists": False, "detail": "no such task"})
@@ -101,6 +129,11 @@ def _cmd_claim_status(args: argparse.Namespace) -> int:
     except Exception as exc:
         print(f"agent-dispatch: coordinator unreachable: {exc}", file=sys.stderr)
         return 1
+    if restart_policy:
+        return _core()._emit({
+            "exists": True,
+            "native_restart_policy": policy,
+        })
     # A suspended task waiting on a `run --detach` waiter has no `owner` (it
     # holds no live session) -- that previously left `detail` blank, giving a
     # claims-ledger reader no insight into *why* the worktree still carries
@@ -126,7 +159,9 @@ def _cmd_show(args: argparse.Namespace) -> int:
             task["attachments"] = c.attachments(args.task_id)
     from . import tracking
 
-    return _core()._emit(tracking.enrich_task(_core()._enrich(task)))
+    from .client_authority import qualify_task
+
+    return _core()._emit(tracking.enrich_task(_core()._enrich(qualify_task(args, task))))
 
 def _cmd_claimant(args: argparse.Namespace) -> int:
     """task -> claiming worktree: resolve which worktree owns a task.
@@ -281,6 +316,7 @@ def _cmd_embody_interactive(args: argparse.Namespace) -> int:
                 args.task_id,
                 machine=machine,
                 project=args.project,
+                route=_core()._spawn_route(args),
             )
         except InteractiveEmbodimentError as exc:
             print(f"agent-dispatch: {exc}", file=sys.stderr)

@@ -1619,8 +1619,17 @@ function Install-Runtime {
     # still runs this `finally`, confirmed: PowerShell unwinds pending
     # `finally` blocks before an `exit` actually terminates the process.
     $buildMutex = Enter-PluginSnapshotLock -InstallDir $InstallDir -Version $SrcVersion -TimeoutSeconds 180
+    $originalDependencyPolicy = $script:InstallerDependencyPolicy
     try {
     $BuildSrcDir = New-PluginBuildSnapshot -PluginDir $PluginDir -InstallDir $InstallDir -Version $SrcVersion -BestEffort
+    if ($BuildSrcDir -ne $PluginDir) {
+        # Attribute the copied sources through their own standalone helper,
+        # not the original payload's unrelated source root.
+        $script:InstallerDependencyPolicy = Join-Path $BuildSrcDir 'scripts\installer_dependency_policy.py'
+        if (-not (Test-Path -LiteralPath $script:InstallerDependencyPolicy -PathType Leaf)) {
+            throw "Build snapshot dependency policy is unavailable: $script:InstallerDependencyPolicy"
+        }
+    }
 
     # Find a Python interpreter (skip Windows Store aliases that aren't real)
     $pythonCmd = $null
@@ -1722,7 +1731,7 @@ function Install-Runtime {
             $zddOut = $zddResult.Output
             $zddCode = $zddResult.ExitCode
         } else {
-            $zddOut = & $VenvPython -I (Join-Path $PSScriptRoot 'installer_dependency_policy.py') --uv uv -- --python $VenvPython "$ZddDir" 2>&1
+            $zddOut = & $VenvPython -I $script:InstallerDependencyPolicy --uv uv -- --python $VenvPython "$ZddDir" 2>&1
             $zddCode = $LASTEXITCODE
         }
         Remove-PluginBuildArtifacts -PluginDir $BuildSrcDir -ExtraDir $ZddDir
@@ -1768,7 +1777,7 @@ function Install-Runtime {
             $libOut = $libResult.Output
             $libCode = $libResult.ExitCode
         } else {
-            $libOut = & $VenvPython -I (Join-Path $PSScriptRoot 'installer_dependency_policy.py') --uv uv -- --python $VenvPython "$libDir" 2>&1
+            $libOut = & $VenvPython -I $script:InstallerDependencyPolicy --uv uv -- --python $VenvPython "$libDir" 2>&1
             $libCode = $LASTEXITCODE
         }
         Remove-PluginBuildArtifacts -PluginDir $BuildSrcDir -ExtraDir $libDir
@@ -1849,7 +1858,7 @@ function Install-Runtime {
                 # install: if it fails, letting the plain install below run
                 # anyway could silently succeed from a cached/existing wheel,
                 # defeating the whole stale-wheel guard.
-                $preOut = & $VenvPython -I (Join-Path $PSScriptRoot 'installer_dependency_policy.py') --uv uv -- --python $VenvPython --force-reinstall $Spec 2>&1 | Out-String
+                $preOut = & $VenvPython -I $script:InstallerDependencyPolicy --uv uv -- --python $VenvPython --force-reinstall $Spec 2>&1 | Out-String
                 if ($LASTEXITCODE -ne 0) {
                     return [pscustomobject]@{ Code = $LASTEXITCODE; Output = $preOut }
                 }
@@ -1858,7 +1867,7 @@ function Install-Runtime {
                 # re-scrub between the two calls so that build isn't shadowed
                 # by residue the pre-pass just left behind.
                 & $scrubArtifacts
-                $out = & $VenvPython -I (Join-Path $PSScriptRoot 'installer_dependency_policy.py') --uv uv -- --python $VenvPython $Spec 2>&1 | Out-String
+                $out = & $VenvPython -I $script:InstallerDependencyPolicy --uv uv -- --python $VenvPython $Spec 2>&1 | Out-String
             }
             [pscustomobject]@{ Code = $LASTEXITCODE; Output = $out }
         } finally {
@@ -2012,6 +2021,7 @@ function Install-Runtime {
         Register-PickerPivot
     }
     } finally {
+        $script:InstallerDependencyPolicy = $originalDependencyPolicy
         # Held through the health gate, completion marker, AND activation
         # above (not just the package build/install): a second same-version
         # installer that only waited out the earlier, narrower release
@@ -2148,7 +2158,7 @@ function Test-CoordinatorHealthy {
     # True when a coordinator already answers on its rendezvous endpoint. Used to
     # keep the non-elevated fallback idempotent (never start a second instance).
     try {
-        $null = & $VenvPython -m agent_dispatch health 2>$null
+        $null = & $VenvPython -m agent_dispatch --local health 2>$null
         return ($LASTEXITCODE -eq 0)
     } catch { return $false }
 }
@@ -2229,8 +2239,8 @@ function Retire-SupervisorProcesses {
             }
         }
     } catch { }
-    if (-not $py -and (Test-Path $VenvPython)) { $py = $VenvPython }
-    if (-not $py -and (Test-Path $LinkPython)) { $py = $LinkPython }
+    if (-not $py -and (Test-Path -LiteralPath $VenvPython)) { $py = $VenvPython }
+    if (-not $py -and (Test-Path -LiteralPath $LinkPython)) { $py = $LinkPython }
     if (-not $py) {
         return (Retire-SupervisorProcessesFallback)
     }
@@ -2296,17 +2306,33 @@ function Retire-SupervisorProcessesFallback {
                     )
                 } catch { }
             }
-            $isSupervisor = $underRoot -and (
-                $cmd -match '(?i)(agent_dispatch|agent-dispatch)(?:\.exe)?["'']?\s+supervise(?=\s*(?:$|serve(?:\s|$)|-))'
-            )
-            $isRegistrarChild = $underRoot -and (
-                $cmd -match '(?i)(agent_dispatch|agent-dispatch)(?:\.exe)?["'']?\s+(emitter\s+serve(?:\s|$)|schedule\s+serve(?:\s|$)|webhook(?:\s|$))'
+            $dispatchArgv = @()
+            if ($underRoot) { $dispatchArgv = @(Get-SupervisorDispatchArguments -CommandLine $cmd) }
+            $isSupervisor = $underRoot -and $dispatchArgv.Count -gt 0 -and (
+                $dispatchArgv[0] -eq 'supervise'
             ) -and (
-                $cmd.Replace('"', '').IndexOf(
-                    $supervisorRun,
-                    [StringComparison]::OrdinalIgnoreCase
-                ) -ge 0
+                $dispatchArgv.Count -eq 1 -or $dispatchArgv[1] -eq 'serve' -or $dispatchArgv[1].StartsWith('-')
             )
+            $specPath = $null
+            if ($dispatchArgv.Count -ge 3 -and $dispatchArgv[0] -in @('emitter', 'schedule') -and $dispatchArgv[1] -eq 'serve') {
+                $specPath = $dispatchArgv[2]
+            } elseif ($dispatchArgv.Count -gt 0 -and $dispatchArgv[0] -eq 'webhook') {
+                for ($argument = 1; $argument -lt $dispatchArgv.Count; $argument++) {
+                    if ($dispatchArgv[$argument] -eq '--config' -and $argument + 1 -lt $dispatchArgv.Count) {
+                        $specPath = $dispatchArgv[$argument + 1]
+                    } elseif ($dispatchArgv[$argument].StartsWith('--config=')) {
+                        $specPath = $dispatchArgv[$argument].Substring('--config='.Length)
+                    }
+                }
+            }
+            $isRegistrarChild = $false
+            if ($underRoot -and $specPath) {
+                try {
+                    $isRegistrarChild = [IO.Path]::GetFullPath($specPath).StartsWith(
+                        $supervisorRun, [StringComparison]::OrdinalIgnoreCase
+                    )
+                } catch { $isRegistrarChild = $false }
+            }
             if ($isWrapper -or $isSupervisor -or $isRegistrarChild) {
                 [void]$selected.Add([int]$row.ProcessId)
             }
@@ -2324,31 +2350,31 @@ function Retire-SupervisorProcessesFallback {
             }
         }
         $depth = @{}
-        foreach ($pid in $selected) {
+        foreach ($processId in $selected) {
             $value = 0
-            $cursor = $rows | Where-Object ProcessId -eq $pid | Select-Object -First 1
+            $cursor = $rows | Where-Object ProcessId -eq $processId | Select-Object -First 1
             $seen = [System.Collections.Generic.HashSet[int]]::new()
             while ($cursor -and $selected.Contains([int]$cursor.ParentProcessId)) {
                 if (-not $seen.Add([int]$cursor.ParentProcessId)) { break }
                 $value++
                 $cursor = $rows | Where-Object ProcessId -eq $cursor.ParentProcessId | Select-Object -First 1
             }
-            $depth[$pid] = $value
+            $depth[$processId] = $value
         }
         $killed = 0
         # Stop roots first so a still-live master cannot replace a child while
         # the snapshot is being retired.
-        foreach ($pid in @($selected | Sort-Object { $depth[$_] })) {
-            if ($pid -eq $PID) { continue }
-            try {
-                Stop-Process -Id $pid -Force -ErrorAction Stop
+        foreach ($processId in @($selected | Sort-Object { $depth[$_] })) {
+            if ($processId -eq $PID) { continue }
+            $snapshot = $rows | Where-Object ProcessId -eq $processId | Select-Object -First 1
+            if (Stop-SupervisorSnapshotProcess -Snapshot $snapshot) {
                 $killed++
-            } catch { }
+            }
         }
         return $killed
     } catch {
         Write-Warn "Native supervisor generation retirement failed: $_"
-        return (Stop-DispatchProcess -Subcommand supervise)
+        return 0
     }
 }
 
@@ -2368,7 +2394,7 @@ function Confirm-CoordinatorRunning {
     $running = $null
     for ($i = 0; $i -lt 12; $i++) {
         try {
-            $out = & $VenvPython -m agent_dispatch health 2>$null
+            $out = & $VenvPython -m agent_dispatch --local health 2>$null
             if (($LASTEXITCODE -eq 0) -and $out) {
                 $h = ($out | Out-String) | ConvertFrom-Json
                 if ($h.PSObject.Properties.Name -contains 'version') { $running = $h.version }

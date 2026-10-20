@@ -7,7 +7,7 @@ exclude-newer = "7 days"
 
 [project]
 name = "agent-machines"
-version = "0.2.26-dev1"
+version = "0.2.27-dev1"
 description = "Portable machine setup and restore for Copilot CLI."
 readme = "README.md"
 license = "MIT"
@@ -23,10 +23,15 @@ dependencies = [
     "agent-procutil",
     "agent-machine-transport",
     "agent-remote-login-shell",
+    "agent-installer-readiness",
+    "agent-installation-context",
 ]
 
 [tool.uv.sources]
 agent-remote-login-shell = { path = "libs/remote-login-shell" }
+agent-installer-readiness = { path = "libs/installer-readiness" }
+# Flat-module metadata must remain retained, not an unsupported live editable.
+agent-installation-context = { path = "libs/installation-context" }
 # Copilot CLI + Claude plugin resolution -- marketplaces, plugins, repo settings
 # (module ``plugin_resolve``). Vendored byte-identical from libs/plugin-resolve;
 # shared with agent-worktrees / agent-bridge / agent-codespaces.
@@ -76,3 +81,6 @@ select = ["E", "F", "W", "I", "UP", "S", "B", "A", "RUF"]
 # Vendored byte-identical primitive (install-contract); its subprocess calls to
 # mklink are intentional and it must not diverge from the canonical source.
 "scripts/versioned_runtime.py" = ["S603", "S607"]
+
+[tool.pytest.ini_options]
+markers = ["guard: bounded source and structural contract checks"]

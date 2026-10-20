@@ -166,6 +166,19 @@ rows until the replacement generation completes. Unsupported authority is an
 actionable engine-upgrade error. Explicit `AGENT_WORKTREES_PICKER_STREAM=0`
 selects current one-shot reads, not a direct computation fallback.
 
+The CLAIMS preview retains the engine's ranking and links, with a leading
+omitted-count or unresolved-descendant warning when the bounded publication
+is partial. Older publications without sufficient evidence show **coverage
+unknown**, not a complete subtree. **View details** loads full held claims
+on demand and, when child claims are present, uses the engine's existing
+transitive inspection to show descendant owner paths and unresolved edges.
+The engine supplies resolved detail URLs for shorthand and canonical PR refs;
+the card retains the stored ref and owner path. Older engines without those
+URLs still show the original ref, linking it only when it is already HTTP(S).
+Those inspections run in the background only after opening the detail card;
+ordinary row rendering never walks a claim graph or performs network reads.
+Descendant claims remain owned by their original worktrees.
+
 Held-feed startup uses the source's existing bounded process/SSH budget
 (20 seconds by default). Once an initial snapshot or update starts, the
 two-second atomic-publication deadline applies; committed feeds retain the
@@ -174,6 +187,45 @@ reconnects through the existing cancellable backoff, showing failure or stale
 last-good rows until a complete replacement arrives. Explicit peer timeout,
 authentication, malformed-protocol and incompatible-capability refusals remain
 terminal; none authorizes a polling fallback or a daemon restart.
+
+Supported local-native New and cold-Resume composers save each nonempty accepted
+prompt to the Manager's local `seed-history/history.sqlite3` **before** requesting
+an engine launch plan. A timeout or failed launch therefore does not erase the submitted
+paste buffer. Reopen the composer and press **Up/Down** to recall older/newer
+seeds; multiline cursor movement remains available until the first/last text
+line, and **Ctrl+Up/Down** recalls history from anywhere. Browsing back past the
+newest entry restores the current unsent draft, including edits made while
+browsing.
+
+History is per project, survives Manager restarts and runtime updates, and
+retains exact submitted text locally under `WORKTREE_MANAGER_ROOT` (or the
+normal `~/.worktree-manager` root). It is not synced, logged, or automatically
+executed. Consecutive identical submissions do not create duplicates; entries
+are not automatically expired. Treat this database as private prompt content.
+Initialized history accepts only the expected table with zero application/version
+markers; extra triggers, indexes, tables or foreign markers refuse prompt reads/writes.
+The history directory and database are owner-only on POSIX; Windows uses a
+protected owner/SYSTEM ACL, including inherited protection for SQLite journals.
+Existing history permissions are repaired before access; failure blocks submission.
+Blank or cancelled prompts are not recorded. If saving fails, the composer
+stays open with its text and an error rather than launching an unprotected
+request. This recovery history is separate from the engine's pending launch
+intent and never retries an allocation automatically.
+
+History reads open SQLite in read-only mode. A valid uninitialized empty database
+is treated as empty history without creating its schema. Corrupt, foreign, or
+incompatible stores refuse access instead of being silently repaired or migrated.
+
+Nonempty prompts with Anchor, Bare, AHP, or Local model selected refuse
+confirmation visibly and keep the draft open without recording it. Clear the
+prompt or change the options to continue. Remote and cross-environment
+(including Windows-to-WSL) New and Resume do not offer a prompt composer; programmatic
+prompt requests for those transports, Bare resume, or active/uncertain execution
+legs refuse before engine staging. Seedless launches are unchanged. No Mux is a
+supported prompt launch modifier. History retains the exact paste buffer;
+launch submission retains the composer's existing surrounding-whitespace trimming.
+Programmatic seeded Resume requests must identify an existing worktree; missing
+or empty worktree ids refuse before any execution-leg lookup or launch resolution.
 
 Sessionless workspaces retained by another controller appear separately under
 **Owned**, not as ordinary resumable conversations. Use **Go to controller**
@@ -200,9 +252,10 @@ visible but refuses automatic resubmission, avoiding a duplicate turn.
 A later explicitly supplied prompt replaces the pending intent; a stale
 handoff acknowledgement cannot discard that replacement.
 
-For SSH machine sources, the host renders the same composer and sends a bounded
-structured request to the target engine before opening its interactive SSH
-launch. The target daemon admits the request, allocates at most one New
+The engine's structured SSH launch-request boundary is separate from the
+Manager's local-native prompt composer. A caller sends a bounded structured
+request to the target engine before opening its interactive SSH launch.
+The target daemon admits the request, allocates at most one New
 worktree, and stages the prompt in that target's worktree state. The launch then
 carries only the target worktree and seed identity. Arbitrary prompt text is
 encoded, not interpolated into the remote shell. Requests are limited to an
@@ -218,8 +271,14 @@ allocated worktree and staged intent without submitting another prompt.
 Resume that existing worktree only when its state is `staged`; an incomplete
 creation or unconfirmed handoff requires explicit inspection.
 
-Prompted requests require `--stage-launch-seed` support; ordinary seedless
-launches retain older-engine compatibility. Uninstrumented legacy/custom
+Prompted requests require `--stage-launch-seed --require-native-seed` support;
+ordinary seedless launches retain older-engine compatibility. The engine
+serializes native prompt staging and hosted-provider activation under the same
+worktree record lock. A provider that wins first refuses staging; a staged seed
+that wins first blocks provider activation until its native handoff finishes.
+The Manager's early execution-leg read is only a preflight, not that fence.
+Accepted recovery history survives either refusal and does not itself reserve
+an execution leg. Uninstrumented legacy/custom
 prompt launchers refuse without consuming the seed; use normalized setup or
 adopt the engine's documented launch-seed invocation boundary.
 The `gh copilot` intermediary cannot acknowledge actual Copilot startup;
@@ -355,6 +414,186 @@ be resolved, startup fails explicitly rather than retaining an ambiguous
 launcher/child identity. Repair that Python installation before retrying.
 Existing launcher/child pairs are not rewritten or stopped by this change;
 their identity must be classified before automated retirement.
+
+## Restart evidence and notification transport
+
+The existing active mux daemon maintains a private, bounded recovery-evidence
+journal under its runtime root at `restart-recovery/evidence.sqlite3`. This is
+not a second session or worktree authority. Each positive observation binds the
+canonical native conversation UUID, worktree, native environment and boot epoch,
+mux incarnation, native process birth identity, owner/mapping revisions and
+observation sequence. A new native occupant of an unchanged mux requires an
+advanced owner lifecycle revision; delayed evidence from the prior native
+process cannot retire its replacement. The engine
+corroborates the current native head, conversation data, process identity and mux
+binding over its normal process boundary; stale or uncertain evidence is not
+recorded as live. A detached live session remains observable.
+On Linux/WSL, positive UUID/process binding additionally requires the exact
+native session's `inuse.<pid>.hold` inode to be open in that birth-identified
+process. A stale PID-shaped filename is insufficient. The descriptor probe is
+bounded; missing, inaccessible or unsupported native ownership evidence stays
+unconfirmed, never a new verdict that the process is dead. The journal records
+the explicit `inuse-hold-v1` proof capability and rejects weaker metadata.
+The live mux incarnation is corroborated alongside the native process binding,
+not copied from a possibly stale display mapping. Mapping revisions order
+refreshes but are not execution identity: rejoining the same execution cannot
+clear intentional closure or shutdown-interruption evidence.
+
+The daemon inspects previous evidence before admitting ordinary status requests,
+then samples at most one subject per 20 seconds with a four-second owner-query
+deadline. Sampling shares the existing active lease and drain fence; passive
+cutover generations do not sample. Last-positive evidence survives missing-mux
+display tombstones. The journal retains at most 16 events per worktree and
+refuses new subjects after 4,096 worktrees rather than growing without bound.
+Corrupt, unavailable or incompatible storage remains an explicit blocker.
+The active daemon lease holder allows SQLite to roll back an interrupted
+transaction while reading existing storage at startup. This neither creates a
+missing database nor resets an incompatible schema. Report-only inspection
+keeps a read-only connection: if SQLite needs that rollback, the report exposes
+the read-only blocker rather than repairing the database itself.
+
+Sampling includes stored journal subjects as well as live mappings. One owner
+query returns current hosting and the exact previously observed conversation's
+canonical activation lifecycle, so a tombstone cannot hide its subsequent End.
+New qualified observations bind the activation ordinal and opaque original
+source in addition to the native/mux generation. Legacy evidence defaults to
+unqualified; periodic reads never invent or assign a registration source.
+Lifecycle reads accept the owner's full retained budget of 256 intervals;
+activation ordinals remain monotonic and may exceed that retained count.
+Intentionally closed journal subjects and definitively consumed source-bound
+hook Ends without a live mapping stay retained but do not consume polling turns;
+a live mapping returns them to the rotation. End consumption is separate from
+exit disposition: non-user exit causes remain unknown, and inferred Ends remain
+probeable for later hook corroboration. The consumption marker survives
+same-generation refresh and resets only for a confirmed new execution generation.
+
+Only a uniquely source-bound native `user_exit` can assert intentional closure.
+Other reasons, repeated same-physical/same-UUID activations, missing source proof
+and incompatible owner responses stay unknown or unconfirmed. A historical End
+cannot retire a replacement. The journal serializes native End with shutdown
+metadata: a racing notification takes precedence over an apparent user exit, and
+an End after cancelled shutdown remains conservatively uncertain for that
+execution generation, including across intermediate inferred or unknown exits.
+This does not infer a shutdown cause from an exit code or
+wall-clock timestamp.
+
+Native Linux has an explicitly requested, default-off logind notification
+transport in this same daemon. It negotiates a real delay-inhibitor FD before
+subscribing, authenticates the unique logind owner and reads the initial
+`PreparingForShutdown` state. A shutdown signal checkpoints matching
+last-positive generations transactionally, then releases the inhibitor;
+cancellation durably reconciles the matching notification before reacquiring.
+If native End preceded cancellation, its shutdown-interruption claim becomes
+unknown with a sticky cancelled-shutdown marker, not a revived execution.
+After a same-boot pause or replacement, the adapter recovers persisted
+notification identities for this exact environment/boot. An initially cancelled
+native state reconciles those identities durably before reporting `watching`;
+an ongoing shutdown retains them for its later cancellation. Batch cancellation
+is one transaction and cannot affect foreign epochs or explicitly closed
+generations.
+Checkpoint lock contention fails immediately rather than spending the delay
+budget waiting for SQLite, and a progress deadline can roll back an expired
+checkpoint. This is not a hard bound on operating-system filesystem stalls.
+Owner loss, bus disconnect, malformed messages, denied permissions and failed
+writes stay visible; no elevation or busy reconnect loop is attempted.
+Permanent failure disconnects the bus and drains pending tasks and received
+descriptors before the adapter stops pumping, including a timed-out inhibitor
+request whose FD reply arrives late.
+Drain/pause and shutdown close native resources on the owning daemon loop
+before its active lease ends. The existing inter-sweep idle wait services native
+I/O on that same loop, rechecking active mutation/drain admission at most every
+50 ms. Disabled, blocked and absent adapters retain the ordinary idle wait
+without a busy loop or worker thread. The transport is **not timing-qualified**:
+other blocking daemon work can delay notification handling beyond logind's
+budget. Its health descriptor therefore retains `qualified: false`; automatic
+recovery cannot treat the transport alone as proof of shutdown coverage.
+See [configuration](docs/configuration.md#restart-recovery-requests) for the
+strict, default-off preferences and capability reporting.
+
+```bash
+worktree-manager mux-daemon recovery-evidence
+```
+
+This read-only JSON report creates no missing journal and accepts no apply flag.
+It distinguishes same-boot observations, foreign environments, explicit closure
+evidence and unconfirmed previous-boot candidates, and reports requested recovery
+capabilities without opening a native bus connection. `automatic_eligible` is always
+`false`: this evidence foundation does **not** launch or enroll recovery,
+configure boot startup, deliver a restart seed, or grant operational permission.
+The journal's reasoned exit/shutdown APIs do not independently prove native
+notification coverage. Missing hooks, generic tombstones and exit codes alone
+never assert intentional closure or recovery permission.
+Invalid configuration, including non-UTF-8 input, is a JSON inspection blocker
+and disables recovery admission without preventing ordinary mux service.
+
+An explicit `automatic_restore = true` request currently only freezes qualified
+previous-boot candidates before ordinary startup reconciliation, under the
+daemon's existing active lease. The private `restart-recovery/attempts.sqlite3`
+retains each original execution, worktree creation nonce, head revision and
+target epoch under a deduplicated attempt identity. A same-boot daemon restart
+or later evidence refresh does not overwrite that frozen snapshot. Legacy
+capture without the owner binding remains `capture_binding_qualified: false`;
+unknown/intentional closure, cancelled shutdown, same-boot and foreign evidence
+cannot become frozen candidates. No current owner/task/hold admission or native
+launch is implemented by freezing.
+
+Attempt inspection is read-only and included in `recovery-evidence`; absent state
+is not created and corrupt, foreign or torn state is not silently reset.
+The first writer atomically publishes a fully initialized schema without
+replacing an existing file. A truncated/empty existing database, non-text SQLite
+columns and orphaned transaction sidecars remain blockers; they cannot allocate
+a replacement identity. Filesystems without atomic hard-link publication refuse
+initialization rather than falling back to an unsafe creation path.
+Out-of-range numeric evidence and excessive JSON nesting also remain structured
+recovery blockers, without preventing ordinary mux startup.
+Transactions preserve prior attempts across a crash before commit and serialize
+concurrent freezing. At most 4096 unresolved attempts are retained, each bounded
+to 32 KiB. Capacity refuses new freezing rather than evicting pending identities.
+`frozen` means **awaiting owner admission**, never launched or seed-acknowledged;
+it is not an exactly-once execution guarantee. Default-off and passive daemon
+paths do not create attempt state.
+Initial activation and passive-generation promotion freeze only after acquiring
+the active daemon lease, inside its existing drain-visible loop-mutation
+boundary. A draining generation admits no new freeze, and an already admitted
+freeze must finish or report its blocker before drain can report idle. The
+existing update/cutover owner and notification resource teardown are unchanged.
+
+To request a provisional current-worktree check for **one existing frozen
+attempt**, without enabling recovery:
+
+```text
+worktree-manager mux-daemon recovery-evidence --check-attempt <attempt-uuid>
+```
+
+The target epoch must still match this environment. The Manager passes the
+frozen exact head, creation nonce, path, lifecycle and source activation to
+agent-worktrees through its attributed process boundary, with a four-second
+timeout and `WORKTREE_NO_UPDATE=1` / `WORKTREE_NO_RECONCILE=1`. It checks the
+response version and exact typed request binding; old owners, errors and
+timeouts remain visible blockers, never a legacy/fresh-launch fallback.
+The optional `owner_check` reports provisional current owner facts. A single
+active task claim with an explicit local/central writer can additionally carry
+`task_policies`, checked through that writer's registered read-only provider.
+The current task must match the original native owner and be started, unheld,
+unsteered and without a pending resume or waiter. Changed, paused, ended,
+pending, externally claimed, opaque/legacy/mixed-task or profile-assigned
+worktrees remain unqualified. A matching worktree is still **not admitted**:
+action-time task/claim policy, fenced launch and acknowledged restart Resume
+remain unresolved, so this inspection returns a blocker/nonzero status
+even on a match. Neither command writes an attempt outcome, reserves a launch,
+starts a conversation, changes enrollment or contacts the host notification
+service. Ordinary inspection makes no owner call, and the resident daemon has
+no additional polling or blocking work from this opt-in check.
+Failed or timed-out mux listings remain unknown and cannot establish the mux
+absence needed for even a provisional worktree match.
+
+Native Linux and WSL have evidence-epoch readers; WSL includes its init-process
+incarnation because a distro can restart without restarting the shared kernel.
+Native Windows, macOS and container epochs are explicitly unqualified, not
+silently treated as Linux. Qualified native shutdown notification, automatic admission,
+exact-conversation Resume and acknowledged restart-seed delivery remain tracked
+under [#4564](https://github.com/ThomasMichon/copilot-extensions/issues/4564).
+An evidence report is not completed restoration or installed-release proof.
 
 ## Manage the harness (state views)
 

@@ -352,9 +352,13 @@ def _win_task_exists() -> bool:
 
 def _daemon_launch_argv() -> list[str]:
     """Argv that starts the foreground daemon without the Windows ``.cmd`` shim."""
+    from .execution_identity import source_repository
+
     core = _core()
+    source = source_repository(Path.cwd())
+    source_args = ["--source-worktree", str(source)] if source is not None else []
     if sys.executable:
-        return [sys.executable, "-m", "agent_bridge", "start"]
+        return [sys.executable, "-m", "agent_bridge", "start", *source_args]
     venv = os.path.join(core._INSTALL_DIR, "venv")
     py = (
         os.path.join(venv, "Scripts", "python.exe")
@@ -362,7 +366,7 @@ def _daemon_launch_argv() -> list[str]:
         else os.path.join(venv, "bin", "python")
     )
     if os.path.isfile(py):
-        return [py, "-m", "agent_bridge", "start"]
+        return [py, "-m", "agent_bridge", "start", *source_args]
     exe = shutil.which("agent-bridge")  # marketplace-isolation: allow legacy-compatibility
     if exe:
         return [exe, "start"]
@@ -449,7 +453,13 @@ def _spawn_watchdog_replacement(
         "time.sleep(float(sys.argv[1]));"
         "os.execv(sys.executable,[sys.executable,'-m','agent_bridge',*sys.argv[2:]])"
     )
-    original_args = list(sys.argv[1:] if start_args is None else start_args)
+    arguments = iter(sys.argv[1:] if start_args is None else start_args)
+    original_args = []
+    for argument in arguments:
+        if argument == "--serving-launch-id":
+            next(arguments)
+        elif not argument.startswith("--serving-launch-id="):
+            original_args.append(argument)
     if "--passive" in original_args and active_port is not None:
         try:
             port_index = original_args.index("--port") + 1

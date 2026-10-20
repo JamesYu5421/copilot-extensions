@@ -7,7 +7,7 @@ exclude-newer = "7 days"
 
 [project]
 name = "agent-containers"
-version = "0.2.49-dev1"
+version = "0.2.50-dev1"
 description = "Local Docker dev-container fleet management, lease broker, and agent-bridge container: namespace resolver"
 readme = "README.md"
 license = "MIT"
@@ -24,9 +24,11 @@ dependencies = [
     "agent-venue-copilot",
     "agent-zdd",
     "agent-session-liveness-probe",
+    "agent-plugin-resolve",
 ]
 
 [tool.uv.sources]
+agent-plugin-resolve = { path = "libs/plugin-resolve" }
 # Shared OpenSSH process/config primitives used by the trusted-fleet
 # transport. This is a `uv`-editable canonical reference
 # (vendor-pointer-generalization effort, Phase 1): `path` escapes this

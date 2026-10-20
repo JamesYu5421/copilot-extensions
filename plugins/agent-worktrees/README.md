@@ -11,6 +11,21 @@ sibling plugin to use local worktree isolation. Those sibling plugins compose
 gracefully when installed (extra picker pivots, cross-machine delegation,
 CodeSpace/container resolvers), but their absence only disables those features.
 
+For optional encrypted PR attribution with an already configured agent-vault
+KeePass database, use `identity-vault setup/status/verify` or the
+[setting-up-pr-identity skill](skills/setting-up-pr-identity/SKILL.md).
+The [local setup flow](docs/identity-vault.md) reuses one shared owner key and
+persists only installation-scoped source selection; routine reads remain
+cache-only and require no vault unlock.
+
+For centralized PR status/waits and related-repository ADO review, discussion
+and policy requirements, see [repository-configured PR observation](docs/pr-observation.md).
+Persistent approvals, latest-push approval and human-only completion gates are
+reported separately; no consumer-specific watcher is required for those reads.
+The same surface provides [built-in publication checks](docs/pr-publication-checks.md)
+and [bounded ADO remediation](docs/pr-remediation.md), without casting human
+approvals or creating pipeline runs.
+
 Resolved machine topology treats native Windows and WSL as independent logical
 machines, conventionally `host` and `host-wsl`. The shared machine owner
 projects legacy combined entries without editing topology or historical
@@ -64,12 +79,15 @@ ownership, not invented readiness. See the
 [shared binding contract](../../libs/payload-invocation/README.md#source-qualified-command-binding)
 for selection/refusal semantics and consumer compatibility.
 
-Project launchers are attributable global entry points. Each launcher invokes
-the absolute payload-local agent-worktrees command that created it and carries
-an ownership receipt under `~/.agent-worktrees/binstub-receipts/`. Routine
+Project launchers are attributable global entry points with ownership receipts
+under `~/.agent-worktrees/binstub-receipts/`. Legacy launchers delegate to the
+installed user-side `agent-worktrees` command in their resolved local-bin
+directory, not a checkout or plugin payload. Cell-scoped launchers retain their
+selected payload-local command. Routine
 install, update, repair, and reconciliation preserve foreign owners and edited
 bytes. Known historical generated launchers migrate automatically when receipt,
-installation lineage and exact generated-content checks establish ownership.
+installation lineage and exact generated-content checks establish ownership,
+including checkout-to-marketplace adoption of the same legacy runtime.
 Attributable obsolete or knowledge-only launchers retire through the same
 recoverable boundary; unknown unreceipted files and ambiguous relocations still
 require deliberate attribution. Windows command names are compared
@@ -134,6 +152,11 @@ uses a source-root discovery fallback. Invalid or duplicate registry mappings,
 missing registrations and unavailable checkouts are explicit errors. Acquisition
 and adoption remain separate owner operations; this read never clones a repo.
 
+Worktree Manager's [Repositories Configuration section](docs/repositories-configuration.md)
+uses the native read/preview/apply CLI to inspect registration, routes, state
+binding and tracked pairs. Its only editable setting is the machine-local
+future-launch Copilot login preference; it does not log in or launch agents.
+
 ## Independent Execution Spaces
 
 Native Windows and WSL can register independent execution-space keys without
@@ -141,6 +164,11 @@ sharing project registrations, settings or ownership ledgers. Physical-host
 grouping never makes distinct registered spaces local to one another. See
 [Execution-space identity](docs/config-reference.md#execution-space-identity)
 for explicit selection, compatibility and lifecycle fences.
+For deliberate historical label normalization, see
+[native machine-record repair](docs/machine-record-repair.md). The canonical
+report-first doctor scope preserves same-machine alias relationships and requires
+independent registration/namespace proof for removed checkouts. Ordinary doctor
+fixes never rebind ownership.
 
 ## Captured child ownership
 
@@ -152,6 +180,19 @@ Explicit descendant escape is prevented by this bounded Job; durable-service
 launchers retain the shared helper's permissive default outside this seam.
 POSIX retains its process-group timeout cleanup. This is not a durable-daemon
 launch or an interactive terminal.
+
+## Native resume admission
+
+Bridge's exact-head ACP resume uses `resolve --no-resume
+--native-resume-session <id>` for the selected existing worktree. The returned
+command retains the worktree owner's process-exclusion guard through backend
+execution and rechecks native identity, process liveness and pending intent at
+the actual invocation boundary. A `finalizing` worktree refuses even before its
+cleanup lock is acquired. A live or unknown incumbent refuses; a dry-run
+plan is not launch authority. Mux embodiment takes that same per-worktree guard
+before creating a new execution leg. Older owners reject the new flag rather
+than silently returning an unfenced launch. The caller-facing mode contract is
+owned by the [Bridge resume reference](../agent-bridge/skills/agent-bridge/references/cli-commands.md#session-management).
 
 ## Static instruction preparation
 
@@ -244,7 +285,10 @@ session's.
  anomalous-potato  [ win ]  test-chamber:8e45
 ```
 
-- **Machine** -- the host designation (black)
+- **Machine** -- the registered execution-space name (black). Historical
+  hostnames are resolved using the worktree's recorded platform, so native
+  and guest labels remain distinct without renaming worktrees or changing
+  their ownership.
 - **Environment** -- platform as a color-coded badge keyed on OS type
   (win = blue, wsl = purple, linux = orange), so a Windows pane and a WSL
   pane are distinguishable at a glance
@@ -329,17 +373,19 @@ standalone-behavior changes.
 
 | Skill | Description |
 |-------|-------------|
-| `worktree` | Worktree lifecycle -- creation, finalization, cleanup, safety rules |
-| `git-collaboration` | Pull-forward and shared feature-branch git primitives |
-| `service-lifecycle` | Service installer patterns -- deploy, update, status |
-| `copilot-extensions-setup` | Bootstrap agent-worktrees and optional sibling plugins |
-| `agent-worktrees-wsl-provision` | Provision the current project in WSL |
-| `agent-worktrees-repos` | Repos registry -- known repos and source roots |
-| `agent-worktrees-related` | Directional related-repo index and locus/delegation plan |
-| `resolving-state-home` | Native stateless-harness state routing and paired knowledge-worktree resolution |
-| `repairing-worktrees` | Diagnose/repair worktree+session health via `doctor` |
-| `create-setup-script` | Generate repo-specific session setup scripts |
-| `working-cross-repo` | Good-citizen workflow for work in another registered repo |
+| [worktree](skills/worktree/SKILL.md) | Worktree lifecycle -- creation, finalization, cleanup, safety rules |
+| [git-collaboration](skills/git-collaboration/SKILL.md) | Pull-forward and shared feature-branch git primitives |
+| [service-lifecycle](skills/service-lifecycle/SKILL.md) | Service installer patterns -- deploy, update, status |
+| [copilot-extensions-setup](skills/copilot-extensions-setup/SKILL.md) | Bootstrap agent-worktrees and optional sibling plugins |
+| [agent-worktrees-wsl-provision](skills/agent-worktrees-wsl-provision/SKILL.md) | Provision the current project in WSL |
+| [agent-worktrees-repos](skills/agent-worktrees-repos/SKILL.md) | Repos registry -- known repos and source roots |
+| [agent-worktrees-related](skills/agent-worktrees-related/SKILL.md) | Directional related-repo index and locus/delegation plan |
+| [resolving-state-home](skills/resolving-state-home/SKILL.md) | Native stateless-harness state routing and paired knowledge-worktree resolution |
+| [repairing-worktrees](skills/repairing-worktrees/SKILL.md) | Diagnose/repair worktree+session health via `doctor` |
+| [create-setup-script](skills/create-setup-script/SKILL.md) | Generate repo-specific session setup scripts |
+| [working-cross-repo](skills/working-cross-repo/SKILL.md) | Good-citizen workflow for work in another registered repo |
+| [tracing-claimant-graphs](skills/tracing-claimant-graphs/SKILL.md) | Trace resource claims back to their owning worktree |
+| [setting-up-pr-identity](skills/setting-up-pr-identity/SKILL.md) | Set up and verify a shared vault-backed PR identity key |
 
 ## Hooks
 
@@ -347,7 +393,87 @@ standalone-behavior changes.
 |------|---------|--------------|
 | `preToolUse` | Tool calls | Runs statelessness, cross-repo, and anchor-write guards from `~/.agent-worktrees/bin/` when deployed |
 | `sessionStart` | Every session | Emits worktree/account/machine context, reload guidance, runtime bootstrap hints, repo-plugin provisioning, project hooks, session registration, anchor hygiene, and provision checks. When cwd/env identity is absent, registration recovers the exact binding from the session lock PID -> process ancestry -> owning `wt-<id>` mux pane/session |
-| `sessionEnd` | Session end | Reads the authoritative hook payload, resolves the exact prior association, and closes the latest activation interval without concluding the resumable session |
+| `sessionEnd` | Session end | Uses original source evidence to close the matching activation, not a replacement; legacy unqualified records retain their prior behavior. Ending an interval does not conclude the resumable session |
+
+Native Linux/WSL lifecycle hooks capture bounded original ancestor PID/birth and
+boot/environment metadata before contacting the resident monitor. Registration
+qualifies an opaque activation source only when that original process actually
+holds the exact conversation's `inuse.<pid>.hold` inode. It does not infer source
+identity from the current head, a PID-shaped pathname, or the resident daemon's
+environment. Unsupported or inaccessible source evidence remains unconfirmed.
+
+Reasoned End observations match that source in the existing canonical activation
+history. A delayed historical End cannot end a replacement interval, release its
+self-session claim, stop its fsmonitor, or capture its title. Missing or ambiguous
+source cannot retire a qualified interval. Repeated logical activations in one
+physical CLI with the same native UUID are deliberately unconfirmed; the ambiguity
+survives history pruning. Each session separately retains at most 256 discarded
+physical-source identities. A discarded superseded source cannot register again,
+and discarded sources never regain End or lifecycle-qualification authority.
+Exceeding that safety budget sets a persistent saturation fence: further
+registration and source-bound closure are refused rather than forgetting history.
+Stale saves cannot remove these fences. Duplicate old Start delivery cannot reactivate an ended
+claim. A hook cannot reactivate its ended physical source without a usable event
+timestamp; uncertain replay is refused before claim acquisition. Duplicate End
+observations do not capture a workspace title. Both lifecycle writes require the version-3 owner verb, including legacy
+requests, so an older resident cannot silently discard the new fields.
+Current source-bound End returns its exact activation source and ordinal. Title
+persistence revalidates that receipt against the latest ended activation under
+the record lock, so a same-UUID replacement cannot receive a stale End's title.
+Source-aware hook transport still delegates source-less End to the version-3
+writer: legacy cleanup remains supported, while any source-bound history is
+protected under the same record lock. No source proof or qualified exit reason
+is invented for legacy records. A source-changing bind also advances lifecycle
+revision when its handoff token was already linked, preserving replacement
+history against stale saves.
+PID-only catalog reconciliation can fill process metadata but cannot replace or
+reopen a source-bound activation. Its matching End still closes the current
+interval and releases that interval's claim and filesystem monitor.
+
+Warm source-aware hooks require `session-start-source-v1` or
+`session-end-source-v1` in the selected resident's rendezvous **before** sending
+any mutating packet, as well as acknowledgement in its response. An older Linux
+resident
+uses the current source-aware CLI fallback; its explicit flag is rejected by
+older runtimes, and source-aware Start never downgrades to old startup scripts.
+Original Start bindings come only from the transported hook environment, not the
+resident's inherited environment. No End path runs the terminal attachment
+probe. Windows native End remains visibly unqualified; a missing new warm-hook
+capability does not introduce a new console helper or fallback spawn.
+End transports only the original scoped project/worktree/session binding
+variables alongside native source metadata, not an environment dump. A warm
+bare Resume therefore targets its bound record even when cwd is outside it and
+the same UUID appears in several records.
+
+The shell, PowerShell and Python installers deploy both lifecycle transport and
+the canonical stdlib source-capture helper beside the installed hook client.
+That client uses its sibling helper outside the payload layout, without
+requiring the runtime package on its import path.
+
+`session-role --hosting-evidence --worktree-id <exact-id> --json` is read-only.
+An optional explicit `--session-id <native-uuid>` asks for that conversation's
+bounded activation lifecycle in the same owner read, even when it is no longer
+the hosted head. This mode never substitutes the ambient session ID. Hosting and
+lifecycle observations do not authorize automatic restart recovery.
+
+`session-role --restart-check <expected-json> --json` compares one exact frozen
+identity with current worktree/head/activation and cold-session evidence.
+For a single active task claim, it requests opt-in current policy from the
+registered claim provider, using only `dispatch-local-task:` or
+`dispatch-central-task:` references. The returned task must match the exact
+machine/worktree, project lane and original native UUID, with a positive current
+generation and no terminal/suspended/held/steered/waiting state. Matching task
+snapshots appear in optional `task_policies`; they are not launch capabilities.
+Legacy/default task refs, opaque or unmatched dispatch provenance, other/mixed/
+released/producer claims, inbound ownership and bound/profile-assigned worktrees
+remain unqualified. Missing/old providers refuse without default-writer guesses,
+self-provisioning or legacy retries. The check never changes task/head state,
+reserves a launch or grants automatic restoration.
+Unknown persisted claim states still count as active for existing conservative
+finality checks, but carry `metadata_opaque: true` through full/public projections
+and later saves. Malformed claim collections/items retain conservative opaque
+placeholders rather than becoming an empty ledger. Neither can qualify for
+restart inspection.
 
 The bundled live-pulse extension writes `substatus.json` beside Copilot session
 state so the picker can show live intent/rest state. It is passive; durable

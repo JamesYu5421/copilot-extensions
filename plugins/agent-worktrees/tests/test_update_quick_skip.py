@@ -24,6 +24,10 @@ from agent_worktrees import config as cfg
 from agent_worktrees import installer
 from agent_worktrees import picker_profiles_cli
 from agent_worktrees import reconcile
+from agent_worktrees import update_runtime_plan
+
+
+pytestmark = pytest.mark.usefixtures("payload_subprocess_double")
 
 
 class _Completed:
@@ -54,7 +58,7 @@ def plugin_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def wired(monkeypatch, plugin_dir):
+def wired(monkeypatch: pytest.MonkeyPatch, plugin_dir: Path) -> list[list[str]]:
     """Wire cmd_update's collaborators to no-ops and record subprocess calls.
 
     Returns the list of recorded subprocess argv lists so a test can assert
@@ -75,6 +79,7 @@ def wired(monkeypatch, plugin_dir):
     monkeypatch.setattr(m, "_fast_forward_project_anchors", lambda: None)
     monkeypatch.setattr(m, "_prune_stale_pivots_after_update", lambda: None)
     monkeypatch.setattr(m, "_find_installed_plugin_dir", lambda: plugin_dir)
+    monkeypatch.setattr(m, "_invocation_update_context", lambda: plugin_dir)
     monkeypatch.setattr(m, "_project_update_context", lambda: plugin_dir)
     monkeypatch.setattr(cfg, "detect_platform", lambda: "linux")
     return calls
@@ -145,11 +150,16 @@ def test_required_runtime_failure_makes_update_fail(wired, monkeypatch):
     assert m.cmd_update(_args()) == 1
 
 
-@pytest.mark.parametrize("deployed", ["1.5.3-dev9", "1.5.3-dev8"])
+@pytest.mark.parametrize("deployed", ["1.5.3-dev9", "1.5.3-dev8", None])
 def test_local_finishing_runs_once_after_runtime_work(wired, monkeypatch, deployed):
     monkeypatch.setattr(reconcile, "payload_version", lambda d: "1.5.3-dev9")
     monkeypatch.setattr(reconcile, "runtime_deployed_version", lambda *a, **k: deployed)
     monkeypatch.setattr(cfg, "detect_platform", lambda: "windows")
+    original_which = update_runtime_plan.shutil.which
+    monkeypatch.setattr(
+        update_runtime_plan.shutil, "which",
+        lambda name: "fixture-powershell" if name == "pwsh" else original_which(name),
+    )
     order = []
     monkeypatch.setattr(m, "_update_modules", lambda *a, **k: order.append("modules") or True)
     monkeypatch.setattr(
@@ -166,6 +176,8 @@ def test_local_finishing_runs_once_after_runtime_work(wired, monkeypatch, deploy
     )
     assert m.cmd_update(_args()) == 0
     assert order == ["modules", "runtimes", "commands", "profiles"]
+    installer_calls = sum(_installer_ran([argv]) for argv in wired)
+    assert installer_calls == (0 if deployed == "1.5.3-dev9" else 1)
 
 
 def test_required_command_migration_failure_makes_update_fail(wired, monkeypatch):
