@@ -1,15 +1,33 @@
 """No-follow, pinned-directory I/O for the session metadata transaction."""
 from __future__ import annotations
 
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import errno
+import importlib.util
 import os
 from pathlib import Path
 import secrets
 import stat
 import sys
+from typing import Any, Iterator
 
 from stamp_repair import repairable, tighten_directories
+
+_publication = None
+
+
+def publication_component() -> Any:
+    global _publication
+    if _publication is None:
+        spec = importlib.util.spec_from_file_location(
+            __name__ + "_publication", Path(__file__).with_name("versioned_runtime_publication.py"),
+        )
+        if spec is None or spec.loader is None:
+            raise ValueError("Required publication component is unavailable")
+        _publication = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = _publication
+        spec.loader.exec_module(_publication)
+    return _publication
 
 
 def _windows_open(path: Path, *, directory: bool, create: bool = False) -> int:
@@ -269,7 +287,8 @@ class Directory:
         return fd
 
     def verify(self) -> None:
-        if os.name != "nt" and not _posix_private(os.fstat(self.fd)):
+        if not (_windows_owned(self.fd) if os.name == "nt" else
+                _posix_private(os.fstat(self.fd))):
             raise ValueError(f"stamp directory is not privately owned: {self.path}")
         for parent, path, fd in self.bindings:
             info = os.fstat(fd)
@@ -328,8 +347,43 @@ class Directory:
         with os.fdopen(fd, "rb") as stream:
             return stream.read()
 
+    @contextmanager
+    def _lease_directory(self) -> Iterator[Directory]:
+        self.verify()
+        directory = Directory(self.path / ".publication-leases")
+        with directory.stack:
+            directory.bindings = list(self.bindings)
+            directory.fd = directory._directory(directory.path, self.fd)
+            directory.verify()
+            yield directory
+
     def publish(self, name: str, data: bytes, *, executable: bool = False,
-                repair: bool = False) -> None:
+                repair: bool = False, ownership_receipt: Path | None = None,
+                publication_root: Path | None = None) -> None:
+        publication = publication_component()
+        target = self.path / name
+        root = publication.absolute(publication_root or self.path)
+        self.verify()
+        with ExitStack() as stack:
+            def open_lock(lock_dir: Path, filename: str) -> int:
+                if lock_dir != self.path / ".publication-leases":
+                    raise ValueError(f"unexpected stamp lease directory: {lock_dir}")
+                directory = stack.enter_context(self._lease_directory())
+                return directory.open(filename, create=True)
+
+            stack.enter_context(publication.target_leases(root, [target], open_lock=open_lock))
+            receipt = publication.Receipt(ownership_receipt, root, [target], "session-stamp") if ownership_receipt else None
+            try:
+                self._publish_locked(name, data, executable=executable, repair=repair, receipt=receipt)
+                if receipt:
+                    receipt.finish("success")
+            except BaseException:
+                if receipt:
+                    receipt.finish("error")
+                raise
+
+    def _publish_locked(self, name: str, data: bytes, *, executable: bool,
+                        repair: bool, receipt: Any) -> None:
         shared = False
         try:
             fd = self.open(name, repair=repair)
@@ -341,7 +395,7 @@ class Directory:
                 identical = stream.read() == data
                 if shared and not identical:
                     raise ValueError(f"cannot repair untrusted stamp content: {name}")
-                if identical and not shared:
+                if identical and not shared and receipt is None:
                     if executable:
                         os.fchmod(stream.fileno(), 0o755) if os.name != "nt" else (
                             os.chmod(self.path / name, 0o755)
@@ -350,16 +404,23 @@ class Directory:
         temporary = ".session-stamp-" + secrets.token_hex(16)
         fd = self.open(temporary, create=True, exclusive=True)
         try:
-            with os.fdopen(fd, "wb") as stream:
+            with os.fdopen(fd, "w+b") as stream:
                 stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
                 if executable and os.name != "nt":
                     os.fchmod(stream.fileno(), 0o755)
+                if executable and os.name == "nt":
+                    os.chmod(self.path / temporary, 0o755)
+                created = receipt.created(self.path / name, stream.fileno(), content=data) if receipt else None
             if os.name == "nt":
                 self.verify()
                 os.replace(self.path / temporary, self.path / name)
             else:
                 self.verify()
                 os.replace(temporary, name, src_dir_fd=self.fd, dst_dir_fd=self.fd)
+            if created is not None and publication_component().state_path(self.path / name) != created:
+                raise ValueError("Session publication lost its created stage")
             if shared:
                 print(f"[agent-index] regenerated stamp artifact: {name}", file=sys.stderr)
         finally:
