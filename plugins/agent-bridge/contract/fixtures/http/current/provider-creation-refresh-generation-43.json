@@ -1,0 +1,63 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/api/v1/sessions/workspace-creations",
+    "json": {
+      "agent": "container:prepared-original",
+      "creation_key": "logical-work",
+      "provider_instance": true
+    }
+  },
+  "response": {
+    "preference_source": "caller-settings",
+    "session_id": "bridge-a",
+    "name": "example-session",
+    "status": "idle",
+    "protocol_version": 43,
+    "min_protocol_version": 1,
+    "creation": {
+      "version": 1,
+      "status": "complete",
+      "venue": {
+        "provider": "fixture-provider",
+        "kind": "container",
+        "target_id": "container:prepared-original",
+        "instance_id": "original-instance",
+        "scope": "provider-instance",
+        "transport": "provider-exec",
+        "ready": true,
+        "capabilities": {
+          "instance_pinned_exec": true
+        }
+      },
+      "native_session_id": "native-a",
+      "turn_index": null,
+      "replayed": false
+    }
+  },
+  "capability": {
+    "provider_creation": 36,
+    "workspace_creation": 34,
+    "client_floor_refusal_status": 426,
+    "ordinary_provider_instance_default": false,
+    "creation_prompt_supported": false,
+    "required_provider_capability": "instance_pinned_exec"
+  },
+  "captured_from": {
+    "commit": "4cee06ed296deec2b17fa9bbcfed7c9b488cfe61",
+    "plugin_version": "0.4.1-dev3",
+    "source_path": "plugins/agent-bridge/src/agent_bridge/session_core.py",
+    "source_git_blob": "660e8e8bc02f6b1faa438304407f10382e03710d",
+    "protocol_generation": 43,
+    "source_sha256": "8305b4c9c3afd7e8870f2931ffe9ce6e7bebad3ca771605673c306e05d5f4709"
+  },
+  "compatibility": {
+    "name_only_provider_refused": true,
+    "cold_resume_placement_drift_refused_before_spawn": true,
+    "guest_workspace_preserved_on_load": true
+  },
+  "reattested_from": {
+    "path": "plugins/agent-bridge/contract/fixtures/http/current/provider-creation-refresh-generation-42.json",
+    "sha256": "6f377c62fcafabbc1f5b4a7f5989744bd1b927f79d1b447b3d2e13845a9d8438"
+  }
+}

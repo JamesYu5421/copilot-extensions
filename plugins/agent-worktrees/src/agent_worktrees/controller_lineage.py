@@ -215,7 +215,7 @@ def controller_findings(
                 include_control_plane_related_pr=False
             ).machine
         except Exception:
-            local_machine = child.machine
+            local_machine = child.execution_machine
 
     findings: list[dict[str, object]] = []
     record_cache: dict[
@@ -278,7 +278,7 @@ def controller_findings(
                 finding["terminal_session_id"] = None
                 findings.append(finding)
                 continue
-            finding["controller_machine"] = controller.machine
+            finding["controller_machine"] = controller.execution_machine
             finding["head_revision"] = controller.head_revision
             if session_id is None:
                 transition = controller.replayed_head_transition
