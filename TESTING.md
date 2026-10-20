@@ -744,6 +744,14 @@ heartbeat progress alone does not prove the independent reader connected.
 
 ### Native category view contracts
 
+The worker-instance first-touch CLI contract has independent catalog, save,
+activation, retry, published-catalog and degraded-catalog items. Each makes one
+real cold subprocess call under
+the existing 20-second subprocess and 30-second item bounds; prerequisite
+states use the same CLI parser/handler in-process against the fixture's real
+files. This preserves every cold-entry boundary without composing multiple
+permitted 20-second calls into one 30-second item.
+
 `plugins/agent-dispatch/tests/test_task_categories.py` gives each native view
 contract its own function-scoped coordinator/database and pytest item:
 `test_native_cli_category_view_contract[default-work|all-categories|maintenance-board|evidence]`.
@@ -1255,6 +1263,12 @@ Managed-worktree removal fixtures accept the canonical project loader's
 keyword-only overlay selection while retaining synthetic receiving-side
 configuration; they never discover installed project or plugin registries.
 Both explicit overlay values also run in the required PR guard lane.
+
+The default headless-pool CLI case retains its original unparameterized node ID;
+explicit central/local authority cases have separate parametrized IDs. This
+keeps a current candidate compatible with an existing coverage selection while
+retaining all three real command contracts. Missing requested nodes still fail
+collection; they are not silently removed from the selection.
 
 Execution-space registry tests retain the supplied receiving configuration
 through the real YAML overlay reader and reject malformed registries. A fresh
