@@ -1254,6 +1254,30 @@ close before returning so the caller can safely clean up its sandbox.
 Symlinks remain excluded; counting and process-tree termination at the storage
 ceiling are covered by native containment tests.
 
+Sandbox cleanup requires verified process-tree termination, not just the
+command's exit. The POSIX controller reports status through a private pipe
+and keeps its PID allocated until teardown; the owner verifies its group and
+session identity before each signal and confirms no live members remain.
+The controller stays live through TERM grace and is excluded only from the
+grace-period member count. An identity-checked final SIGKILL is mandatory even
+when an earlier census appears empty; post-kill membership must reach zero.
+An independent owner pipe stays open only in the runner. EOF makes an abandoned
+controller terminate and then kill its own still-pinned group, both during
+command execution and after reporting status; abrupt runner death cannot leave
+the controller waiting forever.
+Failed membership observation also releases that pipe before waiting for the
+controller, allowing its independent reaper to escalate while the original
+unreaped error still requires sandbox retention.
+Zombies still count toward process admission but cannot hold sandbox files.
+Windows teardown explicitly terminates the Job Object and waits for zero
+active members before closing its handle. Uncertain termination raises
+`UnreapedProcessError`; plugin and standalone runners and the parallel coverage
+collector retain their sandbox, detach automatic cleanup and report its path
+rather than deleting potentially owned files. Normal exit, deadline and
+cancellation retain the same reaping requirement and existing resource limits.
+If the environment audit also fails, the unreaped error retains precedence
+and reports both failures; an audit exception cannot authorize file deletion.
+
 Full dispatch execution in the CI smoke matrix (push, manual and promotion)
 distributes its complete file inventory across three independent jobs.
 The PR owner uses two complete/disjoint jobs. Its default sequential process
