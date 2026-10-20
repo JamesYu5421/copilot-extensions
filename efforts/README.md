@@ -11,7 +11,7 @@ that pattern to this repository.
 | Effort | Status | Coordination |
 |--------|--------|--------------|
 | [Acknowledged Execution Handoff](active/acknowledged-execution-handoff/README.md) | Blocked; generic contract reviewed and merged, implementation authorization and owner assignment next | #7268; no runtime implementation or adoption |
-| [Gateway Role Tunnels](active/gateway-role-tunnels/README.md) | Active; plan reviewed, strict manifest/publication slice first, outbound channel and container qualification open | #7257; finite sub-effort of #6236, retained #6443/#5789 integration owners |
+| [Gateway Role Tunnels](active/gateway-role-tunnels/README.md) | Active; service runtime merged, native amd64 container witness passed; generic ingress, ARM64 and adopter readiness open | #7257; finite sub-effort of #6236, retained #6443/#5789 integration owners |
 | [Remote ACP Host Ownership](active/remote-acp-host-ownership/README.md) | Draft; reviewed host-worktree relationship and obligation plan before implementation | #7237; existing session, claims and dispatch owners retained |
 | [Agent Chat Graduation](active/agent-chat-graduation/README.md) | Draft; one vision/architecture/plugin/service/lifecycle proposal before implementation | #7238; existing fleet, service and session-host owners retained |
 | [ADO PR Stewardship](active/ado-pr-stewardship/README.md) | Draft; centralized provider/configuration/observation proposal before implementation | #7203; preserves #7051/#6007/#6818 owners |
