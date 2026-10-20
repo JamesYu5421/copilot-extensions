@@ -72,7 +72,13 @@ class ScopedRecoveryClient:
 
             def __init__(self, args, *positional, **kwargs):
                 bound = signature.bind(args, *positional, **kwargs)
-                arguments = [args] if isinstance(args, (str, bytes, os.PathLike)) else args
+                if isinstance(args, (str, bytes, os.PathLike)):
+                    arguments = [args]
+                elif isinstance(args, (list, tuple)):
+                    arguments = args
+                else:
+                    arguments = list(args)
+                    bound.arguments["args"] = arguments
                 digest = hashlib.sha256(argv_bytes(arguments)).hexdigest()
                 label = context()
                 if client.plan is not None and label in client.plan["controls"]:

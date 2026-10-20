@@ -63,6 +63,9 @@ new-thread tracer installation.
 Spawn and producer identities share the native filesystem argument encoding.
 Non-UTF-8 POSIX bytes and their surrogate-escaped string equivalents therefore
 hash losslessly without rewriting or rejecting supported application arguments.
+Lists, tuples and scalar arguments retain their original forwarding identity;
+other iterables are materialized once and that same sequence is hashed and
+passed to `Popen`, so consuming a generator cannot lose the executable or tail.
 Native compile/exec dispatch suppresses recursion only on the current thread:
 callback I/O on one thread must not hide another thread's real events. The
 generated-code guard preserves identity-matched source coordinates already

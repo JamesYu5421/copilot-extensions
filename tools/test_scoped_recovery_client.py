@@ -19,6 +19,7 @@ from tools.coverage_guided_selection.child_audit import argv_key
 @pytest.mark.parametrize("preloader", [None, "/existing/preloader.so"])
 @pytest.mark.parametrize("argument_kind", [
     "list", "tuple", "path", "text", "bytes", "nonutf8-bytes", "surrogate-text",
+    "iterator", "generator",
 ])
 def test_launch_options_and_actual_exits_preserved(monkeypatch, context, preloader, argument_kind):
     calls = []
@@ -45,6 +46,7 @@ def test_launch_options_and_actual_exits_preserved(monkeypatch, context, preload
         environment["LD_PRELOAD"] = preloader
     original = dict(environment)
     argv = ["/actual/python", "-I", "-c", "raise SystemExit(17)"]
+    expected_arguments = list(argv)
     if argument_kind == "tuple":
         argv = tuple(argv)
     elif argument_kind == "path":
@@ -57,6 +59,10 @@ def test_launch_options_and_actual_exits_preserved(monkeypatch, context, preload
         argv.append(b"\xff")
     elif argument_kind == "surrogate-text":
         argv.append(b"\xff".decode("utf-8", "surrogateescape"))
+    elif argument_kind == "iterator":
+        argv = iter(argv)
+    elif argument_kind == "generator":
+        argv = (value for value in argv)
     client.install_launch_recorder(lambda: context)
     try:
         child = subprocess.Popen(argv, 0, env=environment, cwd="/original")
@@ -66,7 +72,13 @@ def test_launch_options_and_actual_exits_preserved(monkeypatch, context, preload
     assert subprocess.Popen is NativePopen
     assert environment == original
     actual_args, bufsize, forwarded, cwd = calls[0]
-    assert actual_args is argv and bufsize == 0 and cwd == "/original"
+    if argument_kind in {"iterator", "generator"}:
+        assert actual_args == expected_arguments and type(actual_args) is list
+        sentinel = object()
+        assert next(argv, sentinel) is sentinel
+    else:
+        assert actual_args is argv
+    assert bufsize == 0 and cwd == "/original"
     if context == "owned":
         assert forwarded["LD_PRELOAD"] == (preloader or "/observer.so")
         assert forwarded["CGS_NATIVE_CONTROL"] == "/control"
@@ -76,11 +88,13 @@ def test_launch_options_and_actual_exits_preserved(monkeypatch, context, preload
     assert [row["op"] for row in events] == ["LAUNCHED", "EXIT_OBSERVED"]
     assert events[0]["case"] == context and events[0]["pid"] == 71
     tail = (b"-I\0-c\0raise SystemExit(17)" if
-            argument_kind in {"list", "tuple", "nonutf8-bytes", "surrogate-text"} else b"")
+            argument_kind in {"list", "tuple", "nonutf8-bytes", "surrogate-text", "iterator", "generator"} else b"")
     if argument_kind in {"nonutf8-bytes", "surrogate-text"}:
         tail += b"\0" + os.fsencode(argv[-1])
     assert events[0]["argv_key"] == hashlib.sha256(tail).hexdigest()
-    assert events[0]["argv_key"] == argv_key([argv] if isinstance(argv, (str, bytes, os.PathLike)) else argv)
+    assert events[0]["argv_key"] == argv_key(
+        [actual_args] if isinstance(actual_args, (str, bytes, os.PathLike)) else actual_args,
+    )
     assert events[1]["returncode"] == 17
 
 
@@ -89,11 +103,17 @@ def test_launch_options_and_actual_exits_preserved(monkeypatch, context, preload
     reason="deliberate real POSIX native-argument boundary",
 )
 @pytest.mark.parametrize("argument", [b"\xff", b"\xff".decode("utf-8", "surrogateescape")])
-def test_posix_nonutf8_arguments_reach_actual_child_unchanged(argument):
+@pytest.mark.parametrize("argument_kind", ["list", "iterator", "generator"])
+def test_posix_nonutf8_arguments_reach_actual_child_unchanged(argument, argument_kind):
     writer = io.StringIO()
     client = ScopedRecoveryClient(None, writer, "token", [])
     code = "import os,sys;print(os.fsencode(sys.argv[1]).hex())"
     command = [sys.executable, "-I", "-c", code, argument]
+    expected_command = list(command)
+    if argument_kind == "iterator":
+        command = iter(command)
+    elif argument_kind == "generator":
+        command = (value for value in command)
     client.install_launch_recorder(lambda: "unrecognized")
     try:
         child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -103,7 +123,31 @@ def test_posix_nonutf8_arguments_reach_actual_child_unchanged(argument):
         client.restore_launch_recorder()
     events = [json.loads(line) for line in writer.getvalue().splitlines()]
     expected = hashlib.sha256(b"-I\0-c\0" + code.encode() + b"\0\xff").hexdigest()
-    assert events[0]["argv_key"] == argv_key(command) == expected
+    assert events[0]["argv_key"] == argv_key(expected_command) == expected
+
+
+@pytest.mark.skipif(
+    os.environ.get("CGS_RUN_STANDALONE_INTEGRATION") != "1",
+    reason="deliberate real iterable-argument process boundary",
+)
+@pytest.mark.parametrize("argument_kind", ["iterator", "generator"])
+def test_iterable_arguments_reach_actual_native_child(argument_kind):
+    writer = io.StringIO()
+    client = ScopedRecoveryClient(None, writer, "token", [])
+    arguments = [sys.executable, "-I", "-c", "print('actual iterable reached')"]
+    command = iter(arguments) if argument_kind == "iterator" else (value for value in arguments)
+    client.install_launch_recorder(lambda: "unrecognized")
+    try:
+        child = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
+        )
+        stdout, stderr = child.communicate(timeout=10)
+        assert child.returncode == 0 and stdout.strip() == b"actual iterable reached", stderr
+    finally:
+        client.restore_launch_recorder()
+    events = [json.loads(line) for line in writer.getvalue().splitlines()]
+    assert events[0]["argv_key"] == argv_key(arguments)
 
 
 def test_empty_or_refused_completion_cannot_claim_producers():
