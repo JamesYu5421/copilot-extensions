@@ -2,12 +2,37 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+
+def test_bootstrap_adapters_require_stdlib_toml_and_import_without_site_packages(tmp_path):
+    payload = Path(__file__).resolve().parents[1]
+    for name in ("bootstrap.ps1", "bootstrap.sh"):
+        body = (payload / name).read_text(encoding="utf-8")
+        assert "--no-project --python '>=3.11'" in body
+    if sys.version_info < (3, 11):
+        pytest.skip("the selected bootstrap requires Python 3.11+, not the runtime's 3.10 floor")
+    result = subprocess.run(
+        [
+            sys.executable, "-I", "-S", "-B", "-c",
+            "import runpy,sys;"
+            "assert sys.version_info >= (3,11);"
+            "runpy.run_path(sys.argv[1],run_name='dependency_free_bootstrap');"
+            "from worktree_manager import _trusted_pointer_materializer;"
+            "assert 'tomli' not in sys.modules",
+            str(payload / "scripts" / "bootstrap_runtime.py"),
+        ],
+        cwd=tmp_path, capture_output=True, text=True, timeout=10,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.fixture

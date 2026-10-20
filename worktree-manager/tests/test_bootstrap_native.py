@@ -14,8 +14,9 @@ pytestmark = pytest.mark.skipif(os.name != "nt", reason="native PowerShell boots
 
 
 @pytest.mark.parametrize("shell", ["powershell", "pwsh"])
-@pytest.mark.parametrize("step", ["clone", "fetch", "checkout", "tar"])
-def test_failed_native_fetch_stops_before_construction(tmp_path, shell, step):
+@pytest.mark.parametrize("step", ["clone", "fetch", "checkout", "tar", "command"])
+@pytest.mark.parametrize("invocation", ["script", "iex"])
+def test_failed_native_bootstrap_preserves_caller_and_selection(tmp_path, shell, step, invocation):
     executable = shutil.which(shell)
     if not executable:
         pytest.skip(f"native {shell} is unavailable")
@@ -59,7 +60,21 @@ def test_failed_native_fetch_stops_before_construction(tmp_path, shell, step):
             b"exit /b %errorlevel%\r\n"
         )
     (binary / "uv.cmd").write_bytes(
-        b'@echo off\r\necho invoked>"%WORKTREE_MANAGER_ROOT%\\builder-ran"\r\nexit /b 0\r\n'
+        b'@echo off\r\n'
+        b'echo invoked>"%WORKTREE_MANAGER_ROOT%\\builder-ran"\r\n'
+        b'echo fixture native command failure - exit 17 1>&2\r\nexit /b 17\r\n'
+    )
+    invocation_code = (
+        "& $env:MANAGER_TEST_BOOTSTRAP --version\nexit $LASTEXITCODE\n"
+        if invocation == "script" else
+        "try {\n"
+        "  Invoke-Expression ([IO.File]::ReadAllText($env:MANAGER_TEST_BOOTSTRAP))\n"
+        "  throw 'bootstrap unexpectedly succeeded'\n"
+        "} catch {\n"
+        "  [Console]::Error.WriteLine($_.ToString())\n"
+        "}\n"
+        "[IO.File]::WriteAllText((Join-Path $env:WORKTREE_MANAGER_ROOT 'caller-survived'), 'yes')\n"
+        "exit 0\n"
     )
     wrapper = tmp_path / "invoke.ps1"
     wrapper.write_text(
@@ -78,8 +93,7 @@ def test_failed_native_fetch_stops_before_construction(tmp_path, shell, step):
         "} elseif ((Get-Command git).Source -ne (Join-Path $env:MANAGER_TEST_BIN 'git.cmd')) {\n"
         "  throw 'fixture git was not selected'\n"
         "}\n"
-        "& $env:MANAGER_TEST_BOOTSTRAP --version\n"
-        "exit $LASTEXITCODE\n",
+        + invocation_code,
         encoding="utf-8",
     )
     env = dict(
@@ -94,8 +108,12 @@ def test_failed_native_fetch_stops_before_construction(tmp_path, shell, step):
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
-    assert result.returncode != 0, result.stdout
+    if invocation == "iex":
+        assert result.returncode == 0, result.stderr
+        assert (root / "caller-survived").read_text() == "yes"
+    else:
+        assert result.returncode == (17 if step == "command" else 1), result.stderr
     assert "fixture native " + step + " failure" in result.stderr
     assert "exit 17" in result.stderr
-    assert not (root / "builder-ran").exists()
+    assert (root / "builder-ran").exists() == (step == "command")
     assert marker.read_text(encoding="utf-8") == "retained"

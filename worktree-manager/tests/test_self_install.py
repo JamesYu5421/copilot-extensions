@@ -139,6 +139,73 @@ def test_selection_publication_stays_inside_the_construction_lease(tmp_path, mon
     assert not held["value"]
 
 
+@pytest.mark.parametrize("failure", [PermissionError, KeyboardInterrupt])
+@pytest.mark.parametrize("existing_launchers", [True, False])
+@pytest.mark.parametrize("marker_replaced", [True, False])
+def test_failed_selection_preserves_legacy_launchers(
+    tmp_path, monkeypatch, failure, existing_launchers, marker_replaced,
+):
+    pd = _fake_payload(tmp_path, "2.0.0")
+    root = tmp_path / "root"
+    lb = _patch_local_bin(monkeypatch, tmp_path)
+    _patch_provider_registry(monkeypatch, tmp_path)
+    legacy = version_slot("1.0.0", root)
+    (legacy / "src").mkdir(parents=True)
+    si._write_marker(root, "1.0.0")
+    assert not (legacy / ".venv").exists()
+    lb.mkdir(parents=True)
+    previous = {}
+    if existing_launchers:
+        for name in si._expected_binstub_contents():
+            path = lb / name
+            body = f"# legacy source-only launcher: {name}\r\n".encode()
+            path.write_bytes(body)
+            path.chmod(0o755)
+            previous[name] = (body, path.stat().st_mode)
+
+    publish = si._write_marker
+
+    def refuse(*args):
+        assert not si._binstubs_are_stale(), "exercise failure AFTER deploying incompatible launchers"
+        if marker_replaced:
+            publish(*args)
+        raise failure("selector publication refused")
+
+    monkeypatch.setattr(si, "_write_marker", refuse)
+    with pytest.raises(failure, match="selector publication refused"):
+        self_install(pd, root=root, dry_run=False)
+    assert current_version(root) == "1.0.0"
+    assert {
+        path.name: (path.read_bytes(), path.stat().st_mode) for path in lb.iterdir()
+    } == previous
+
+
+def test_partial_launcher_deployment_restores_prior_artifacts(tmp_path, monkeypatch):
+    from worktree_manager.self_install_recovery import publish_installed_selection
+
+    root = tmp_path / "root"
+    lb = _patch_local_bin(monkeypatch, tmp_path)
+    lb.mkdir(parents=True)
+    si._write_marker(root, "retained")
+    first, second, *_ = si._expected_binstub_contents()
+    (lb / first).write_bytes(b"retained launcher\r\n")
+    original_write = Path.write_text
+
+    def refuse_second(path, *args, **kwargs):
+        if path == lb / second:
+            assert (lb / first).read_bytes() != b"retained launcher\r\n"
+            raise PermissionError("second launcher publication refused")
+        return original_write(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", refuse_second)
+    with pytest.raises(PermissionError, match="second launcher publication refused"):
+        publish_installed_selection(root, "new")
+    assert current_version(root) == "retained"
+    assert {path.name: path.read_bytes() for path in lb.iterdir()} == {
+        first: b"retained launcher\r\n",
+    }
+
+
 def test_apply_reaps_stranded_cutover_passive_before_copying_payload(tmp_path, monkeypatch):
     """A slot left occupied by an abandoned cutover passive (spawned by
     ``mux_daemon_cutover.spawn_passive`` with its ``cwd`` pinned inside the

@@ -323,6 +323,11 @@ Windows bootstrap and self-update enable Git long-path handling per command,
 without changing global Git configuration. A failed clone, fetch, checkout or
 tar extraction stops bootstrap before runtime construction; a partially fetched
 tree is never treated as a successful bootstrap.
+Both bootstrap adapters select Python 3.11 or newer so first touch has the
+standard-library TOML parser before any runtime dependencies are installed.
+PowerShell's documented IEX invocation reports a terminating error without
+closing the caller's shell; a separate script invocation preserves the
+requested command's nonzero exit code.
 
 ### Slot completeness and recovery
 
@@ -336,7 +341,10 @@ Linux-only D-Bus packages merely to start the Manager.
 The installer constructs a sibling candidate, checks its actual installed
 module/version and CLI, then repeats health at the final runtime path before
 writing the `platform-runtime-v1` `.install-complete` marker. Failed construction
-or final-path health restores the prior slot without selecting the candidate.
+or final-path health, including cancellation, restores the prior slot without
+selecting the candidate. If selector publication fails after launcher deployment,
+the installer restores the previous launcher bytes and permissions (or removes
+newly created launchers), preserving source-only legacy installations as well.
 The existing cutover lease and live-slot protections remain in place.
 Source-only legacy completion markers are not runtime readiness; a no-op also
 requires actual installed health. Stale binstubs or provider metadata are

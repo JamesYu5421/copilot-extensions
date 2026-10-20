@@ -266,7 +266,7 @@ def _swap_in_staged_slot(
         _replace_with_retry(staging, slot)
         if validate is not None:
             validate(slot)
-    except (OSError, RuntimeError):
+    except BaseException:
         if slot.exists():
             _replace_with_retry(slot, staging)
         if retired is not None:

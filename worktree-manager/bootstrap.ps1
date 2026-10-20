@@ -19,6 +19,7 @@
 # below. Relocate the install root with $env:WORKTREE_MANAGER_ROOT.
 
 $ErrorActionPreference = 'Stop'
+$BootstrapInvokedAsScript = -not [string]::IsNullOrEmpty($PSCommandPath)
 
 $Root    = if ($env:WORKTREE_MANAGER_ROOT) { $env:WORKTREE_MANAGER_ROOT } else { Join-Path $env:USERPROFILE '.worktree-manager' }
 $Staging = Join-Path $Root 'staging'
@@ -58,8 +59,7 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     # without a restart (the installer persists PATH for future shells).
     if (Test-Path (Join-Path $LocalBin 'uv.exe')) { $env:PATH = "$LocalBin;$env:PATH" }
     if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-        Write-Warning "uv was installed but is not on PATH yet. Restart your shell and re-run the bootstrap."
-        exit 1
+        throw "uv was installed but is not on PATH yet. Restart your shell and re-run the bootstrap."
     }
 }
 
@@ -116,9 +116,12 @@ Push-Location (Join-Path $PayloadParent 'worktree-manager')
 try {
     # Version-install the fetched payload (idempotent, version-gated): publishes
     # the versions/<ver> slot + current-version marker + ~/.local/bin binstub.
-    uv run --quiet --no-project --python '>=3.10' python scripts/bootstrap_runtime.py @args
+    uv run --quiet --no-project --python '>=3.11' python scripts/bootstrap_runtime.py @args
     $bootstrapExit = $LASTEXITCODE
-    if ($bootstrapExit -ne 0) { exit $bootstrapExit }
+    if ($bootstrapExit -ne 0) {
+        if ($BootstrapInvokedAsScript) { exit $bootstrapExit }
+        throw "Manager bootstrap or requested command failed (exit $bootstrapExit)"
+    }
 } finally {
     Pop-Location
 }

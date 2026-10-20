@@ -134,4 +134,4 @@ case ":$PATH:" in
 esac
 
 # Then run whatever the caller asked for through the freshly-installed app.
-exec uv run --quiet --no-project --python '>=3.10' python scripts/bootstrap_runtime.py "$@"
+exec uv run --quiet --no-project --python '>=3.11' python scripts/bootstrap_runtime.py "$@"

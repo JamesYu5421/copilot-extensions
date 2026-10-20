@@ -178,7 +178,8 @@ def test_runtime_command_timeout_retires_its_native_descendants(tmp_path):
     assert pid not in processes()
 
 
-def test_final_path_health_failure_restores_previous_slot(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+def test_final_path_health_failure_restores_previous_slot(tmp_path, monkeypatch, failure):
     source = _source(tmp_path / "source")
     slot = tmp_path / "versions" / "1.2.3"
     monkeypatch.setattr(payload, "build_runtime", _fake_build)
@@ -191,10 +192,10 @@ def test_final_path_health_failure_restores_previous_slot(tmp_path, monkeypatch)
         assert version == "1.2.3"
         assert not (candidate / si._SLOT_COMPLETE_MARKER).exists()
         if candidate == slot:
-            raise RuntimeError("final runtime import failed")
+            raise failure("final runtime import failed")
 
     monkeypatch.setattr(payload, "probe_runtime", probe)
-    with pytest.raises(RuntimeError, match="final runtime import failed"):
+    with pytest.raises(failure, match="final runtime import failed"):
         payload._copy_payload(source, slot)
     after = {path.relative_to(slot): path.read_bytes() for path in slot.rglob("*") if path.is_file()}
     assert after == before

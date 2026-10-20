@@ -146,6 +146,24 @@ implementation; public-file absence is not proof of unpublished custody.
 
 ## Journal
 
+- **2026-10-20** - Addressed four findings from implementation PR #7420's
+  first current-head review. Native PowerShell IEX failures now throw without
+  exiting the caller; separate script invocation retains the child's exit
+  code. Both bootstrap adapters require Python 3.11+ before dependency-free
+  TOML imports. Publication retains launcher bytes/permissions and selector
+  preimages through partial launcher writes, selector failure and cancellation,
+  including source-only legacy selection. Final-path health cancellation
+  restores the previous slot before propagating the interruption.
+  The contained six-file Manager selection passes **183 tests**, with two
+  Windows symlink-permission skips and the opt-in desktop-observer case skipped
+  (its prior two-cycle qualification remains recorded above). It includes native
+  PowerShell 5.1/7 IEX and script-process failures and a real isolated `-S`
+  bootstrap import without third-party site packages. Touched-Python lint,
+  module-size, headless-launch and install-contract guards pass.
+  Documentation impact: updated the Manager bootstrap/recovery contract;
+  these repairs close the already-reviewed intent rather than change it.
+  Review acceptance, release and published-consumer qualification remain open.
+
 - **2026-10-20** - Local pre-publication qualification is complete. The final
   contained selection passes **196 tests**, with two explicit Windows
   symlink-permission skips; current root containment/vendor tests pass

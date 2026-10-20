@@ -810,8 +810,9 @@ def self_install(
             # (self_update's own contract is best-effort/non-fatal).
             return SelfInstallResult(version=version, action="error", root=str(r),
                                      slot=str(slot), reason=str(e), cleaned=cleaned)
-        stubs = _deploy_binstubs()
-        _write_marker(r, version)  # selection remains inside construction ownership
+        from .self_install_recovery import publish_installed_selection
+
+        stubs = publish_installed_selection(r, version)
         _write_control_plane_provider_manifest(pd, root=r)
         return SelfInstallResult(
             version=version, action="installed", root=str(r), slot=str(slot),
