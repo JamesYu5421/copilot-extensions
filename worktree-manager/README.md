@@ -369,6 +369,10 @@ First-touch bootstrap uses a temporary qualified runner to enter this
 same self-install contract before importing runtime-dependent CLI modules;
 it removes that runner before launching the installed environment. A healthy
 current installation skips runner construction.
+Nested POSIX construction calls inherit the existing foreground group owner
+rather than opening independent sessions. The outer timeout/cancellation
+boundary therefore retains construction descendants through runner cleanup;
+Windows construction retains its existing nested Job ownership.
 
 If you hit `No module named worktree_manager`, the `worktree-manager` binstub
 itself is unusable (it runs `python -m worktree_manager` straight out of the

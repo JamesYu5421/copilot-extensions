@@ -143,8 +143,32 @@ implementation; public-file absence is not proof of unpublished custody.
       Terminal profile JSON, the update's final exit status, and preservation of
       the original live CLI. No GUI/mux activation or remote-machine mutation
       is needed merely to qualify this bounded headless runtime contract.
+- [ ] Native Linux nested-construction custody: execute the preserved timeout,
+      interruption and escaped-session negative-control cases in an approved
+      Linux lane. The Windows state-machine contracts do not qualify this
+      native POSIX behavior. Keep this gate owned by the platform runtime slice
+      under #7305 until it is executed or explicitly transferred.
 
 ## Journal
+
+- **2026-10-20** - Addressed the additional nested-POSIX-constructor finding
+  locally. Foreground commands already inside the declared Manager-owned
+  process group now retain it, including the ownership marker for deeper
+  nesting; they no longer create independent sessions that escape the outer
+  timeout/cancellation sweep. Windows Job and contained-test suppression remain
+  unchanged. The focused bootstrap/process selection passes **18 tests**;
+  five native Linux/POSIX cases are explicitly skipped on Windows.
+  Added native Linux bootstrap-boundary regressions for timeout and interruption,
+  plus an intentionally escaped-session negative control. They check constructor
+  exit before deleting the temporary runner and retain identity-pinned pidfds
+  for fixture cleanup if an escape is detected.
+  Native Linux execution remains **unqualified**, not a pass: the local host
+  has no general-purpose Linux distro, the Docker backend is unavailable, and
+  the existing periodic integration route covers plugin suites but not the
+  standalone Manager. No system distro, alternate venue or new workflow was
+  activated to bypass that boundary. The explicit native gate above remains
+  open under #7305. Review, release and authorized local consumer proof remain
+  separate open gates.
 
 - **2026-10-20** - Closed the subsequent review's remaining engine consumer
   and metadata-repair gaps locally. The Worktrees launcher probe now executes

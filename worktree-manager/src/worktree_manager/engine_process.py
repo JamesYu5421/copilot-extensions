@@ -1,4 +1,4 @@
-"""Own foreground engine preparation and its synchronous descendants."""
+"""Own foreground engine preparation, construction and their descendants."""
 
 from __future__ import annotations
 
@@ -20,8 +20,14 @@ def run(argv: list[str], **kwargs) -> subprocess.CompletedProcess:
     timeout = kwargs.pop("timeout")
     kwargs.pop("check", None)
     env = dict(kwargs["env"])
-    owns_group = not _WINDOWS and not contained_test_mode()
-    if owns_group:
+    contained = contained_test_mode()
+    # Nested foreground work must stay inside the outer owner's cleanup group.
+    inherited_group = (
+        not _WINDOWS and not contained
+        and os.environ.get(OWNED_GROUP_ENV) == "1"
+    )
+    owns_group = not _WINDOWS and not contained and not inherited_group
+    if owns_group or inherited_group:
         env[OWNED_GROUP_ENV] = "1"
     else:
         env.pop(OWNED_GROUP_ENV, None)
@@ -30,7 +36,7 @@ def run(argv: list[str], **kwargs) -> subprocess.CompletedProcess:
         return engine_posix_process.run(argv, timeout=timeout, **kwargs)
     process, job = spawn_sync_in_kill_on_close_job(
         argv, require_job=_WINDOWS, allow_breakaway=False,
-        **kwargs, **(detached_kwargs() if not _WINDOWS else {}),
+        **kwargs, **(detached_kwargs() if not _WINDOWS and not inherited_group else {}),
     )
     completed = False
     try:

@@ -1601,6 +1601,11 @@ the already-prepared Worktrees test interpreter and select
 `test_native_engine_probe_preserves_the_installed_environment` through the
 standalone contained runner. `MANAGER_RUNTIME_WINDOWS_E2E=1` also observes its
 two no-UV probe cycles for visible windows and focus changes.
+The nested-constructor bootstrap cases require native Linux pidfds. Their
+escaped-session negative control deliberately exercises refused cleanup, pins
+the exact constructor identity and retires it before returning. Windows skips
+those cases explicitly; its group state-machine checks are not POSIX execution
+evidence.
 
 There is no host-wide test singleton. Each target takes a lease keyed by its
 **concrete environment directory's filesystem identity** (`st_dev`, `st_ino`),

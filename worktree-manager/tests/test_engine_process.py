@@ -14,6 +14,7 @@ from worktree_manager import engine_process as ep
 @pytest.mark.parametrize("failure", [subprocess.TimeoutExpired("engine", 1), KeyboardInterrupt()])
 @pytest.mark.parametrize("windows", [False, True])
 def test_cancel_closes_job_or_owned_group(monkeypatch, failure, windows):
+    monkeypatch.delenv(ep.OWNED_GROUP_ENV, raising=False)
     calls = []
     process = SimpleNamespace(pid=123, returncode=None, poll=lambda: None)
 
@@ -54,6 +55,47 @@ def test_cancel_closes_job_or_owned_group(monkeypatch, failure, windows):
         assert calls[0][0] == "posix"
         assert calls[0][1]["env"][ep.OWNED_GROUP_ENV] == "1"
         assert calls[0][1]["timeout"] == 1
+
+
+@pytest.mark.parametrize("failure", [None, subprocess.TimeoutExpired("nested", 1), KeyboardInterrupt()])
+def test_nested_posix_commands_keep_the_outer_group_owner(monkeypatch, failure):
+    events = []
+    process = SimpleNamespace(returncode=0 if failure is None else None)
+    process.poll = lambda: process.returncode
+    process.kill = lambda: events.append("kill")
+
+    def communicate(timeout):
+        events.append(("communicate", timeout))
+        if timeout == 1 and failure is not None:
+            raise failure
+        process.returncode = 0
+        return "output", "errors"
+
+    process.communicate = communicate
+
+    def spawn(argv, **kwargs):
+        events.append(("spawn", kwargs))
+        return process, None
+
+    monkeypatch.setattr(ep, "_WINDOWS", False)
+    monkeypatch.setattr(ep, "contained_test_mode", lambda: False)
+    monkeypatch.setenv(ep.OWNED_GROUP_ENV, "1")
+    monkeypatch.setattr(ep, "detached_kwargs", lambda: pytest.fail("nested command detached"))
+    monkeypatch.setattr(
+        ep.engine_posix_process, "run", lambda *_a, **_k: pytest.fail("nested group owner created"),
+    )
+    monkeypatch.setattr(ep, "spawn_sync_in_kill_on_close_job", spawn)
+    if failure is None:
+        result = ep.run(["nested"], timeout=1, env={}, stdout=subprocess.PIPE)
+        assert result.stdout == "output"
+    else:
+        with pytest.raises(type(failure)):
+            ep.run(["nested"], timeout=1, env={}, stdout=subprocess.PIPE)
+        assert events[-2:] == ["kill", ("communicate", 5)]
+    options = events[0][1]
+    assert "start_new_session" not in options
+    assert options["env"][ep.OWNED_GROUP_ENV] == "1"
+    assert options["allow_breakaway"] is False
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows descendant Job integration")
