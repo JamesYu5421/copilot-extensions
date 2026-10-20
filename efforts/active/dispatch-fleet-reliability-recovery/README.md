@@ -972,6 +972,372 @@ requested contract.
   This is source evidence, not release or deployment; adoption remains gated on
   the reviewed promoted contract and actual consumer readiness.
 
+### 2026-10-13 - Remaining master blocking boundaries
+
+- Continued the preserved implementation after an interrupted worker rather than
+  creating a competing source branch. Optional status collection/publication,
+  receipt inventory and provider resolution now use independently tracked
+  bounded workers; four slow providers cannot occupy authoritative discovery.
+- Receipt inventory and its child operations remain in shutdown custody. Pending
+  mutation outcomes are not replayed, and adopted registrations remain fenced
+  while inventory is delayed. Observer errors remain explicit and confer no
+  recovery authority.
+- Two deterministic regressions failed before correcting an idle-return producer
+  race and old-summary/new-cycle coalescing. A third failed before fixing inline
+  singleton release while a prior-generation status writer was still running.
+  Inline handoff now defers without spawn cooldown until publication settles.
+- Updated asynchronous fixtures to observe actual tracked completion instead of
+  assuming metadata publication or worker submission happens before a master
+  return. Master latency bounds and single pending-write assertions remain.
+- Final affected supervisor lifecycle, CLI, health, receipt and publication
+  coverage passes 164 tests. Fatal lint, module ceilings, install contract and
+  whitespace checks pass. This remains source validation, not deployment or
+  independent native watchdog custody.
+
+### 2026-10-13 - Retirement finalization and transient reconciliation failures
+
+- Four failed-before regressions reproduced a second runtime hash after
+  irreversible retirement, a permanently poisoned legacy receipt future, and
+  healthy-looking observations with a future cycle start.
+- Withdrawal now carries the prevalidated selection into an exact metadata-only
+  under-lock recheck. Final pin withdrawal/readback share a separate one-second
+  bookkeeping budget; no partial integrity result is accepted. Changed or
+  foreign metadata preserves the pin and cannot cross the mutation boundary.
+- Completed legacy futures clear on every outcome, preserving only pending work.
+  Worker-raised timeouts remain visible failures. Future cycle starts return an
+  unknown observation and never grant recovery authority.
+- Retention, bounded receipt, health and native lifecycle coverage passes 144
+  tests with two platform skips. Final supervisor, CLI, publication and metadata
+  fence coverage passes 146 tests. No production state or lifecycle ownership
+  changes are claimed.
+
+### 2026-10-13 - Registered resources merged; adopter gate retained
+
+- #6531 merged to dev as `c88d004c36e4b8d06aa56349a0f80bcfa205be1c`
+  with clean exact-head review, required CI and no unresolved threads.
+  Registered-resource source and two-root validation items are resolved.
+- Standalone compatibility and deferred admission are proven in source.
+  Promotion, installed runtime evidence and deliberate adopter migration remain
+  open; merged is not released or live.
+- Integrated the resolver into this supervisor slice, retaining both effort
+  journals. Native independent watchdog custody and scalar repair still remain
+  with their existing unresolved acceptance gates.
+
+### 2026-10-14 - Cold discovery and pre-shutdown handoff corrections
+
+- Fresh review of #6487 reproduced an unobserved initial registry being treated
+  as empty, stopped units during a deferred inline handoff, and healthy-looking
+  future completion timestamps. The fail-first selection reported five failures
+  and two already-correct invalid-time cases.
+- The store snapshot is explicitly absent until its first successful read.
+  A pending initial read raises an indeterminate result before any unit removal
+  or receipt withdrawal; completed snapshots retain the existing retry behavior.
+  The persisted-receipt regression crosses the real inventory boundary and
+  consumes the same completed registry future on the next cycle.
+- Inline handoff drains optional status publication within the existing grace
+  budget before stopping units. A pending writer retains the singleton and
+  running units without arming cooldown. The existing serve-loop contract also
+  passes; merely checking an unfinished future without bounded draining did not
+  preserve that near-completion behavior.
+- Completion observations reject future, non-finite, boolean and nonnumeric
+  timestamps as unknown, without granting recovery authority. Missing completion
+  retains the unfinished-cycle contract.
+- The combined supervisor, CLI/progress, bounded receipt and health selection
+  passes 176 tests. Fatal lint, module ceilings, documentation, headless-launch,
+  install-contract and changefile-presence gates pass with unchanged budgets.
+  These are source/consumer results, not rollout or independent keeper proof.
+
+### 2026-10-14 - Receipt fairness, cold declarations and native startup
+
+- Five fresh review findings reproduced starvation behind unknown receipt
+  readbacks, missing unmanaged exit confirmation, cold configured declarations
+  being treated as empty, an unresolved unmanaged provider losing its receipt
+  fence, and accumulated completed probe references. The local corrections
+  retain unknown operations, rotate admission without destructive replay, and
+  preserve unfinished work in shutdown accounting.
+- Actual contained startup profiling found that invoking the stdlib-only gate
+  with `-m` initialized the coordinator package first. A native shadow-package
+  regression failed before switching to the gate's pinned script path. The
+  real readiness/repeated-health/rollback/stop path subsequently completed in
+  24.297 seconds within its unchanged 30-second test limit.
+- A separate fail-first regression showed that process creation was not charged
+  against captured execution time. The command now computes the remaining wait
+  from a deadline established before creation, preserving the one-second pipe
+  drain limit. The actual inherited-descendant-pipe test completed in 5.047
+  seconds against its unchanged 4.8-to-5.8-second assertion.
+- State-machine fixtures now drain owned work before restoring mocked process
+  identities and use controlled receipt executors with their simulated clock.
+  Real concurrent receipt and native tests retain their actual executors.
+- **Validation remains incomplete.** The latest exact subset passed six cases
+  before the existing transition-group rollback test exceeded its unchanged
+  30-second limit inside retention validation/publication. That timeout is not
+  waived or classified as a proven flake. Full combined coverage, remaining
+  gates, publication, fresh review and required CI remain open. No deployment,
+  independent keeper custody or fleet processing proof is claimed.
+- Subsequent current combined coverage passes 136 tests with one existing
+  platform skip, including actual inherited-pipe timeout at 5.062 seconds,
+  transition-group rollback at 12.968 seconds, and native readiness, repeated
+  health, rollback and stop at 25.187 seconds. The state-machine fixture also
+  controls its known provider responses so a 50ms validation test does not
+  accidentally test an unresolved provider's different authority policy.
+- Coupled companion/retention/progress coverage then passes 132 tests with one
+  platform skip and one failure: the real materialization-process lock fixture
+  did not publish its build marker within the existing ten-second admission
+  wait. Its diagnostic `communicate(timeout=1)` timed out against a still-running
+  worker that the fixture had not yet released, so it does not establish which
+  startup phase was delayed.
+  This newly exposed native boundary remains unresolved; no timeout waiver,
+  publication or release is authorized by the earlier combined pass.
+- Added actual child-entry, runtime-import, fixture-import and materialization
+  phase evidence without changing that ten-second wait or the worker/cleaner
+  release protocol. The exact native lock test passes; subsequent complete
+  coupled coverage passes 133 tests with one existing platform skip. Actual
+  child-entry-to-build time was 5.954 seconds in the combined run. The original
+  missing-marker observation remains unexplained rather than retroactively
+  labeled a pass or a proven flake. The latest two complete selections now
+  cover 136 and 133 passing cases, respectively; publication and review gates
+  remain separate and no live deployment is claimed.
+
+### 2026-10-14 - Isolate damaged receipt metadata and invalidate withdrawn providers
+
+- The next exact-head review identified four gaps: unsupported process-receipt
+  versions could reach retirement; withdrawn provider futures could be reused;
+  malformed operation metadata escaped the indeterminate contract; and one
+  corrupt receipt or operation could prevent valid sibling scheduling.
+  Nine new regression variants failed against the published source before
+  correction. No completed earlier phase was treated as final approval.
+- Receipt generations now validate schema and identity before journaling or
+  retirement, and unavailable metadata remains an explicit indeterminate fence.
+  Inventory, operation scheduling and progress isolate and log failures by
+  path or identity while preserving damaged files and processing valid siblings.
+  Withdrawn providers lose cached authority immediately; uncancellable work
+  remains tracked but cannot supply a reintroduced declaration's launch result.
+- Combined validation exposed a native Windows operation-file replacement
+  failure. A separate controlled held-reader regression reproduced the exact
+  `WinError 5` at atomic replacement. The controller's existing reentrant lock
+  now serializes its metadata readers and operation writes. This is not a
+  retry, filesystem-error waiver or broader lifecycle-authority change.
+- Current bounded receipt/discovery/provider coverage passes 94 cases with
+  unchanged deadlines, including the new corruption, withdrawal and real
+  held-file regressions. The earlier owner-probe regression now asserts the
+  intended per-identity error log and retained fence instead of a whole-pass
+  exception; its retry, thread, process and receipt-preservation assertions
+  remain. Coupled consumer validation, normal publication, fresh review and
+  required CI remain separate gates. Independent native keeper custody and
+  live fleet processing remain open.
+- Coupled coverage then exceeded the unchanged 30-second rollback-test limit.
+  Narrow phase instrumentation confirms the test executor was running real
+  retention scans synchronously on the master: its first scan took 4.547
+  seconds; the restarted master's second began at 24.640 seconds and was still
+  inspecting cells at expiry. A test-only alternative routed both real scans
+  asynchronously and passed once, but failed its unchanged total deadline in
+  subsequent combined coverage. That alternative and its temporary tracing were
+  removed in full; neither lifecycle fixture nor its deadline has changed.
+- Exact companion/gate files pass 27 cases. Broader coupled coverage exceeded
+  its existing 600-second aggregate limit. Disjoint managed-companion coverage
+  reached the native readiness/rollback/stop case, which exceeded its existing
+  30-second limit in the real stop subprocess. Neither result is a proven
+  flake or permission to publish/merge past incomplete validation. The native
+  boundary remains unresolved; no process, cleanup pass, hash or assertion is
+  skipped, and no production or test timeout has been raised.
+- Disjoint supervisor/retention files subsequently pass 180 cases with one
+  existing platform skip. The bounded selection's 94 cases and exact companion
+  files' 27 cases are separate completed evidence, not a completed native suite.
+  The existing `windows-coverage-rotation.yml` supports an immutable candidate
+  ref and native full-suite validation without workflow edits. Normal publication
+  of this same shipping PR is needed to exercise that external lane; it does
+  not waive the local failures or authorize merge. The selected rotation date
+  must actually include agent-dispatch, and the run's pinned SHA and plugin
+  outcome must be recorded before treating it as acceptance.
+
+### 2026-10-15 - Bound availability reads and retain withdrawal suppression
+
+- Fresh review found that the newly shared metadata lock could let one blocked
+  read hold unrelated master-side launch checks. Two real-executor regressions
+  demonstrate the original two-second stall; metadata locks are now bounded,
+  per path and reference-counted. Availability I/O uses the existing provider
+  executor, retains unfinished futures in shutdown accounting, and never
+  requires an unbounded master-side lock or metadata read.
+- Successful availability observations expire after their consuming cycle;
+  withdrawn observations cannot be reused. An additional fail-first test
+  commits an unknown operation and loses the write response, proving that
+  availability must be invalidated before the write attempt, not after its
+  return. Both the original record and unknown-outcome fence remain authoritative.
+- A delayed scoped registry read reproduced a withdrawn declaration being
+  started again after publication readback. The publisher now retains the
+  suppression tombstone until a scoped snapshot started after the confirmed
+  withdrawal observes absence. Older results are rejected by withdrawal epoch.
+  The two direct publisher tests now explicitly exercise that extra readback
+  boundary, without adding destructive retries.
+- Valid JSON operation states containing a list or object now fail as
+  indeterminate corruption, not an escaping `TypeError`. Both cases failed
+  before adding the state-type guard.
+- Current combined bounded coverage passes 101 cases with unchanged limits.
+  The injected descendant in the pipe fixture now uses only stdlib process
+  flags: it still creates a real inherited-pipe descendant, without measuring
+  an unrelated plugin import before readiness. The original four-second
+  execution, pipe-drain and elapsed assertions remain unchanged.
+- Required CI exposed an upstream guard added after this branch's old base.
+  Backed-up managed synchronization succeeded normally. The one-shot captured
+  helper's existing exemption moved with its extracted function; no exemption
+  count or launch authority increased. The new launch guard and its 67 tests
+  pass.
+- Hosted Windows run `38661141587` actually checked out the earlier published
+  candidate at both selection and test jobs. Its first seven deterministic
+  file groups completed with 4,953 passes and 44 skips, including the managed
+  companion, receipt and master groups. Its unchanged 30-minute job limit
+  interrupted the final group: the full suite did not pass. Local failures and
+  incomplete whole-portfolio coverage remain recorded, not relabeled flakes.
+  Fresh candidate review, required CI, release and live native keeper/worker
+  acceptance remain open.
+
+### 2026-10-15 - Preserve cancellation fences and incomplete native evidence
+
+- Coupled master, companion and gate coverage passes 115 cases on the
+  bounded-availability and withdrawal-epoch candidate. Subsequent fail-first
+  cases expose cancellation of queued availability, provider and registry
+  reads escaping reconciliation. All three now pass: canceled reads retain
+  indeterminate admission, release completed future references and preserve
+  the existing cached-registry or cold-start barrier. Cancellation does not
+  become an empty successful inventory or permission to launch.
+- The isolated real managed-companion readiness, rollback and stop case passes
+  within its unchanged 30-second test cap. Its fixture uses stdlib-only native
+  child flags and retains the real subprocess, health, rollback, stop and
+  unchanged-marker assertions. The subsequent complete managed cohort exceeds
+  that same test cap during concurrent governed runtime provisioning. That
+  overlap is correlation only; the full cohort is not green or an accepted
+  flake.
+- Whole-candidate bounded and native revalidation, source publication and fresh
+  review remain gated on coherent receiving-runtime evidence. No deadline was
+  enlarged, cancellation swallowed as success, live service repaired by this
+  source slice or incomplete hosted run reported as a full pass.
+- Independent native keeper custody and production adopter integration remain
+  separate open obligations under the canonical `versioned-singleton-manager`
+  effort and #5655. A bounded supervisor, a progress snapshot or the existing
+  Linux library does not close Windows custody or stalled-master recovery.
+
+### 2026-10-17 (UTC) - Complete current bounded and native consumer validation
+
+- Preserved the existing review corrections in local commit `c1f66c729` before
+  resuming validation. Current bounded receipt, scheduling, blocking-boundary
+  and recovery coverage passes all 104 cases, including the three cancellation
+  regressions. Full managed-companion coverage passes 52 cases with one platform
+  skip, including real native readiness, rollback and stop under the unchanged
+  item and aggregate deadlines.
+- Coupled master, health, companion, retention and native-gate tests initially
+  reported 216 passes and one skip, but the runner correctly returned 125 after
+  detecting a persistent machine-environment value change. No source reference
+  to that value or direct persistent-environment write was found in the selected
+  test files; the writer and cause remain unknown. No environment value was
+  printed, restored, ignored or added to an exemption.
+- Revalidated the complete affected consumer inventory in disjoint contained
+  groups: native gate one pass, master/health 97 passes, companion/retention
+  118 passes and one skip. Each invocation exited zero with the host-state guard
+  still enabled. These are fresh disjoint passing results, not a claim that the
+  earlier combined invocation passed or that its environment drift was explained.
+- Current install contract, module ceiling, focused F/E9 lint, headless-launch
+  guard, effort structure and five-library vendor parity pass. The existing
+  one-shot helper exemption remains moved with its extracted function; no
+  exemption count, lifecycle authority, test assertion or deadline increased.
+- Publish through the existing owned PR, obtain a fresh resulting-head review
+  and complete CI, and resolve the addressed findings with their actual
+  dispositions. Source validation does not establish deployment, independent
+  native custodian/adopter recovery or the parent fleet objective's completion.
+
+### 2026-10-17 - Bound active removal and preserve shutdown child accounting
+
+- Fresh exact-head review `5555329271` confirms both previous High findings
+  resolved but identifies two Medium boundaries: active managed removal still
+  performs selection integrity synchronously after stop, and a parent inventory
+  completing between child sampling and pruning can hide a pending child.
+  New regressions reproduce both defects before production changes.
+- Managed removal now updates adoption through the existing tracked inventory
+  and generation-fenced receipt worker. A changed adopted set can queue fresh
+  inventory in the same cycle; no additional executor or destructive retry is
+  introduced. Selection and retention pins remain until verified withdrawal.
+  A blocked integrity scan does not delay an unrelated unit, and expiry keeps
+  the operation explicitly unknown with the selected bytes preserved.
+- Shutdown prunes completed parents before sampling receipt children, retaining
+  a late child in the same grace budget. The controlled parent-completion
+  interleaving can no longer report a clean drain with an untracked child.
+- Six focused removal, disable and shutdown controls pass. The full current
+  bounded/managed contract selection passes 158 cases with one platform skip,
+  including real native readiness/rollback/stop. State-machine removal controls
+  now share the real monotonic clock with real integrity deadline checks;
+  timeout and cleanup assertions are retained rather than enlarged.
+  Fresh publication/review/complete CI remain required. Native keeper/adopter
+  and live deployment acceptance are still separate open gates.
+
+### 2026-10-17 - Recover failed progress workers without extending active budgets
+
+- Fresh review `5555601881` exposes two High boundaries. An unexpected optional
+  callback exception survives in its future and is rethrown on the next master
+  phase; inventory called without an active cycle receives an already-expired
+  deadline. Three fail-first cases reproduce both defects.
+- Completed progress-worker failures now use the existing sanitized, throttled
+  warning path before the latest frame starts another worker. Consumed callback
+  work is not replayed. All receipt adapters share a forward call budget only
+  when no cycle deadline exists; an existing deadline is preserved, even when
+  already expired. The five focused recovery/deadline cases pass.
+- The integrity extraction also has a real import-order defect: importing
+  `managed_integrity` first fails with a partially initialized module. Isolated
+  fresh module imports reproduce it. Runtime dependencies are now resolved only
+  when their functions execute, preserving the exported helpers, digest checks
+  and exact timeout exception class. Both import orders pass.
+- Registry-wide publication readback is retained deliberately. A new cross-scope
+  regression proves an unknown write's immutable old machine/environment target
+  is read back before a changed target is published. Applying current daemon
+  filters could mistake that old write or a cross-scope ID collision for absence.
+  One bounded publication worker still owns this read, off the master.
+- Removed the unconditional passing native-lock trace print; failure diagnostics,
+  subprocess evidence, lock assertions and deadlines remain unchanged.
+- Integrated bounded receipt/scheduling, supervisor boundary/recovery and managed
+  runtime/retention/companion coverage passes 297 cases with two platform skips
+  in 561.47 seconds. The contained wrapper exits zero with its host-state guard
+  enabled, including actual native materialization, readiness, rollback and stop.
+  Import-contract isolation covers both fresh module orders; no install/bootstrap
+  behavior changed, so a separate fresh-box provision was not run for this fix.
+  Publication, fresh review and complete CI remain required. No source result
+  closes independent native recovery or rollout.
+
+### 2026-10-17 - Fence native progress and clear failed-cycle authority
+
+- Exact-head CI catches `supervise_cli.py` exceeding the hard module cap at
+  1,005 lines. Extracted only progress-record I/O into a focused leaf module;
+  the CLI entrypoints and their path-resolution seam remain compatible.
+  Validation now runs the exact provider base/head diff scope instead of
+  relying only on the earlier unscoped local result. No baseline was widened.
+- Fresh review confirms the previous five dispositions, then identifies
+  native PID reuse, exceptional cycle cleanup and missing inventory being
+  returned as confirmed empty. Eight new cases fail before fixes. Optional
+  progress publication now requires both the PID and confirmed native start
+  token; missing/changed tokens preserve the original file. A real current
+  process generation successfully publishes through the same atomic path.
+- A `finally` boundary clears cycle deadline/token references after either
+  success or failure, retaining the actual failed phase for diagnosis. The
+  observer returns unknown for a missing receipt inventory and preserves
+  explicitly supplied empty or nonempty inventories. All eleven focused
+  defect cases pass, as does the positive native-generation writer case.
+- The new review's missing-`sys` assertion is not applicable: the published
+  retention test already imports it at module scope, and the actual cold
+  import-order cases have executed successfully. Removed six passing fixture
+  timing prints and their unused timers; service health protocol output and
+  native rollback/readiness/stop assertions remain unchanged.
+- Initial coupled validation records 327 passes, one platform skip and one
+  failed removal observation: a snapshot started before adoption withdrawal
+  can complete asynchronously after the first master pass. The test now drives
+  the real caller's bounded polling within the same original one-second
+  observation budget and keeps every master pass below the original 0.5-second
+  limit. No production deadline, selection-pin assertion or unknown-state
+  requirement is relaxed. The focused removal/current-writer/error controls
+  pass all four cases; complete resulting-candidate validation remains required.
+- Complete resulting master, health, worker-instance, bounded receipt/scheduling,
+  recovery, native companion and cold integrity-import coverage passes 328 cases
+  with one platform skip in 207.64 seconds, contained exit zero with host-state
+  protection enabled. F/E9 lint, the exact CI base/head module-ceiling scope
+  and whitespace checks pass. The original failed coupled attempt remains
+  recorded separately. Publication, fresh verdict and all current provider CI
+  still gate merge; no runtime/native custody or parent completion is implied.
 ### 2026-10-13 - Held housekeeping implementation slice (#6471)
 
 - Reconciled to `agent-dispatch`'s existing **terminal-worktree-reclamation**
@@ -1720,3 +2086,309 @@ requested contract.
   head lease. Neither the older successful CI attempt nor the earlier
   agent-start-timeout Lite review replaces current-head CI and a genuine full
   review after this rebase.
+
+### 2026-10-19 - Resume the original bounded supervisor PR
+
+- The original #6487 source owner resumes its retained, clean privacy-fix
+  commit rather than opening a competing branch or changing a live runtime.
+  Command creation/communication errors now expose a fixed unavailable message;
+  declaration discovery logs only its error type, without raw text or traceback.
+  Eight fail-first controls retain cold indeterminate and confirmed-cache
+  behavior. Existing timeout, unknown-outcome and non-replay fences remain.
+- Preserve both the published tip and the private fix through a local backup
+  and additive integration of reviewed dev `834dfd278dc24ff53f58a0d96243f50c9266f416`.
+  Retain both journals at their append-only conflict and preserve upstream's
+  published/degraded catalog assertions in independent cold-CLI items. Every
+  item still executes one actual cold process within the unchanged 20-second
+  subprocess and 30-second item ceilings. Current dev's canonical CI partitions
+  and workflow policy are retained, not replaced by another scheduling patch.
+- The integrated bounded-receipt, blocking-boundary, supervisor master/health
+  and worker-instance cohort passes 280 cases in contained execution. Source
+  module ceilings and install contracts pass. Full resulting-head review,
+  every current CI gate and actual managed merge remain required. Source
+  publication grants no host repair, deployment, role/admission, native
+  custodian/adopter or queue-recovery authority.
+- Remaining scheduling, bounded recovery, managed companion, native gate,
+  companion and retention consumers pass 228 cases with two platform skips
+  in 229.28 seconds. Together, the two disjoint contained selections execute
+  508 affected tests successfully. Headless-launch contracts pass 93 cases
+  and the actual guard retains all 13 adopters; the only contribution delta
+  in its allowlist follows the existing one-shot helper to its extracted module.
+  Contribution-scoped whitespace is clean. Neither these tests nor an older
+  Lite review substitutes for the new full review and all current hosted CI.
+
+### 2026-10-19 - Full-review managed selection and privacy follow-through
+
+- Full Balanced review `5576387524` on #6487 identifies four actual Medium
+  defects. All four reproduce first through the real consuming boundary:
+  process-receipt availability discloses its path, cold selected-state fallback
+  blocks a sibling after the deadline, malformed selected state escapes as
+  `ManagedRuntimeError`, and the outer serve log discloses a chained declaration
+  error despite the inner warning being sanitized.
+- Process-receipt availability now uses the common sanitized metadata reader.
+  Provider and selected-state observations share bounded, authority-keyed
+  future handling in the existing provider pool. Pending selected reads stay
+  in shutdown accounting; withdrawal and authority changes invalidate their
+  result. Managed metadata errors withhold only that companion. Expected
+  indeterminate serve failures log a fixed category without a traceback while
+  preserving exception causality for callers.
+- Four fail-first consumer cases and two real pending-future authority controls
+  pass. Complete affected master/health/receipt/blocking/worker-instance
+  consumers pass 286 cases; remaining native lifecycle, scheduling, retention
+  and recovery consumers pass 228 with two platform skips. All selections
+  retain their original containment and deadlines.
+- Required CI also exposes the existing #7020 native POSIX PowerShell purge
+  timeout. Authorized native investigation reproduces a successful unchanged
+  test, then distinguishes actual type compilation from millisecond native
+  identity reads in diagnostic fixtures. A separate local post-body filesystem
+  wait is not the hosted identity-stall cause. No production repair is justified
+  by that different signature.
+- The existing fixture now frames the actual module-qualified `Add-Type`
+  invocation, preserving all source behavior, physical-home refusal,
+  sentinel/lock/stage assertions and the original twenty-second child bound.
+  Its real native test and original-exception diagnostic control both pass.
+  This is additional phase evidence for #7020, not a claimed fix, accepted
+  flake, retry permission or CI waiver. Fresh resulting-head full review and
+  every required hosted gate remain blocking; native recovery and adoption
+  obligations are unchanged.
+
+### 2026-10-19 - Address body-only full-review findings
+
+- Review `5577100006` on #6487 labels its inline list empty but contains four
+  Medium findings in its overview body. Treat those as blocking, not as a
+  clean verdict. Two raw operation/scheduling log cases, an unmanaged orphan
+  alongside an unrelated malformed transition group, and the second cold
+  selected-state read all fail before correction.
+- Every receipt reconciliation log now exposes only its exception type.
+  Generations with no managed selection or process-snapshot evidence do not
+  discover unrelated managed groups before orphan retirement; all managed
+  selection validation, root-pin checks, exact generations and unknown-outcome
+  fences remain. Managed recovery carries the accepted persisted snapshot
+  instead of synchronously reading it again. Later cold reads use the bounded
+  observation path.
+- The integrity-blocking fixture now publishes a real managed selection before
+  blocking validation, rather than presenting an unmanaged receipt and mocking
+  its selected state. All original progress/deadline/unknown assertions remain.
+  The materializer-authority test still proves rejection and preservation of
+  the existing process, while expecting the intentionally classified error log.
+  Initial coupled failures remain failed runs, not passing evidence.
+- Complete disjoint affected cohorts pass 343 receipt/master cases in
+  80.11 seconds and 175 native lifecycle/retention cases with two platform skips
+  in 201.59 seconds: 518 successful cases with unchanged containment budgets.
+  The PR description now names the actual installer/stable-launcher owner,
+  singleton-handoff exception, managed-write barrier, bounded probe shutdown
+  and missed-grace/native-custody limitations. It links the owning lifecycle
+  contract and records the graceful-cutover checklist assessment.
+- Natural predecessor CI passes the native #7020 guard independently. That is
+  not a root-cause fix or acceptance of the earlier failure; the authorized
+  native investigation remains open. New source review and all resulting-head
+  CI still gate merge, with no runtime rollout or broader recovery authority.
+
+### 2026-10-19 - Preserve late readback and incomplete observation semantics
+
+- Full Balanced review `5577661133` contains three Medium findings in its
+  overview despite the empty-open-issues banner. Eight fail-first cases
+  reproduce incomplete receipt observations, publication starvation after a
+  slow read, and raw withdrawal errors; a known-empty observation passes.
+- Any invalid or unreadable operation record now makes the whole optional
+  progress observation unavailable, rather than reporting empty or partial
+  inventory as complete. Per-identity scheduling and immutable evidence remain.
+  Withdrawal warnings retain pending custody and expose only the error type.
+- A detached publication ledger retains completed readback rows across the
+  existing deadline. A later batch consumes them before another RPC, invalidates
+  changed targets, and consumes each observation before mutation. An unknown
+  old target settles before a changed declaration. Deterministic four-second
+  reads under a three-second budget prove eventual publish/withdraw/readback;
+  an event-blocked real executor proves bounded polling and single-writer harvest.
+- The no-second-selection-read regression now asserts the exact single-read
+  contract during real recovery, rather than putting unrelated complete
+  filesystem recovery beneath a half-second observation timeout. Production
+  call deadlines and separate blocking-boundary timing assertions are unchanged.
+  Initial coupled failures are recorded as failures, not passing evidence.
+- Current dev integration preserves reviewed #7126 task-authority ownership
+  alongside queued native-generation/cycle progress. The receiving authority
+  fixture now implements the real queue interface and checks both identities.
+  The combined consuming-boundary cohort passes 321 cases; preceding managed
+  recovery coverage passes 296 with one platform skip, and independent receipt,
+  health and native-lifecycle consumers pass 84 with one platform skip. These
+  overlapping selections are not summed as unique coverage.
+- Install contract, contribution ceilings, fatal lint and whitespace pass.
+  This is source-level behavior, not a new installer or provisioning path.
+  Existing native Windows subprocess/filesystem coverage remains distinct from
+  the still-open native POSIX #7020 cause and production adoption. Fresh full
+  resulting-head review and every required CI check remain merge gates.
+
+### 2026-10-19 - Close concurrent metadata and authority-reversal defects
+
+- Full predecessor review `5578395994` identifies concurrent receipt/selection
+  publication, submission rejection after a pending milestone, interrupted
+  receipt-only root-pin withdrawal and outer inventory logging. Current-head
+  review `5578499365` additionally identifies list-valued generation metadata
+  and A-to-B-to-A authority reversal. These are real blocking findings,
+  including the predecessor's body-only issues.
+- A native Windows held-reader control reproduces `WinError 5` during atomic
+  replacement. Read/write/delete sharing alone still fails with `os.replace`;
+  canonical shared readers plus native `ReplaceFileW` for an existing target
+  succeed. The same binary reader covers strict metadata hashing. Parser,
+  digest, inode and concurrent-change rejection remain intact. Actual managed
+  publication preserves its ready process with either a held parser or hash
+  reader; the stale reader reports indeterminate metadata.
+- The canonical plugin-activation library owns this portability seam. Its one
+  physical customizing-copilot source copy is synchronized; all eight consuming
+  plugins/standalone packages have patch changefiles, including the existing
+  Dispatch entry. Windows state, restoration, installed-inventory, permission,
+  bounded retry and native subprocess tests remain in force. Fault fixtures
+  inject at the explicit replacement/read boundary, not an unused platform API.
+  Project fixtures use the receiving platform's actual key, including WSL.
+- A submission error cancels the separate execution admission before recording
+  an exact unstarted generation as superseded. A callback queued before a late
+  submission failure cannot subsequently mutate. Already-started execution
+  remains tracked with its original durable outcome. Interrupted managed
+  process-receipt-only generations withdraw their previously validated root pin
+  after retirement; corrupt metadata or an unrelated pin is never accepted.
+- Operation generation receipt/selection values must be objects or null even
+  with a matching digest. A changed uncancellable observation loses its retained
+  authority immediately, so A-to-B-to-A cannot reuse the first result. Outer
+  receipt polling logs only the exception type, preserving the underlying cause.
+- Two natural current-head CI jobs fail before tests because the coverage
+  baseline names the prior unparameterized headless-pool CLI case. That real
+  default case now retains its exact node; the central/local cases remain
+  separately parameterized through the same assertions. No selection item,
+  coverage policy, threshold, guard, retry or deadline is removed.
+- Disjoint contained Dispatch cohorts pass 442 master/receipt/authority/catalog
+  cases, 205 managed/native/retention cases with three platform skips, and all
+  three CLI cases: 650 successful cases. The complete canonical shared library
+  passes 139 cases on native Windows and the same 139 on native Ubuntu/WSL.
+  Install contract, exact vendored-source sync, fatal lint and contribution
+  ceilings pass. Initial failing controls remain documented failures.
+- First state publication and native subprocess consumption run in fresh
+  test-owned directories. No installer/provisioning flow changes or system
+  installation are performed; a separate full installation clean-room run is
+  not claimed. Hosted current-head CI and a fresh full review remain required,
+  and #7020's independent native causal investigation remains unresolved.
+
+### 2026-10-19 - Verify exact future and deadline interleavings
+
+- An actual inventory future now fails between receipt priming and the second
+  poll, proving the outer handler preserves classified logging at that precise
+  boundary. A submission error after real worker entry retains the running
+  execution future in receipt/shutdown accounting until its original operation
+  completes.
+- The held-read publication control explicitly waits until the original
+  monotonic deadline before releasing the RPC and verifies a deferred readback
+  with no write. A caller wake alone is not used as proof that the read crossed
+  the deadline. This strengthens the test precondition without extending the
+  production or test-operation budget.
+- The complete two-file receipt/recovery cohort passes 113 cases; both new
+  future controls are additional to the preceding 650-case implementation proof.
+  Fatal lint and whitespace pass. No production code changes in this follow-up,
+  and fresh full resulting-head review and all hosted CI remain outstanding.
+
+### 2026-10-19 - Remove partial replacement and denied-scan ambiguity
+
+- Full predecessor review `5578929112` identifies two further real Medium
+  defects: documented `ReplaceFileW` error 1176 can remove the destination
+  before caller cleanup deletes the staged candidate, and `Path.glob` can turn
+  denied directory enumeration into a successful empty receipt observation.
+  Both failures reproduce before correction; missing/empty controls pass.
+- Windows publication now uses one `FileRenameInfoEx` atomic rename with
+  replace-if-exists and POSIX retained-reader semantics, not multi-step
+  `ReplaceFileW`. Refused native 1175/1176/1177 outcomes retain the candidate
+  and expose its path on the original exception, without retrying the write.
+  Unsupported atomic capability fails before mutation. Actual retained-reader
+  and UTF-16 path cases include supplementary and unpaired native code units.
+- Progress and inventory use directory enumeration that propagates scan errors.
+  Missing and empty remain known empty; denied access is indeterminate with
+  classified logging and unchanged operation bytes. The same contract applies
+  across every newly introduced receipt scan.
+- The coupled accepted-queue cancellation case also reproduces a raw
+  `CancelledError` and stranded pending record. A captured local execution
+  generation now survives until its proven-unstarted settlement is recorded.
+  Failed settlement retains that proof; a committed response loss is read back
+  without another write. A cancelled readback or newer operation cannot gain
+  unstarted authority. Abrupt owner loss still retains the unknown fence.
+- Direct updater consumers expose a real standalone-import regression in the
+  extracted native helper. The helpers remain in the existing stdlib-only
+  `state.py`, below its source cap; the two newly introduced helper modules are
+  removed. The original shipped-source loader test is unchanged and passes.
+  Its restoration fault fixture now injects at the actual replacement boundary,
+  retaining command non-replay, retry, timeout and permission assertions.
+- Complete affected Dispatch implementation passes 455 master/receipt cases,
+  205 managed/native/retention cases with three platform skips and three CLI
+  cases: 663 successful cases. All 74 direct updater consumers pass. After the
+  standalone relocation, cold import order and both actual held-reader phases
+  pass; the complete canonical library passes 146 cases on native Windows and
+  142 on native Ubuntu/WSL with three Windows-only skips.
+- Canonical and actually shipped state files also run in separate fresh
+  `python -I` processes from empty test-owned directories, with no package
+  dependencies available through the working directory or user site. Both
+  perform real first publication/readback under the original child bound.
+  This is isolated first-touch evidence, not a system installer or live rollout.
+  Fresh full resulting-head review, all current CI and actual merge remain
+  outstanding; #7020's independent native cause and adopter gates remain open.
+
+### 2026-10-19 - Retain receipt fences on denied selection-pin scans
+
+- Full exact-head review `5579503395` finds one further Medium defect:
+  `Path.glob` suppresses a selection-directory `PermissionError`, so a surviving
+  durable root pin can be mistaken for confirmed withdrawal. Both real
+  readback and retirement consumers reproduce the incorrect completion before
+  correction. Generic I/O failures and genuine empty/missing controls are
+  retained alongside the denied-access cases.
+- The metadata-only pin scan now uses explicit directory enumeration under
+  the existing root lock and deadline. Only a genuinely missing directory is
+  accepted without completing a scan; access and I/O errors propagate, retain
+  unknown operation authority and prevent receipt availability. Surviving pins
+  and cells are untouched. This is a below-altitude correction to the existing
+  fail-closed contract, with no new recovery or deployment authority.
+- The complete bounded receipt, scheduling, managed retention and managed
+  companion cohort passes 243 cases with two platform skips in the contained
+  Windows runner. These include actual journal, pin and availability consumer
+  assertions, not just a directory helper mock. No install/bootstrap code
+  changes, so no additional installation clean-room or external rollout is
+  claimed; native library first-touch evidence remains unchanged. Fresh full
+  resulting-head review, current hosted CI and actual merge remain required.
+
+### 2026-10-20 - Invalidate selection observations before changed provider resolution
+
+- Full exact-head review `5579673540` identifies a further body-only Medium:
+  pending managed selection A can survive inactive provider B because B never
+  asks for a selection. Returning to indeterminate A then consumes the pre-B
+  result. Four desired-state regressions reproduce stale recovery through the
+  actual provider/future path, covering inactive and invalid B plus read
+  completion before and after returning to A.
+- Declaration processing now invalidates changed-authority selection reads
+  before provider resolution, independent of its result. Cancellation never
+  implies that a running read stopped; unfinished futures retain shutdown
+  accounting. A later fallback waits for the old read to finish and requires a
+  fresh observation. No deadline, restart or ownership authority is broadened.
+- The complete blocking-boundary, bounded-recovery, supervisor-daemon and
+  managed-companion cohort passes 254 cases with one platform skip. This is an
+  incremental correction, not an installer or provisioning change. Fresh full
+  resulting-head review, current CI and managed merge remain required.
+- The bounded #7020 physical-home test/diagnostic repair handoff is now
+  explicitly accepted by `greased-cylinder` in issue comment `6280945017`,
+  before edits. That work excludes this PR's supervisor/state/receipt hunks.
+  Native workspace commands and actual phase evidence are recorded in comment
+  `6281119961` after direct and relay transport refused delivery. Acceptance
+  names the separate repair owner; it does not claim the native cause fixed,
+  permit a timeout increase or waive any failing check.
+
+### 2026-10-20 - Keep optional progress admission failures off the master path
+
+- Full exact-head review `5579836787` identifies a body-only Medium:
+  optional progress-worker submission can raise during discovery or after unit
+  mutation, aborting reconciliation before its summary. Four fail-first
+  regressions reproduce actual construction refusal and real executor thread
+  start refusal at both boundaries.
+- Progress admission now retires the failed pool without waiting, cancels its
+  queued work, clears its active reference and emits the existing classified,
+  throttled warning. Latest progress/final-status frames remain coalesced for
+  a later healthy retry. Discovery and completed unit mutations still reach
+  the caller; optional I/O does not acquire lifecycle authority.
+- The tests inspect the actual executor's queued futures after start failure,
+  prove they are cancelled, and verify fresh-pool progress and final-status
+  publication plus the next desired-state cycle. The complete blocking,
+  bounded-recovery, daemon and health cohort passes 207 cases. No installer,
+  provisioning or external rollout behavior changes. Fresh full resulting-head
+  review, all current CI and managed merge remain required.

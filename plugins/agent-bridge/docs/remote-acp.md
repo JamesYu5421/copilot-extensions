@@ -64,7 +64,8 @@ complete HTTPS endpoint; WebSocket mode derives WSS with the same authority/path
 URL userinfo, query parameters, fragments, redirects, disabled TLS and arbitrary
 cleartext endpoints are refused. No token or header value belongs in config.
 
-Use `agent-bridge create remote-acp:example-agent` or authenticated bridge
+Use `agent-bridge create remote-acp:example-agent` or
+`agent-bridge create https://example.com/acp`, or authenticated bridge
 `POST /api/v1/sessions`:
 
 ```json
@@ -83,6 +84,125 @@ session loads its existing remote ID; it never silently recreates a conversation
 Endpoint/profile/identity changes refuse resume and require a new explicit
 attachment. A configured remote target rejects local launch flags, environment,
 worktree creation, model flags and per-session MCP process definitions.
+
+Named and URL starts with `caller_id` reuse that caller's conversation only
+after resolving the selected project's current canonical target and policy.
+Reuse requires the same project, server-side cwd and complete binding snapshot;
+a stopped conversation loads its retained remote ID. Another project's binding
+never reuses or takes over that session. A changed binding refuses reuse until
+an explicit new attachment (`force_new: true`); anonymous starts always create
+a new conversation. Concurrent starts share the reserved starting session,
+including an explicit native ID whose load has not yet completed. Stopped
+caller reuse serializes with explicit resume/stop through the session's
+lifecycle lock and revalidates state and policy after acquiring it.
+
+An explicit URL must match exactly one bound target policy in the requested
+project context before credentials,
+network access or session creation. HTTPS uses the policy's selected transport;
+WSS additionally requires `transport: websocket`. Host case and default ports
+are canonicalized, but paths remain distinct. URL text never supplies auth
+policy; unmatched or ambiguous URLs refuse without ambient-auth fallback.
+Endpoint targeting/contributions are advertised by HTTP generation 41
+(`REMOTE_ACP_TARGETS_PROTOCOL_VERSION`). The client refuses a direct URL before
+sending it to an older daemon; named remote ACP retains its generation-38 floor.
+For named targets, generation-38 through generation-40 daemons retain legacy
+CLI caller reuse; binding-aware daemon reuse applies from generation 41.
+
+### Enabled-plugin target requirements
+
+An enabled plugin may declare these optional fields in its `plugin.json`:
+
+```json
+{
+  "bridgeConfig": ".agent-bridge/config.yaml",
+  "bridgeProviders": ".agent-bridge/providers.d"
+}
+```
+
+Paths are relative to the identity-verified payload root. Traversal,
+cross-platform absolute paths and symlink/reparse indirection are refused.
+Installed does not mean enabled: existing plugin-activation resolution owns
+global/project selection and indeterminate state.
+
+The config file supplies **inert requirements**, not private instance values:
+
+```yaml
+remote_acp:
+  example-agent:
+    transport: streamable-http
+    auth:
+      source: injected
+      scheme: Example
+    description: An already-running example agent
+```
+
+The pinned profile, draft, required application approvals and manual permissions
+retain their existing defaults. Endpoint, identity, arbitrary headers, commands
+and credential approvals are not accepted in this contribution schema.
+
+The optional `bridgeProviders` directory contains native remote descriptors,
+not executable providers. Each JSON file has one target:
+
+```json
+{
+  "schema_version": 1,
+  "kind": "remote-acp",
+  "name": "example-agent",
+  "target": "example-agent"
+}
+```
+
+A string `target` references that plugin's config requirements. Alternatively,
+`target` may contain a requirements object, allowing a descriptor-only plugin.
+Both surfaces are optional; identical definitions from the same owner coalesce.
+Conflicting definitions or owners refuse the affected name. Existing
+command-based namespace providers and their machine-local `providers.d`
+registration remain unchanged.
+
+The adopter explicitly binds the instance in service config:
+
+```yaml
+remote_acp_bindings:
+  example-agent:
+    plugin: example-harness@example-marketplace
+    endpoint: https://example.com/acp
+    identity: example-client
+    credential_source: builtin/git-credential
+```
+
+The `plugin` must match the contribution's canonical owner. Registered-project
+bindings can also live in the existing repository bridge config: canonical
+`.copilot-extensions/agent-bridge/config.yaml`, legacy `.agent-bridge/config.yaml`
+fallback, then the selected marketplace overlay. Explicit service bindings win
+over repository bindings. Repository config cannot approve a credential source.
+An optional binding `project` narrows applicability; project-only activation
+requires matching `sender_repo` at attachment.
+CLI creation passes its selected project for named and URL remote targets:
+`agent-bridge --project demo create remote-acp:example-agent`. The authenticated
+session API supplies the same context through `sender_repo`.
+
+Ordinary roster/detail includes `remote-acp:<name>` with owner, applicable
+projects and a non-secret binding diagnostic. Unbound targets remain visible
+as `requires-binding` and non-spawnable. `state: bound` means configuration and
+source registration/approval are complete, **not** that credentials exist, the
+server is reachable, or a conversation works. Discovery does not contact the
+endpoint or retrieve credentials. `/api/v1/agents?project=<name>` composes remote
+bindings in that project before filtering contributions, including cached
+rosters. Detail accepts the same `project` query. Plain and streaming CLI rosters
+and remote detail pass their selected project; ordinary static/provider rows
+retain their behavior.
+Cached and uncached asynchronous roster paths compose repository-backed rows
+off the event loop. Cached project composition occurs before final namespace
+assembly and completeness checks, with no later composition await. Discovery
+publication retains its generation guard; namespace membership/freshness and
+the remote report identity are rechecked after composition. Superseded remote
+rows are omitted and reported incomplete rather than published as current.
+Uncached fallback routes also compose project-aware rows within one resolver
+boundary and recheck that identity after their final namespace await; they do
+not add a second project-composition await after reconciliation.
+Disabled contributions withdraw; uncertain activation cannot retain runnable
+authority from a previous scan. Source-level discovery failures are reported,
+not treated as authoritative emptiness.
 
 ## Standard-first headless approvals
 
@@ -190,6 +310,78 @@ The built-in Git adapter rejects unsupported resource/scope instead of widening
 authority. Bridge never imports a sibling plugin runtime.
 Header formatting is shared with agent-mcp; no acquisition logic is copied.
 
+### Approved registered sources in the ordinary daemon
+
+For a declared `injected` source, `auth.credential_source` (or the instance
+binding's `credential_source`) names a provider-qualified relay source.
+The ordinary daemon supplies `builtin/git-credential` without introducing a
+credential store; this source still requires the explicit endpoint/username
+credential to exist in the host's existing helper. A plugin declaration does
+not provision or mint that credential.
+
+Service-only approval binds that reference to the exact non-secret context:
+
+```yaml
+remote_acp_auth_sources:
+  builtin/git-credential:
+    origin: https://example.com
+    identity: example-client
+    scheme: Example
+```
+
+Direct service `remote_acp` entries use
+`auth: {source: injected, credential_source: builtin/git-credential, identity:
+example-client, scheme: Example}` for the same path. Legacy `git-credential`
+entries remain compatible, with the default token scheme unchanged.
+
+Origin, identity, resource, scope and token scheme must match the approval;
+generation binds the actual transport instance. The scheme accepts a
+constrained ASCII HTTP token, never an arbitrary header name/template.
+Missing approval, unknown/ambiguous source, mismatched context or unsupported
+resource/scope refuses before attachment and never falls back to another
+source.
+
+Existing in-process relay providers can register a source with
+`RelayBuilder.add_http_source("provider@marketplace/source", source,
+scoped=True)`. Registration alone is not approval. The source must honor the
+exact forwarded resource/scope fields and its own expiry/revocation policy;
+`scoped=True` is an explicit source capability, not a target's override.
+Duplicate references are unusable without disabling unrelated sources.
+Provider registration reuses the existing relay owner; config does not import
+adapter code or execute provider commands during discovery.
+
+The production startup/relay-adoption path also registers **native command
+providers**. An enabled, identity-verified schema-v1 `providers.d` manifest opts
+in with `"http_credentials_version": 1`. Its existing absolute `command` is
+used as-is; anonymous legacy providers cannot supply HTTP credentials.
+`<command...> relay-profile` advertises non-secret source capabilities:
+
+```json
+{"http_sources": [{"id": "grant", "scoped": true}]}
+```
+
+The reference is derived as `<manifest.plugin>/grant`, never supplied by the
+profile. Duplicate references are ambiguous; a malformed profile refuses that
+provider without disabling healthy providers. Empty source lists are valid.
+After changing registration, use the ordinary authorized daemon lifecycle to
+refresh it; agent list/detail do not execute a credential provider.
+
+Only after exact service approval and attachment does the bridge invoke
+`<command...> http-credential grant get`. The endpoint/identity/resource/scope
+fields are sent on stdin as newline-separated `key=value` fields terminated
+by a blank line. The existing credential-source response uses `username` and
+`token` or `password` fields on stdout; nonzero exit, timeout or malformed
+encoding refuses without exposing provider output. Commands are finite,
+headless, deadline-bounded, and use the provider's existing runtime rather
+than importing its package. The provider owns actual credential acquisition,
+expiry and revocation; no credential is passed in argv or stored by the bridge.
+Startup reads capabilities, not secrets, and HTTP-only source registration
+does not start a TCP relay merely for these attachments.
+Disabling `enable_credential_relay` disables the shared TCP listener, not the
+process-local HTTP credential registry. Listener-disabled/elevated daemons
+still register approved native sources without starting or adopting that
+listener; credential approval and request-time acquisition remain unchanged.
+
 For application-form withdrawal, `elicitation/complete` can carry the original
 application-approval metadata with its explicit `decisionId`. It must identify
 one unique live form. Native elicitation IDs are preserved separately, never
@@ -237,6 +429,8 @@ every connection without copying private HTTP-client configuration.
 Failure also starts idempotent connection cleanup automatically: sibling
 consumers are cancelled and wire resources close without a later operator stop.
 Consumer-drain and wire-close phases each use the configured ordinary timeout.
+Closed-state checks also stop SSE reads when cancellation races an already
+buffered chunk; shutdown never waits for an extra application chunk to arrive.
 Historical tool output never establishes a live background-task inventory.
 The shared progress reducer also ignores marked history during manager
 rehydration: historical milestones cannot overwrite live progress or refresh

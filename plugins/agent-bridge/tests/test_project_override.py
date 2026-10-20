@@ -102,12 +102,12 @@ def test_guard_routed_project_on_fleet_global_is_silent(monkeypatch):
     assert "AGENT_WORKTREES_PROJECT_ROUTED" not in os.environ
 
 
-@pytest.mark.parametrize("verb", ["agents", "machines", "send", "create"])
+@pytest.mark.parametrize("verb", ["agents", "agent-show", "machines", "send", "create"])
 def test_guard_explicit_project_on_consuming_verb_ok(monkeypatch, verb):
     monkeypatch.delenv("AGENT_WORKTREES_PROJECT_ROUTED", raising=False)
     parser = m.build_parser()
     argv = ["--project", "foo", verb]
-    if verb in {"send", "create"}:
+    if verb in {"agent-show", "send", "create"}:
         argv.append("target")
     args = parser.parse_args(argv)
     m._guard_project_scope(parser, args)  # consuming verb -> no raise
@@ -181,8 +181,11 @@ def test_json_listing_is_fleet_global_without_explicit_project(monkeypatch):
 def test_agents_uses_cwd_project_and_all_projects_escape(
     monkeypatch, capsys,
 ):
+    projects = []
+
     class Client:
-        def list_agents_with_diagnostics(self):
+        def list_agents_with_diagnostics(self, *, project=None):
+            projects.append(project)
             return [
                 {"name": "a", "display_name": "a", "project": "project-a"},
                 {"name": "b", "display_name": "b", "project": "project-b"},
@@ -201,6 +204,7 @@ def test_agents_uses_cwd_project_and_all_projects_escape(
     m._cmd_agents(SimpleNamespace(json=True, all_projects=True))
     fleet = capsys.readouterr().out
     assert '"a"' in fleet and '"b"' in fleet and '"global"' in fleet
+    assert projects == ["project-a", None]
 
 
 def test_agents_reports_partial_topology_failure(monkeypatch, capsys):
