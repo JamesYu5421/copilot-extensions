@@ -1592,6 +1592,11 @@ path against an isolated loopback coordinator without spawning a worker.
 Native symlink escape coverage runs where the test environment permits
 creating symlinks; a platform refusal is reported as a skip, not a pass.
 
+The contained environment redirects inherited `WORKTREE_MANAGER_ROOT` and
+`AGENT_WORKTREES_CONTROL_PLANE_PROVIDERS_DIR` as well as HOME/USERPROFILE.
+Manager bootstrap checks must keep both their version selector and provider
+registration inside the test sandbox; a changed home alone is insufficient.
+
 There is no host-wide test singleton. Each target takes a lease keyed by its
 **concrete environment directory's filesystem identity** (`st_dev`, `st_ino`),
 held across venv preparation,

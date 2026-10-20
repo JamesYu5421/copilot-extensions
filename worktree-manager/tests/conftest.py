@@ -42,3 +42,26 @@ def _sandbox_real_user_paths(request):
         request.getfixturevalue("tmp_path"),
         request.getfixturevalue("monkeypatch"),
     )
+
+
+@pytest.fixture(autouse=True)
+def _copy_contract_runtime(request):
+    """Legacy copy/delivery suites isolate runtime construction; native launch
+    and real construction have separate installed-runtime coverage."""
+    if request.module.__name__.rsplit(".", 1)[-1] not in {
+        "test_self_install", "test_update", "test_e2e_delivery",
+    }:
+        return
+    from worktree_manager import self_install as si
+    from worktree_manager import self_install_payload as payload
+    from worktree_manager.installed_runtime import runtime_python
+
+    def build(slot):
+        python = runtime_python(slot)
+        python.parent.mkdir(parents=True, exist_ok=True)
+        python.write_text("fixture interpreter", encoding="utf-8")
+
+    monkeypatch = request.getfixturevalue("monkeypatch")
+    monkeypatch.setattr(payload, "build_runtime", build)
+    monkeypatch.setattr(payload, "probe_runtime", lambda *_: None)
+    monkeypatch.setattr(si, "probe_runtime", lambda *_: None)

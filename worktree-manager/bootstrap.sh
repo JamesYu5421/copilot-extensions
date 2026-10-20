@@ -128,12 +128,10 @@ fi
 cd "$payload_parent/worktree-manager"
 # Version-install the fetched payload (idempotent, version-gated): publishes the
 # versions/<ver> slot + current-version marker + ~/.local/bin binstub.
-uv run --quiet python -m worktree_manager self-install --apply
-
 case ":$PATH:" in
     *":$LOCAL_BIN:"*) : ;;
     *) echo "NOTE: add '$LOCAL_BIN' to your PATH (uv and the worktree-manager binstub live there), then restart your shell." >&2 ;;
 esac
 
 # Then run whatever the caller asked for through the freshly-installed app.
-exec uv run --quiet python -m worktree_manager "$@"
+exec uv run --quiet --no-project --python '>=3.10' python scripts/bootstrap_runtime.py "$@"

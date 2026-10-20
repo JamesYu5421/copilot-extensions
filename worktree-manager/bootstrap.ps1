@@ -82,11 +82,14 @@ if (-not $HaveGit) {
 if ($HaveGit) {
     New-Item -ItemType Directory -Force -Path $Staging | Out-Null
     if (Test-Path (Join-Path $Staging '.git')) {
-        git -C $Staging fetch --depth 1 $Repo $Ref | Out-Null
-        git -C $Staging checkout -q FETCH_HEAD
+        git -c core.longpaths=true -C $Staging fetch --depth 1 $Repo $Ref | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Manager bootstrap git fetch failed (exit $LASTEXITCODE)" }
+        git -c core.longpaths=true -C $Staging checkout -q FETCH_HEAD
+        if ($LASTEXITCODE -ne 0) { throw "Manager bootstrap git checkout failed (exit $LASTEXITCODE)" }
     } else {
         if (Test-Path $Staging) { Remove-Item -Recurse -Force $Staging }
-        git clone --depth 1 --branch $Ref $Repo $Staging | Out-Null
+        git -c core.longpaths=true clone --depth 1 --branch $Ref $Repo $Staging | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Manager bootstrap git clone failed (exit $LASTEXITCODE)" }
     }
     $PayloadParent = $Staging
 } else {
@@ -104,6 +107,7 @@ if ($HaveGit) {
     if (Test-Path $Extract) { Remove-Item -Recurse -Force $Extract }
     New-Item -ItemType Directory -Force -Path $Extract | Out-Null
     tar -xzf $Tar -C $Extract   # bsdtar ships with Windows 10 1803+
+    if ($LASTEXITCODE -ne 0) { throw "Manager bootstrap tar extraction failed (exit $LASTEXITCODE)" }
     $PayloadParent = (Get-ChildItem $Extract -Directory | Select-Object -First 1).FullName
     Remove-Item $Tar -Force
 }
@@ -112,9 +116,9 @@ Push-Location (Join-Path $PayloadParent 'worktree-manager')
 try {
     # Version-install the fetched payload (idempotent, version-gated): publishes
     # the versions/<ver> slot + current-version marker + ~/.local/bin binstub.
-    uv run --quiet python -m worktree_manager self-install --apply
-    # Then run whatever the caller asked for through the freshly-installed app.
-    uv run --quiet python -m worktree_manager @args
+    uv run --quiet --no-project --python '>=3.10' python scripts/bootstrap_runtime.py @args
+    $bootstrapExit = $LASTEXITCODE
+    if ($bootstrapExit -ne 0) { exit $bootstrapExit }
 } finally {
     Pop-Location
 }

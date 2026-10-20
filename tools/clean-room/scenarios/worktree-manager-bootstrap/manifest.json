@@ -12,7 +12,7 @@
     "CR_UV_INDEX": "(opt-in uv-index fixture; REQUIRED on a governed box whose public PyPI is TLS-blocked -- the bootstrap's payload `uv pip install` uses it)"
   },
   "expected_artifacts": [
-    "~/.worktree-manager/versions/<ver> + ~/.worktree-manager/current-version",
+    "~/.worktree-manager/versions/<ver>/.venv + runtime-qualified completion + current-version",
     "~/.local/bin/worktree-manager (binstub)",
     "uv provisioned into ~/.local/bin (was absent on the pristine image)"
   ],
@@ -21,6 +21,7 @@
     { "n": 1, "title": "run the bootstrap one-liner (self-provisions uv + installs)" },
     { "n": 2, "title": "uv self-provisioned + versioned install published" },
     { "n": 3, "title": "binstub on PATH + runs a verb" },
-    { "n": 4, "title": "git-optional note (tarball fallback) + read-only doctor" }
+    { "n": 4, "title": "git-optional note (tarball fallback) + read-only doctor" },
+    { "n": 5, "title": "installed launcher without fetched source or uv on PATH" }
   ]
 }

@@ -2054,13 +2054,17 @@ against a stub writer.
 > ancestor to a machine that fetched it standalone via tarball, so its
 > `self_install.py` cannot depend on `versioned_runtime.py`. It reimplements
 > the same "marker published only after a verified-complete build" invariant
-> directly: a per-slot `.install-complete` file, invalidated before
-> mutation and published only after its three key entrypoint files are
-> confirmed present (a cheap secondary check, not an exhaustive scan of
-> every module the package imports), closing the identical corpse-slot
-> hazard (there, a Windows `PermissionError` from
-> `shutil.rmtree`/`shutil.copytree` hitting a slot still held open by
-> another process) for this one standalone installer.
+> directly: a per-slot `.install-complete` file qualifies a complete
+> platform-local, non-editable environment only after actual installed import,
+> version and CLI health, including a final-path probe after relocation.
+> Source/pointer checks precede construction; a failed build or final-path
+> probe retains/restores the prior slot before active selection.
+> Its standalone `scripts/` carries byte-identical canonical installer
+> dependency policy/configuration helpers, maintained by
+> `tools/sync-versioned-runtime.py`; it does not reimplement seasoning or
+> import an installed plugin. Generated launchers use the selected environment,
+> never a universal project solve at invocation time. See its
+> [runtime recovery contract](../worktree-manager/README.md#slot-completeness-and-recovery).
 
 ### Install-transaction lock — mutating runs never interleave, never run unlocked
 

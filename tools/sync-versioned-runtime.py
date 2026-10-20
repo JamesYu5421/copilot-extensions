@@ -17,6 +17,10 @@ dropping the file in; sync then keeps it byte-identical). Bespoke-resolver
 plugins (``agent-worktrees``) are excluded so their specialized variant is never
 overwritten.
 
+The standalone Worktree Manager receives only the canonical installer dependency
+policy/configuration files in its own ``scripts/``. Its out-of-plugin runtime
+construction remains independently owned; it does not import a plugin helper.
+
 Usage::
 
     python tools/sync-versioned-runtime.py          # copy canonical -> plugins
@@ -142,6 +146,9 @@ def main() -> int:
         pairs.append((policy_bytes, plugin / "scripts" / DEPENDENCY_POLICY.name))
         pairs.append((config_bytes, plugin / "scripts" / DEPENDENCY_CONFIG.name))
         pairs.extend((data, plugin / "scripts" / name) for name, data in component_bytes.items())
+    manager_scripts = REPO / "worktree-manager" / "scripts"
+    pairs.append((policy_bytes, manager_scripts / DEPENDENCY_POLICY.name))
+    pairs.append((config_bytes, manager_scripts / DEPENDENCY_CONFIG.name))
 
     resolver_plugins = _resolver_plugins()
     resolver_bytes: dict[str, bytes] = {}

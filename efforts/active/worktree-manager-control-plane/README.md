@@ -1247,6 +1247,29 @@ claiming discipline alone.
 
 ## Journal
 
+- **2026-10-20** - Local pre-publication qualification for the
+  [platform-local runtime slice](phase-7-platform-local-runtime.md) now passes
+  its native first-touch, rollback/policy and generated-launcher gates.
+  Native Git failure results are no longer mistaken for bootstrap success.
+  The implementation still awaits review, release and authorized profile/update
+  consumer qualification; this umbrella remains Active.
+
+- **2026-10-20** - The bounded
+  [platform-local runtime slice](phase-7-platform-local-runtime.md) now has local
+  construction/health/rollback, selected-environment launchers and bootstrap
+  alignment, plus coupled asset-root and validation-isolation corrections.
+  Focused runtime/native contracts pass; final candidate bootstrap and negative
+  construction checks precede implementation publication. No release, host
+  rollout, completed update or umbrella completion is implied.
+
+- **2026-10-20** - The bounded
+  [platform-local runtime proposal](phase-7-platform-local-runtime.md) landed in
+  [#7339](https://github.com/ThomasMichon/copilot-extensions/pull/7339) after
+  current-head Copilot approval and required green checks. Only the proposal
+  gate is complete. Implementation, standalone/native qualification, release
+  and authorized local rollout remain open; existing update-flow and other
+  Phase 7 owners retain their scopes.
+
 - **2026-10-20** - Implemented explicit exact-original survivor inspection in
   the owner and Manager for the [focused recovery slice](machine-restart-recovery.md).
   Fresh hosting remains distinct from launch/seed receipts; no adoption,

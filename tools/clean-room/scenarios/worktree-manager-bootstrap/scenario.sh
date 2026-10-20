@@ -86,6 +86,17 @@ phase 1 "run the bootstrap one-liner (self-provisions uv, fetches payload, insta
 # Governed-box unjam: if -UvIndex / CR_UV_INDEX was supplied, point uv at the
 # internal index BEFORE the bootstrap runs its payload `uv pip install`.
 _apply_uv_index_fixture
+# The fetched bootstrap and its payload must use the same selected source.
+if [ "$MANAGER_REPO" != "ThomasMichon/copilot-extensions" ] || [ "$MANAGER_REF" != "main" ]; then
+    python3 -c 'import json,pathlib,sys
+root,repo,ref=sys.argv[1:]
+p=pathlib.Path(root); p.mkdir(parents=True,exist_ok=True)
+(p/"config.toml").write_text("[source]\nrepo = "+json.dumps("https://github.com/"+repo+".git")+"\nref = "+json.dumps(ref)+"\n",encoding="utf-8")
+' "$WM_ROOT" "$MANAGER_REPO" "$MANAGER_REF" || {
+        jam "path-binstub" "could not configure the selected bootstrap source" \
+            "the bootstrap and payload must exercise the same candidate ref"
+    }
+fi
 # Pipe the published one-liner exactly as a user would. Pass a non-interactive,
 # zero-on-success verb (--version) through so the post-install passthrough
 # neither hangs (no bare interactive default) nor conflates a read-only "fully
@@ -121,6 +132,12 @@ if [ -f "$WM_ROOT/current-version" ]; then
     _ver="$(cat "$WM_ROOT/current-version" 2>/dev/null)"
     if [ -n "$_ver" ] && [ -d "$WM_ROOT/versions/$_ver" ]; then
         pass "versioned install published: current-version=$_ver + versions/$_ver slot"
+        if [ -x "$WM_ROOT/versions/$_ver/.venv/bin/python" ] &&
+           grep -qx 'platform-runtime-v1' "$WM_ROOT/versions/$_ver/.install-complete"; then
+            pass "selected slot contains a qualified platform-local runtime"
+        else
+            fail "selected slot is source-only or lacks runtime-qualified completion"
+        fi
     else
         fail "current-version marker present ('$_ver') but its slot is missing ($WM_ROOT/versions/$_ver)"
     fi
@@ -158,5 +175,22 @@ capture "doctor" -- bash -lc 'worktree-manager doctor' || true
 info "worktree-manager doctor captured (read-only; a non-zero 'not fully set up' verdict on a fresh box is expected, not a bootstrap failure)"
 info "git is present on this image ($(command -v git || echo MISSING)); the git-clone fetch path was exercised."
 info "The git-ABSENT tarball fallback (bootstrap codeload path + manager_tarball_url / _fetch_via_tarball) is covered by unit tests; a no-git image variant is a follow-up scenario."
+
+# =========================================================================
+phase 5 "installed runtime survives removal of fetched source and uv from PATH"
+if [ -d "$WM_ROOT/staging" ]; then
+    mv "$WM_ROOT/staging" "$WM_ROOT/retained-source-for-proof"
+else
+    fail "bootstrap staging source is missing before the standalone proof"
+fi
+_proof_bin="$WM_ROOT/standalone-proof-bin"
+mkdir -p "$_proof_bin"
+ln -s "$(command -v bash)" "$_proof_bin/bash"
+capture "wm-standalone" -- env PATH="$_proof_bin" "$HOME/.local/bin/worktree-manager" --version
+if [ $? -eq 0 ]; then
+    pass "installed launcher runs without its fetched source or uv on PATH"
+else
+    fail "installed launcher still needs fetched source or uv (see cr-logs/wm-standalone.log)"
+fi
 
 cr_finalize

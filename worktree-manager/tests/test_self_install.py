@@ -106,6 +106,39 @@ def test_windows_binstubs_force_utf8_mode():
     assert "$env:PYTHONUTF8 = '1'" in si._ps1_binstub()
 
 
+def test_source_only_legacy_marker_is_rebuilt_before_reporting_current(tmp_path, monkeypatch):
+    pd = _fake_payload(tmp_path, "1.2.3")
+    root = tmp_path / "root"
+    _patch_local_bin(monkeypatch, tmp_path)
+    _patch_provider_registry(monkeypatch, tmp_path)
+    assert self_install(pd, root=root, dry_run=False).action == "installed"
+    slot = version_slot("1.2.3", root)
+    (slot / si._SLOT_COMPLETE_MARKER).write_text("", encoding="utf-8")
+    assert needs_install("1.2.3", root)
+    assert self_install(pd, root=root, dry_run=False).action == "installed"
+    assert (slot / si._SLOT_COMPLETE_MARKER).read_text().strip() == si.RUNTIME_FORMAT
+
+
+def test_selection_publication_stays_inside_the_construction_lease(tmp_path, monkeypatch):
+    pd = _fake_payload(tmp_path, "1.2.3")
+    root = tmp_path / "root"
+    _patch_local_bin(monkeypatch, tmp_path)
+    _patch_provider_registry(monkeypatch, tmp_path)
+    held = {"value": True}
+    lease = SimpleNamespace(release=lambda: held.update(value=False))
+    monkeypatch.setattr(si, "_acquire_install_cutover_lease", lambda _: (lease, None))
+    monkeypatch.setattr(si, "_reap_stranded_cutover_passive", lambda *_: None)
+    write_marker = si._write_marker
+
+    def publish(*args):
+        assert held["value"], "selection escaped its construction owner"
+        return write_marker(*args)
+
+    monkeypatch.setattr(si, "_write_marker", publish)
+    assert self_install(pd, root=root, dry_run=False).action == "installed"
+    assert not held["value"]
+
+
 def test_apply_reaps_stranded_cutover_passive_before_copying_payload(tmp_path, monkeypatch):
     """A slot left occupied by an abandoned cutover passive (spawned by
     ``mux_daemon_cutover.spawn_passive`` with its ``cwd`` pinned inside the
@@ -537,7 +570,7 @@ def test_marker_invalidation_permission_error_aborts_instead_of_proceeding(tmp_p
     # Force a reinstall of the SAME version so _copy_payload_unsafe's swap
     # actually runs against a slot that already holds a previously-good
     # install.
-    monkeypatch.setattr(si, "_binstubs_are_stale", lambda: True)
+    monkeypatch.setattr(si, "_slot_is_complete", lambda _: False)
 
     real_replace_with_retry = si._replace_with_retry
     calls: list[tuple[Path, Path]] = []
@@ -594,7 +627,7 @@ def test_self_install_refuses_to_overwrite_the_currently_running_slot(tmp_path, 
 
     slot = version_slot("1.2.3", root)
     fake_exe = slot / ".venv" / "Scripts" / "python.exe"
-    fake_exe.parent.mkdir(parents=True)
+    fake_exe.parent.mkdir(parents=True, exist_ok=True)
     fake_exe.write_text("not a real interpreter")
     monkeypatch.setattr(si.sys, "executable", str(fake_exe))
 
@@ -604,7 +637,7 @@ def test_self_install_refuses_to_overwrite_the_currently_running_slot(tmp_path, 
     res = self_install(pd, root=root, dry_run=False)
 
     assert copied == [], "must never attempt to overwrite the currently-running slot"
-    assert res.action == "already-current"
+    assert res.action == "error"
     assert "currently-executing slot" in (res.reason or "")
     # The slot -- and the "python.exe" the process is running from -- must
     # still exist, completely untouched.
@@ -627,7 +660,7 @@ def test_core_install_satisfied_gaps_names_each_failing_check(tmp_path, monkeypa
     missing_slot = version_slot("9.9.9", root)
     assert si._core_install_satisfied_gaps("9.9.9", root) == [
         "current-version marker is '1.2.3', not '9.9.9'",
-        f"slot {missing_slot} is missing its completion marker or a key file",
+        f"slot {missing_slot} is missing its completion marker or a key payload/runtime file",
     ]
 
 

@@ -15,6 +15,34 @@ from tools import plugin_test_containment
 from tools.plugin_test_containment import Limits, isolated_environment
 
 
+def test_native_manager_install_overrides_cannot_escape_sandbox(tmp_path):
+    outside = tmp_path / "retained"
+    outside.mkdir()
+    marker = outside / "current-version"
+    marker.write_text("retained", encoding="utf-8")
+    sandbox = tmp_path / "sandbox"
+    env = isolated_environment(
+        dict(os.environ, WORKTREE_MANAGER_ROOT=str(outside),
+             AGENT_WORKTREES_CONTROL_PLANE_PROVIDERS_DIR=str(outside / "providers")),
+        sandbox,
+    )
+    for key in ("WORKTREE_MANAGER_ROOT", "AGENT_WORKTREES_CONTROL_PLANE_PROVIDERS_DIR"):
+        assert Path(env[key]).resolve().is_relative_to(sandbox.resolve())
+    code = (
+        "import os; from pathlib import Path;"
+        "Path(os.environ['WORKTREE_MANAGER_ROOT'], 'current-version').write_text('fixture');"
+        "Path(os.environ['AGENT_WORKTREES_CONTROL_PLANE_PROVIDERS_DIR'], 'fixture.json').write_text('{}')"
+    )
+    assert plugin_test_containment.run_contained(
+        [sys.executable, "-c", code], cwd=sandbox, env=env, sandbox=sandbox,
+        limits=Limits(wall_seconds=10, max_processes=8, max_memory_mb=256, max_temp_mb=32),
+    ) == 0
+    assert marker.read_text(encoding="utf-8") == "retained"
+    assert not (outside / "providers").exists()
+    assert Path(env["WORKTREE_MANAGER_ROOT"], "current-version").read_text() == "fixture"
+    assert Path(env["AGENT_WORKTREES_CONTROL_PLANE_PROVIDERS_DIR"], "fixture.json").is_file()
+
+
 def test_tree_size_counts_nested_files_without_repeated_path_stats(tmp_path, monkeypatch):
     (tmp_path / "nested").mkdir()
     (tmp_path / "a").write_bytes(b"abc")

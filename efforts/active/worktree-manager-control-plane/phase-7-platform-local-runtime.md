@@ -1,7 +1,7 @@
 # Phase 7 - Platform-local installed runtime
 
 - **Parent:** [Worktree Manager control plane](README.md#phase-7a---platform-local-installed-runtime-7305)
-- **Status:** Proposed; implementation starts after plan review and merge.
+- **Status:** Active; proposal reviewed and merged in #7339.
 - **Coordination:** [#7305](https://github.com/ThomasMichon/copilot-extensions/issues/7305)
 - **Participant / PR owner:** Platform runtime implementer (`spry-workbench`).
 
@@ -49,55 +49,56 @@ implementation; public-file absence is not proof of unpublished custody.
 
 ### 1. Review and coordinate
 
-- [ ] Land this proposal through the normal automated review/CI/merge gate.
-- [ ] Recheck #7305 coordination and any overlapping PRs before implementation;
+- [x] Land this proposal through the normal automated review/CI/merge gate.
+- [x] Recheck #7305 coordination and any overlapping PRs before implementation;
       preserve its initializer/profile-diagnostic owner. Bind only this declared
       Phase 7a slice, never the entire umbrella.
 
 ### 2. Construct a complete platform-local runtime
 
-- [ ] Reuse the supported `uv venv` plus non-editable `uv pip install`
+- [x] Reuse the supported `uv venv` plus non-editable `uv pip install`
       construction path, resolving only for the selected interpreter/platform.
       Install the Manager and materialized first-party libraries into the
       candidate environment, without editable references to fetched or temporary
       source. Preserve native configured indexes, authentication, TLS, stronger
       cutoffs and the canonical retained-input admission/execution boundary.
       Do not invent an independent dependency-policy implementation.
-- [ ] Keep source/pointer/symlink checks and existing cutover lease/recheck
+- [x] Keep source/pointer/symlink checks and existing cutover lease/recheck
       semantics. Do not overwrite a healthy active or currently executing
       environment to repair metadata. Construct a new candidate before selection;
       failed construction leaves the prior marker, slot and live sessions usable.
-- [ ] Validate with the candidate's own interpreter: actual module import,
+- [x] Validate with the candidate's own interpreter: actual module import,
       expected version and bounded CLI health. Account for environment relocation:
       probe at its final runtime path before publishing the active marker, and
       retain rollback through a failed final-path probe. No temporary build path
       may remain necessary for ordinary invocation.
-- [ ] Publish completion only after successful runtime qualification, then use
+- [x] Publish completion only after successful runtime qualification, then use
       the existing activation/cutover path. Same-version readiness must detect a
       source-only legacy slot or a missing/broken environment and report a
       truthful repair/refusal, not claim success from an old completion marker.
 
 ### 3. Align launch and first touch
 
-- [ ] Generate Windows `.cmd`/PowerShell and POSIX launchers that resolve the
+- [x] Generate Windows `.cmd`/PowerShell and POSIX launchers that resolve the
       selected version and execute that slot's own interpreter. Ordinary version,
       profile and CLI calls perform no dependency solve and require no `uv` on
       PATH. Preserve argument boundaries, exit codes and UTF-8 protocol stdout;
       missing runtime errors remain actionable on stderr.
-- [ ] Make both bootstrap scripts enter the same platform-local construction
+- [x] Make both bootstrap scripts enter the same platform-local construction
       contract before importing runtime-dependent Manager modules. The first
       touch must work without an existing Manager, its venv, plugin runtime or
       monorepo checkout, and then invoke the installed command rather than
       re-solving the fetched source. Propagate construction failure without
       launching a half-installed Manager.
-- [ ] Update the Manager installation/repair documentation and directly affected
+- [x] Update the Manager installation/repair documentation and directly affected
       install-contract descriptions. Add the required Manager changefile; leave
       release version stamping to promotion.
 
 ### 4. Qualify and deliver
 
-- [ ] Complete the validation matrix, record exact results and review the final
-      documentation impact before implementation publication.
+- [x] Complete local pre-publication validation, record exact results and review
+      documentation impact. Published-consumer qualification remains a separate
+      post-release gate below, not a prerequisite that could precede its own PR.
 - [ ] Address review feedback, merge with required checks, and observe actual
       promotion of the changed bytes. A Dev merge is not a released runtime.
 - [ ] Run the already-authorized local unified update after release, not a
@@ -112,26 +113,27 @@ implementation; public-file absence is not proof of unpublished custody.
 
 ## Validation plan
 
-- [ ] Focused unit/contracts: actual platform dependency markers and non-editable
+- [x] Focused unit/contracts: actual platform dependency markers and non-editable
       first-party installs; supported dependency-policy invocation and rejected
       admission; missing interpreter, failed install/import/version/CLI health;
       legacy source-only slots, idempotence, metadata-only repair, lease
       contention, concurrent installers and failed-publication rollback.
-- [ ] Simple end-to-end: construct a disposable standalone materialized slot,
+- [x] Simple end-to-end: construct a disposable standalone materialized slot,
       execute its generated native launcher with paths/arguments containing
-      spaces, and read actual version/profile JSON and exit status. Remove the
+      spaces, and read actual version/import-identity JSON and exit status.
+      The real profile-JSON consumer remains the post-release gate below. Remove the
       fetched source and remove `uv` from the invocation PATH; assert launch
       still works without a new solve. Verify final-path execution after
       candidate relocation, not just pre-swap imports.
-- [ ] Dependency-policy negatives: an ineligible dependency fails construction
+- [x] Dependency-policy negatives: an ineligible dependency fails construction
       without weaker retries, source/index changes, activation or damage to the
       previous slot. Prove Windows construction does not request Linux-only
       D-Bus dependencies; Linux retains the declared requirement.
-- [ ] Fresh-box: extend/run the existing Manager bootstrap clean-room scenario
+- [x] Fresh-box: extend/run the existing Manager bootstrap clean-room scenario
       where practical. Exercise both shell adapters, including native Windows
       PowerShell 5.1 and 7 failure/argument behavior. Record unavailable lanes
       and reasons explicitly; a warm reconcile is not first-touch evidence.
-- [ ] Run the smallest repository-standard contained Manager suites covering
+- [x] Run the smallest repository-standard contained Manager suites covering
       these changes, touched-Python lint and relevant install-contract/vendor
       guards. Escalate only on discovered failures; retain all existing budgets
       and process containment. Native launch changes owe zero-window/focus
@@ -143,6 +145,61 @@ implementation; public-file absence is not proof of unpublished custody.
       is needed merely to qualify this bounded headless runtime contract.
 
 ## Journal
+
+- **2026-10-20** - Local pre-publication qualification is complete. The final
+  contained selection passes **196 tests**, with two explicit Windows
+  symlink-permission skips; current root containment/vendor tests pass
+  **131**, with one platform skip. Lint, module size, headless launch,
+  canonical policy-copy and install-contract guards pass.
+  Corrected native PowerShell 5.1/7 bootstrap runs each complete a clean fetch
+  at the candidate HEAD, qualify a fresh environment and reuse it on the next
+  invocation; Git status, not HEAD alone, confirms source completeness.
+  Installed launchers run after removing their fetched source and `uv` from
+  PATH. CMD, PowerShell 5.1/7 and Git Bash pass the native two-cycle
+  window/focus contract. Direct-base execution is verified by the actual
+  executable image and owned wheel context, with the venv-launcher environment
+  applied only at the final process boundary.
+  An actual unaged-source candidate is refused by the canonical policy before
+  selection, its candidate is removed, and the prior installed CLI still works.
+  No live installation is qualified by these disposable checks.
+
+  Native Windows first touch used existing Git/UV prerequisites, not a pristine
+  machine that provisioned those tools. The Docker backend was unavailable;
+  Linux/macOS native and pristine-Docker execution are explicitly unqualified,
+  while their source adapters and the extended scenario remain in the change.
+  The installed headless Picker initialized successfully; a populated preview
+  additionally requires a genuine registered engine project, intentionally
+  absent from this standalone test. No interactive/mux session was activated.
+  Review, release, authorized rollout and the real profile-JSON/unified-update
+  consumer gate remain open.
+
+- **2026-10-20** - Rejected an exit-zero native bootstrap observation after
+  Git had failed its checkout. Windows bootstrap now enables long paths per Git
+  invocation and refuses clone/fetch/checkout/extraction failures before
+  construction; self-update uses the same process-local Git setting. Native
+  PowerShell 5.1/7 failure contracts retain the original exit-17 diagnostic,
+  preserve the previous selector and prove the constructor stays uncalled.
+  The focused fetch/update/delivery selection passes 76 cases. Full positive
+  bootstrap must be rerun against the corrected candidate and a clean fetched
+  tree, not qualified by a matching Git HEAD or launcher exit alone.
+
+- **2026-10-20** - Implemented the bounded construction/launch slice locally.
+  The focused contained selection passes 184 tests with two explicit native
+  symlink-permission skips, including two-cycle CMD/PowerShell 5.1/7
+  window/focus observation, exact failure exits, real-process lease rechecks,
+  owned descendant timeout cleanup and wheel-layout launch-asset lookup.
+  Root containment/vendor tests pass 62 cases. Lint, module-size and headless
+  guards pass; canonical dependency-policy copies and install-contract checks
+  also pass. Full native bootstrap against the candidate, negative policy
+  construction, provider review, release and authorized rollout remain open.
+  The Docker clean-room backend is unavailable; the scenario was extended,
+  not reported as executed or qualified.
+
+- **2026-10-20** - Plan #7339 merged after current-head Copilot approval and
+  required green checks. Reconciled the merged plan and preserved the other
+  #7305 participant's initializer/profile-diagnostic scope. The next stretch is
+  runtime construction, final-path validation and launcher/bootstrap alignment;
+  all implementation and deployment gates remain open.
 
 - **2026-10-20** - Proposed this bounded source repair after public coordination
   on #7305. No code or installed-runtime change has been made. Review of this

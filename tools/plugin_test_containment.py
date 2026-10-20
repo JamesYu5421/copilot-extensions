@@ -52,6 +52,8 @@ _ROOT_ENV = {
     "AGENT_WORKTREES_HOME": "agent-worktrees",
     "AGENT_WORKTREES_PIVOTS_DIR": "agent-worktrees/pivots",
     "AGENT_WORKTREES_PLUGINS_DIR": "agent-worktrees/plugins",
+    "AGENT_WORKTREES_CONTROL_PLANE_PROVIDERS_DIR": "agent-worktrees/control-plane-providers.d",
+    "WORKTREE_MANAGER_ROOT": "worktree-manager",
     "AGENT_BRIDGE_CONFIG_DIR": "agent-bridge/config",
     "AGENT_BRIDGE_PROVIDERS_DIR": "agent-bridge/providers",
     "AGENT_DISPATCH_ROUTING_DIR": "agent-dispatch/routing",

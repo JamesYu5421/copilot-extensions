@@ -1,0 +1,9 @@
+{
+  "comment": "Construct and qualify platform-local Manager runtimes before publication; launch installed environments without universal dependency solves.",
+  "changes": [
+    {
+      "plugin": "worktree-manager",
+      "type": "patch"
+    }
+  ]
+}

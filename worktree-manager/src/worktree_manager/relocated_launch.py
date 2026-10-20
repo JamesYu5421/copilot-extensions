@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
+
+from .installed_runtime import payload_root
 
 
 def _core():
@@ -29,12 +30,13 @@ def _relocated_launch_script():
     ``worktree-manager/bin/launch-session.{ps1,sh}`` is copied verbatim into
     this package's own ``bin/`` sibling directory -- present both in an
     installed versioned slot (``<root>/versions/<ver>/{src,bin}``) and in a
-    source checkout (``worktree-manager/{src,bin}``), since both layouts put
-    ``bin/`` two levels above this file. Returns ``None`` when the sibling
+    source checkout (``worktree-manager/{src,bin}``). A wheel-installed module
+    resolves that payload through its own environment, not package ancestry.
+    Returns ``None`` when the sibling
     script is absent, so callers degrade to the graceful non-muxed launcher.py
     path (DQ9) exactly as before this script existed.
     """
-    root = Path(__file__).resolve().parents[2]
+    root = payload_root()
     name = "launch-session.ps1" if _core()._is_windows() else "launch-session.sh"
     script = root / "bin" / name
     return script if script.exists() else None

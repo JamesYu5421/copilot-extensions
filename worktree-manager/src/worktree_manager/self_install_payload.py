@@ -14,7 +14,10 @@ from __future__ import annotations
 import os
 import shutil
 import uuid
+from collections.abc import Callable
 from pathlib import Path
+
+from .installed_runtime import build_runtime, probe_runtime
 
 
 def _materialize_payload_pointers(payload_dir: Path, slot: Path) -> None:
@@ -159,7 +162,7 @@ def _copy_payload_unsafe(payload_dir: Path, slot: Path) -> None:
     # imports this module for _copy_payload/_copy_payload_unsafe, so these
     # names are only resolvable once self_install.py has finished defining
     # them (guaranteed true by the time any CALL here actually happens).
-    from .self_install import _SLOT_KEY_FILES, _mark_slot_complete
+    from .self_install import _SLOT_KEY_FILES, _mark_slot_complete, payload_version
 
     if payload_dir.is_symlink():
         # symlinks=True on the copytree below only protects symlinks
@@ -200,7 +203,7 @@ def _copy_payload_unsafe(payload_dir: Path, slot: Path) -> None:
     if staging.exists():
         shutil.rmtree(staging, ignore_errors=True)
     try:
-        ignore = shutil.ignore_patterns(".git", ".venv", "__pycache__", "*.pyc")
+        ignore = shutil.ignore_patterns(".git", ".venv", ".install-complete", "__pycache__", "*.pyc")
         # symlinks=True: a payload staged by self_update's tarball fetch may
         # carry a preserved (not dereferenced -- see _fetch_via_tarball's own
         # symlinks=True) symlink; copying it here with the default
@@ -222,17 +225,25 @@ def _copy_payload_unsafe(payload_dir: Path, slot: Path) -> None:
                 f"refusing to mark {staging} complete: payload is missing "
                 + ", ".join(missing)
             )
-        # Published only here, as proof the STAGED copy is complete --
-        # strictly before it is swapped into `slot` below, so the swap only
-        # ever publishes an already-proven-complete replacement.
-        _mark_slot_complete(staging)
-        _swap_in_staged_slot(staging, slot)
+        version = payload_version(staging)
+        if version is None:
+            raise RuntimeError("Cannot construct the Manager runtime: payload version is missing")
+        build_runtime(staging)
+        probe_runtime(staging, version)
+
+        def validate_final_path(candidate: Path) -> None:
+            probe_runtime(candidate, version)
+            _mark_slot_complete(candidate)
+
+        _swap_in_staged_slot(staging, slot, validate=validate_final_path)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
 
 
-def _swap_in_staged_slot(staging: Path, slot: Path) -> None:
+def _swap_in_staged_slot(
+    staging: Path, slot: Path, *, validate: Callable[[Path], None] | None = None,
+) -> None:
     """Atomically publish ``staging`` as ``slot``.
 
     Two renames, never one rmtree + copy: if ``slot`` already exists, it is
@@ -253,7 +264,11 @@ def _swap_in_staged_slot(staging: Path, slot: Path) -> None:
         _replace_with_retry(slot, retired)
     try:
         _replace_with_retry(staging, slot)
-    except OSError:
+        if validate is not None:
+            validate(slot)
+    except (OSError, RuntimeError):
+        if slot.exists():
+            _replace_with_retry(slot, staging)
         if retired is not None:
             _replace_with_retry(retired, slot)
         raise

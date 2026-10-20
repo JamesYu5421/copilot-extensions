@@ -3,9 +3,10 @@
 Unlike ``test_self_install`` / ``test_update`` (which mock git + self_install to
 stay fully offline), this exercises the **real** ``self_update`` delivery path —
 an actual ``git clone``/``fetch`` followed by the real versioned-install — against
-a **local git remote**, so it needs only ``git`` on PATH (no network, no PyPI, no
-uv venv build; the delivery mechanics copy files + write the marker, and the uv
-venv only materializes when the *binstub* later runs). It closes the Phase-6 "6b:
+a **local git remote**, so it needs only ``git`` on PATH (no network or PyPI).
+Runtime construction/health are fixture seams here; these cases qualify the
+git-to-slot delivery mechanics, not the installed environment. The separate
+installed-runtime tests exercise generated native launchers. It closes the Phase-6 "6b:
 self-updating delivery validated end-to-end (bootstrap fetch → versioned slot)"
 item as always-on CI coverage.
 

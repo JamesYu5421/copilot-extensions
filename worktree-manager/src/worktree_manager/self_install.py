@@ -19,6 +19,7 @@ payload version is a no-op; a newer payload publishes a new slot + marker.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -29,7 +30,10 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-import worktree_manager
+from .installed_runtime import RUNTIME_FORMAT, payload_root, probe_runtime, runtime_python
+from .installed_runtime import cmd_binstub as _cmd_binstub
+from .installed_runtime import ps1_binstub as _ps1_binstub
+from .installed_runtime import sh_binstub as _sh_binstub
 
 MARKER = "current-version"
 VERSIONS_DIR = "versions"
@@ -147,8 +151,7 @@ def control_plane_providers_dir() -> Path:
 
 def running_payload_dir() -> Path:
     """The project dir of the currently-running payload (has pyproject.toml)."""
-    # .../worktree-manager/src/worktree_manager/self_install.py -> parents[2] == project.
-    return Path(worktree_manager.__file__).resolve().parents[2]
+    return payload_root()
 
 
 def payload_version(payload_dir: Path | None = None) -> str | None:
@@ -184,29 +187,21 @@ _SLOT_KEY_FILES = (
 
 
 def _mark_slot_complete(slot: Path) -> None:
-    (slot / _SLOT_COMPLETE_MARKER).write_text("", encoding="utf-8")
+    (slot / _SLOT_COMPLETE_MARKER).write_text(RUNTIME_FORMAT + "\n", encoding="utf-8")
 
 
 def _slot_is_complete(slot: Path) -> bool:
-    """``True`` only when ``slot`` is proven complete by its own marker --
-    published solely as the last step of a fully successful payload copy
-    and pointer materialization -- AND still carries the key files the
-    shipped binstubs need to launch (``uv run --project <slot> python -m
-    worktree_manager``: ``pyproject.toml``, ``src/worktree_manager/
-    __init__.py``, and ``src/worktree_manager/__main__.py``).
+    """Require runtime-qualified completion, the interpreter and payload keys.
 
-    The marker alone proves the install completed; it does not prove the
-    slot hasn't been damaged since (a file removed by something outside
-    this module's control after a genuinely successful install). The key
-    files remain a cheap, independent second check against that later
-    damage. Directory existence, or any subset of files present without
-    the marker, proves nothing: a slot can exist, and even partially
-    survive a failed ``_copy_payload()`` recopy (one that imports or
-    materialized libraries it depends on at runtime may still be missing),
-    while still being unlaunchable (``No module named worktree_manager``
-    or an equivalent failure at run time).
+    Legacy source-only completion markers are not runtime readiness. The
+    no-op install path additionally probes the selected environment, so later
+    damage cannot be hidden by a retained completion marker.
     """
-    return (slot / _SLOT_COMPLETE_MARKER).is_file() and all(
+    try:
+        complete = (slot / _SLOT_COMPLETE_MARKER).read_text("utf-8").strip() == RUNTIME_FORMAT
+    except OSError:
+        return False
+    return complete and runtime_python(slot).is_file() and all(
         (slot / rel).is_file() for rel in _SLOT_KEY_FILES
     )
 
@@ -389,12 +384,27 @@ def status(root: Path | None = None) -> SelfInstallStatus:
     )
 
 
-def _core_install_satisfied(version: str, root: Path | None = None) -> bool:
-    """Marker/slot/binstubs match ``version`` -- independent of the manifest."""
+def _runtime_install_satisfied(version: str, root: Path | None = None) -> bool:
+    """Check the selected environment independently of repairable metadata."""
     r = root or default_root()
-    return (
+    complete = (
         current_version(r) == version
         and _slot_is_complete(version_slot(version, r))
+    )
+    if not complete:
+        return False
+    try:
+        probe_runtime(version_slot(version, r), version)
+    except RuntimeError as exc:
+        logging.getLogger(__name__).warning("Manager installed runtime is not healthy: %s", exc)
+        return False
+    return True
+
+
+def _core_install_satisfied(version: str, root: Path | None = None) -> bool:
+    """Marker/slot/binstubs match ``version`` -- independent of the manifest."""
+    return (
+        _runtime_install_satisfied(version, root)
         and binstub_present() is not None
         and not _binstubs_are_stale()
     )
@@ -419,7 +429,7 @@ def _core_install_satisfied_gaps(version: str, root: Path | None = None) -> list
     if not _slot_is_complete(version_slot(version, r)):
         gaps.append(
             f"slot {version_slot(version, r)} is missing its completion marker "
-            "or a key file"
+            "or a key payload/runtime file"
         )
     stub = binstub_present()
     if stub is None:
@@ -430,10 +440,11 @@ def _core_install_satisfied_gaps(version: str, root: Path | None = None) -> list
 
 
 def _currently_running_from(slot: Path) -> bool:
-    """``True`` when *this process's own interpreter* lives inside ``slot``.
+    """``True`` when this interpreter or its executing Manager lives in ``slot``.
 
-    Checked by path containment against the running interpreter
-    (``sys.executable``), never by a version-string comparison -- the whole
+    Checked by path containment against the interpreter and this module,
+    including a direct base Python importing the installed wheel, never by
+    a version-string comparison -- the whole
     point is to catch this even when :func:`_core_install_satisfied`
     incorrectly disagrees that the version matches (#5219). Overwriting
     such a slot is a **self-overwrite**: on Windows, ``shutil.rmtree``
@@ -451,7 +462,10 @@ def _currently_running_from(slot: Path) -> bool:
         slot_resolved = slot.resolve()
     except OSError:
         slot_resolved = slot
-    return slot_resolved == exe or slot_resolved in exe.parents
+    return (
+        slot_resolved == exe or slot_resolved in exe.parents
+        or Path(__file__).resolve().is_relative_to(slot_resolved)
+    )
 
 
 def needs_install(version: str, root: Path | None = None) -> bool:
@@ -459,43 +473,6 @@ def needs_install(version: str, root: Path | None = None) -> bool:
     return not (
         _core_install_satisfied(version, r)
         and not _control_plane_provider_manifest_is_stale(root=r)
-    )
-
-
-# ── binstub content (resolves the marker each run; matches ~/.local/bin) ─────
-
-def _sh_binstub() -> str:
-    return (
-        "#!/usr/bin/env bash\n"
-        "# worktree-manager binstub (versioned) — resolves the current-version marker.\n"
-        'set -euo pipefail\n'
-        'root="${WORKTREE_MANAGER_ROOT:-$HOME/.worktree-manager}"\n'
-        'ver="$(cat "$root/current-version")"\n'
-        'exec uv run --quiet --project "$root/versions/$ver" python -m worktree_manager "$@"\n'
-    )
-
-
-def _cmd_binstub() -> str:
-    return (
-        "@echo off\r\n"
-        "setlocal\r\n"
-        'set "PYTHONUTF8=1"\r\n'
-        'if "%WORKTREE_MANAGER_ROOT%"=="" set "WORKTREE_MANAGER_ROOT=%USERPROFILE%\\.worktree-manager"\r\n'
-        'set /p VER=<"%WORKTREE_MANAGER_ROOT%\\current-version"\r\n'
-        'uv run --quiet --project "%WORKTREE_MANAGER_ROOT%\\versions\\%VER%" '
-        "python -m worktree_manager %*\r\n"
-    )
-
-
-def _ps1_binstub() -> str:
-    return (
-        "# worktree-manager binstub (versioned) — resolves the current-version marker.\n"
-        "$env:PYTHONUTF8 = '1'\n"
-        '$root = if ($env:WORKTREE_MANAGER_ROOT) { $env:WORKTREE_MANAGER_ROOT } '
-        'else { Join-Path $env:USERPROFILE ".worktree-manager" }\n'
-        '$ver = (Get-Content (Join-Path $root "current-version") -Raw).Trim()\n'
-        '$slot = Join-Path (Join-Path $root "versions") $ver\n'
-        "uv run --quiet --project $slot python -m worktree_manager @args\n"
     )
 
 
@@ -763,15 +740,12 @@ def self_install(
     if not needs_install(version, r):
         return SelfInstallResult(version=version, action="already-current", root=str(r),
                                  slot=str(slot), marker=version, cleaned=cleaned)
-    if _core_install_satisfied(version, r):
-        # Only the manifest is stale -- repair it directly rather than
-        # falling through to the lease-guarded _copy_payload below, which
-        # would pointlessly rmtree + recopy an already-good (possibly
-        # in-use) version slot.
+    if _runtime_install_satisfied(version, r):
+        stubs = _deploy_binstubs() if binstub_present() is None or _binstubs_are_stale() else []
         _write_control_plane_provider_manifest(pd, root=r)
         return SelfInstallResult(
             version=version, action="installed", root=str(r), slot=str(slot),
-            marker=version, cleaned=cleaned,
+            marker=version, binstubs=tuple(str(stub) for stub in stubs), cleaned=cleaned,
         )
     # Hold the cutover lease across BOTH the stale-passive reap AND
     # _copy_payload itself -- releasing it in between (or skipping it on a
@@ -816,7 +790,7 @@ def self_install(
             )
             if gaps:
                 reason += f" (would-be reinstall triggers: {'; '.join(gaps)})"
-            return SelfInstallResult(version=version, action="already-current", root=str(r),
+            return SelfInstallResult(version=version, action="error", root=str(r),
                                      slot=str(slot), marker=current_version(r),
                                      reason=reason, cleaned=cleaned)
         refusal = _reap_stranded_cutover_passive(r, slot, mux_daemon_cutover)
@@ -836,15 +810,15 @@ def self_install(
             # (self_update's own contract is best-effort/non-fatal).
             return SelfInstallResult(version=version, action="error", root=str(r),
                                      slot=str(slot), reason=str(e), cleaned=cleaned)
+        stubs = _deploy_binstubs()
+        _write_marker(r, version)  # selection remains inside construction ownership
+        _write_control_plane_provider_manifest(pd, root=r)
+        return SelfInstallResult(
+            version=version, action="installed", root=str(r), slot=str(slot),
+            marker=version, binstubs=tuple(str(s) for s in stubs), cleaned=cleaned,
+        )
     finally:
         lease.release()
-    stubs = _deploy_binstubs()
-    _write_marker(r, version)  # publish last, so the marker only names a ready slot
-    _write_control_plane_provider_manifest(pd, root=r)
-    return SelfInstallResult(
-        version=version, action="installed", root=str(r), slot=str(slot),
-        marker=version, binstubs=tuple(str(s) for s in stubs), cleaned=cleaned,
-    )
 
 
 @dataclass(frozen=True)
@@ -1046,18 +1020,19 @@ def self_update(
         auth_env = update_auth.environment(repo, cwd=staging) if use_git else None
         environment = {"env": auth_env} if auth_env is not None else {}
         if use_git:
+            git = ["git", "-c", "core.longpaths=true"] if os.name == "nt" else ["git"]
             if (staging / ".git").is_dir():
-                subprocess.run(["git", "-C", str(staging), "fetch", "--depth", "1",
+                subprocess.run([*git, "-C", str(staging), "fetch", "--depth", "1",
                                 repo, ref], check=True, capture_output=True,
                                text=True, timeout=180, **environment)
-                subprocess.run(["git", "-C", str(staging), "checkout", "-q",
+                subprocess.run([*git, "-C", str(staging), "checkout", "-q",
                                 "FETCH_HEAD"], check=True, capture_output=True,
                                text=True, timeout=60, **environment)
             else:
                 # staging may hold a prior tarball payload (no .git); clear so the
                 # clone lands in an empty dir.
                 _clear_dir(staging)
-                subprocess.run(["git", "clone", "--depth", "1", "--branch", ref,
+                subprocess.run([*git, "clone", "--depth", "1", "--branch", ref,
                                 repo, str(staging)], check=True,
                                capture_output=True, text=True, timeout=300, cwd=staging, **environment)
         else:

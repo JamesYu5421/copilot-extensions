@@ -29,9 +29,9 @@ read-only and does not claim a complete health or authentication verdict;
 use `doctor` for deeper inspection.
 
 ```bash
-uv run python -m worktree_manager doctor        # report prerequisites + the core install
-uv run python -m worktree_manager setup         # plan provisioning + core install (dry-run)
-uv run python -m worktree_manager setup --apply # actually provision + drive the real installer
+worktree-manager doctor        # report prerequisites + the core install
+worktree-manager setup         # plan provisioning + core install (dry-run)
+worktree-manager setup --apply # actually provision + drive the real installer
 ```
 
 `doctor` is read-only; `setup` is **dry-run by default** and only changes the
@@ -319,32 +319,43 @@ install with `worktree-manager self-install` (dry-run) / `--apply`, and see it i
 project binstub discovers this Manager through the generic control-plane-provider
 registry rather than a literal `worktree-manager` PATH probe.
 
+Windows bootstrap and self-update enable Git long-path handling per command,
+without changing global Git configuration. A failed clone, fetch, checkout or
+tar extraction stops bootstrap before runtime construction; a partially fetched
+tree is never treated as a successful bootstrap.
+
 ### Slot completeness and recovery
 
-Each `versions/<version>/` slot is proven complete by its own
-`.install-complete` marker, written only as the **last** step of a fully
-successful copy + pointer materialization, and invalidated **before** any
-mutation of that slot begins (never left to the copy/removal step that
-follows, which can itself fail partway through on a locked file) -- the
-marker is what proves the build itself completed. A version is reported
-installed (`current-version` published) only when its slot carries that
-marker **and** its key entrypoint files (`pyproject.toml`,
-`src/worktree_manager/__init__.py`, `src/worktree_manager/__main__.py`) --
-a cheap, independent check against *later* damage to an otherwise-complete
-slot, not an exhaustive scan of every module `__main__.py` imports. This
-closes a real failure mode: a Windows `PermissionError` (WinError 32) from
-`shutil.rmtree`/`shutil.copytree` hitting a slot still held open by another
-process (a stranded or still-live mux-daemon pinned there) could otherwise
-leave an existing-but-empty slot on disk while `current-version` still
-correctly named it — every subsequent run then failed with `No module named
-worktree_manager`, indefinitely, since presence-only (`is_dir()`) checking
-treated that broken slot as valid forever.
+Each `versions/<version>/` slot contains its own `.venv`, with the Manager
+and materialized first-party libraries installed non-editably. Construction
+uses platform-local `uv pip install` through the canonical dependency policy:
+configured indexes, authentication, TLS and stronger cutoffs remain in force,
+with at least seven days of seasoning. Windows does not need to resolve
+Linux-only D-Bus packages merely to start the Manager.
+
+The installer constructs a sibling candidate, checks its actual installed
+module/version and CLI, then repeats health at the final runtime path before
+writing the `platform-runtime-v1` `.install-complete` marker. Failed construction
+or final-path health restores the prior slot without selecting the candidate.
+The existing cutover lease and live-slot protections remain in place.
+Source-only legacy completion markers are not runtime readiness; a no-op also
+requires actual installed health. Stale binstubs or provider metadata are
+repaired without rebuilding a healthy environment.
+
+Generated launchers resolve `current-version` and execute that slot's own
+interpreter. Ordinary calls perform no dependency solve and need no `uv` on
+PATH. Windows CMD, PowerShell and Git Bash launchers use the Windows environment
+interpreter; macOS/Linux launchers use the POSIX environment interpreter.
+First-touch bootstrap uses a temporary qualified runner to enter this
+same self-install contract before importing runtime-dependent CLI modules;
+it removes that runner before launching the installed environment. A healthy
+current installation skips runner construction.
 
 If you hit `No module named worktree_manager`, the `worktree-manager` binstub
 itself is unusable (it runs `python -m worktree_manager` straight out of the
 broken slot, so it fails identically) — **re-run the bootstrap one-liner
-above**, which fetches a fresh payload and runs its own `self-install --apply`
-from that valid copy, independent of the broken slot. Once a working install
+above**, which fetches a fresh payload, constructs a qualified temporary runner
+and runs `self-install --apply`, independent of the broken slot. Once a working install
 is restored, `worktree-manager self-install --apply` is the right command for
 any *other* incomplete-slot symptom (e.g. a stale provider-manifest or
 binstub) where the binstub itself still runs — it is version-gated and
@@ -704,15 +715,15 @@ Once set up, the Worktree Manager provides state views read from the harness's
 own files, plus explicit local integration commands:
 
 ```bash
-uv run python -m worktree_manager projects        # harness repos (binstubs + profiles)
-uv run python -m worktree_manager projects <name> # config dir, linked knowledge repo, profiles, enabled plugins
-uv run python -m worktree_manager repos           # every known repo + indicators
-uv run python -m worktree_manager repos <name>    # worktree mode · agent mode · pr model · ownership · remote
-uv run python -m worktree_manager worktrees       # live worktree counts per project (via the engine)
-uv run python -m worktree_manager worktrees <name> # one project's worktrees: state, sync tags, titles
-uv run python -m worktree_manager plugins --status  # known plugins vs. what is enabled user-global
-uv run python -m worktree_manager contracts --project <name> # contributed pivots/actions/cards/config
-uv run python -m worktree_manager refresh-profiles <name> # Windows: reconcile local profiles + shortcuts
+worktree-manager projects        # harness repos (binstubs + profiles)
+worktree-manager projects <name> # config dir, linked knowledge repo, profiles, enabled plugins
+worktree-manager repos           # every known repo + indicators
+worktree-manager repos <name>    # worktree mode · agent mode · pr model · ownership · remote
+worktree-manager worktrees       # live worktree counts per project (via the engine)
+worktree-manager worktrees <name> # one project's worktrees: state, sync tags, titles
+worktree-manager plugins --status  # known plugins vs. what is enabled user-global
+worktree-manager contracts --project <name> # contributed pivots/actions/cards/config
+worktree-manager refresh-profiles <name> # Windows: reconcile local profiles + shortcuts
 ```
 
 `refresh-profiles` is the narrow, JSON-producing local integration command.
@@ -801,9 +812,9 @@ as a wholesale copy of the still-shipping agent-worktrees implementation.
 The production validation and preview surfaces live with it:
 
 ```bash
-uv run python -m worktree_manager picker mock <project> --local
-uv run python -m worktree_manager picker screenshot <project> --format text
-uv run python -m worktree_manager picker screenshot <project> --format svg --out picker.svg
+worktree-manager picker mock <project> --local
+worktree-manager picker screenshot <project> --format text
+worktree-manager picker screenshot <project> --format svg --out picker.svg
 pwsh -File scripts/preview-picker.ps1 -Project <project> -Format svg -Out picker.svg
 cd scripts/picker-snapshot && python install.py
 uv run python render.py picker.png
@@ -837,11 +848,11 @@ at the end:
 
 ```bash
 # Fast, no dependencies -- read directly in a terminal or paste into a PR:
-uv run python -m worktree_manager picker screenshot --demo --format text
+worktree-manager picker screenshot --demo --format text
 
 # Shareable PNG (once, to install the Node dependency + cache the font):
 cd scripts/picker-snapshot && python install.py
-uv run python -m worktree_manager picker screenshot --demo --format svg --out /tmp/pivot.svg
+worktree-manager picker screenshot --demo --format svg --out /tmp/pivot.svg
 node svg2png.mjs /tmp/pivot.svg /tmp/pivot.png 3
 ```
 
@@ -904,10 +915,10 @@ plugin publishes. A discovered plugin with no catalog entry is kept with
 **inferred defaults**, so the installer never breaks on a newly-added plugin.
 
 ```bash
-uv run python -m worktree_manager plugins              # effective model (discovered + overlay)
-uv run python -m worktree_manager plugins agent-worktrees   # one plugin's prereqs/config/steps
-uv run python -m worktree_manager plugins --prereqs    # de-duplicated union of prerequisites
-uv run python -m worktree_manager plugins --reconcile  # coverage: uncovered / phantom / prereq drift
+worktree-manager plugins              # effective model (discovered + overlay)
+worktree-manager plugins agent-worktrees   # one plugin's prereqs/config/steps
+worktree-manager plugins --prereqs    # de-duplicated union of prerequisites
+worktree-manager plugins --reconcile  # coverage: uncovered / phantom / prereq drift
 ```
 
 This resolves **DQ2** in favor of an installer-side catalog **over dynamic
@@ -930,11 +941,14 @@ behaves exactly the same.
 ## Develop
 
 ```bash
-cd worktree-manager
-uv run python -m worktree_manager          # run the app
-uv run python -m worktree_manager --version
-uv run --extra dev pytest -q              # tests
+# From the repository root; preserves the canonical containment and time budgets.
+python tools/run-plugin-tests.py worktree-manager
 ```
+
+Use the installed command for ordinary CLI/Picker invocation. Source-checkout
+`uv run` commands use UV's universal project resolver, not the platform-local
+installed-runtime contract. See [TESTING.md](../TESTING.md) for focused selectors
+and native/clean-room qualification.
 
 Default pytest collection owns `tests/`, including `tests/production_picker/`,
 in both development and materialized release layouts. Releases embed complete
