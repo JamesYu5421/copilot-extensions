@@ -17,6 +17,8 @@ import pytest
 from tools.coverage_guided_selection import ancestor_resolution as ar
 from tools.coverage_guided_selection import decide as decisions
 from tools.coverage_guided_selection import execution
+from test_plugin_test_selection import runner as selection_runner
+from test_plugin_test_selection import selection_fixture  # noqa: F401
 
 
 def _git(root: Path, *arguments: str) -> str:
@@ -31,6 +33,13 @@ def history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, str,
     source = tmp_path / "plugins/fixture/src"
     source.mkdir(parents=True)
     (source / "app.py").write_text("value = 2\nother = 3\n", encoding="utf-8")
+    tests = tmp_path / "plugins/fixture/tests"
+    tests.mkdir()
+    (tests / "test_app.py").write_text(
+        "def test_implicated(): pass\n"
+        "def test_smoke(): pass\n",
+        encoding="utf-8",
+    )
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "add", ".")
     _git(tmp_path, "commit", "-qm", "fixture base")
@@ -93,7 +102,7 @@ def test_empty_diff_still_executes_the_measured_cross_cutting_floor(history):
 def test_changed_new_test_files_and_out_of_scope_changes_remain_visible(history):
     root, base, _ = history
     tests = root / "plugins/fixture/tests"
-    tests.mkdir()
+    tests.mkdir(exist_ok=True)
     (tests / "test_new.py").write_text("def test_added(): pass\n", encoding="utf-8")
     (tests / "conftest.py").write_text("# fixture dependency\n", encoding="utf-8")
     (root / "shared.py").write_text("dependency = True\n", encoding="utf-8")
@@ -105,6 +114,54 @@ def test_changed_new_test_files_and_out_of_scope_changes_remain_visible(history)
     assert {reason["file"] for reason in payload["selection_fallback_reasons"]} == {
         "plugins/fixture/tests/test_new.py", "plugins/fixture/tests/conftest.py", "shared.py",
     }
+
+
+def test_upstream_parameterization_executes_the_complete_current_selected_module(
+    history, request, monkeypatch, capfd,
+):
+    root, _, _ = history
+    _, manifest = request.getfixturevalue("selection_fixture")
+    plugin = root / "plugins/fixture"
+    test = plugin / "tests/test_app.py"
+    test.write_text(
+        "import pytest\n"
+        "@pytest.mark.parametrize('value', [1, 2, 3])\n"
+        "def test_smoke(value): assert value > 0\n"
+        "def test_implicated(): pass\n"
+        "def test_added_upstream(): pass\n",
+        encoding="utf-8",
+    )
+    _git(root, "add", "plugins/fixture/tests/test_app.py")
+    _git(root, "commit", "-qm", "upstream parameterization")
+    fork = _git(root, "rev-parse", "HEAD")
+    (root / "README.md").write_text("unrelated PR change\n", encoding="utf-8")
+    _git(root, "add", "README.md")
+    _git(root, "commit", "-qm", "candidate change")
+    payload = _plan(root, fork)
+    assert payload["fork_commit"] == fork
+    assert payload["selection"]["nodes"] == ["tests/test_app.py::test_smoke"]
+    assert payload["selection"]["files"] == ["tests/test_app.py"]
+    assert payload["changed_test_files"] == ["tests/test_app.py"]
+    monkeypatch.setattr(selection_runner, "_plugin_dir", lambda _name: plugin)
+    manifest.write_text(json.dumps(payload["selection"]), encoding="utf-8")
+    assert selection_runner.run_plugin(
+        "fixture", "unused", reinstall=False, kexpr=None,
+        limits=selection_runner.Limits(), plugin_timeout=60, test_timeout=10,
+        max_files_per_subsuite=25, selection_file=manifest,
+    ) == 0
+    assert "5 passed" in capfd.readouterr().out
+
+
+def test_upstream_changes_to_an_unselected_module_do_not_expand_execution(history):
+    root, _, _ = history
+    test = root / "plugins/fixture/tests/test_other.py"
+    test.write_text("def test_unselected(): pass\n", encoding="utf-8")
+    _git(root, "add", "plugins/fixture/tests/test_other.py")
+    _git(root, "commit", "-qm", "unselected upstream test")
+    fork = _git(root, "rev-parse", "HEAD")
+    payload = _plan(root, fork)
+    assert payload["selection"]["nodes"] == ["tests/test_app.py::test_smoke"]
+    assert payload["selection"]["files"] == []
 
 
 @pytest.mark.parametrize("change", ["insertion", "deletion", "new", "binary", "rename"])
@@ -196,6 +253,18 @@ def test_empty_curated_evidence_is_a_hard_error_not_only_guards(history):
     root, base, _ = history
     with pytest.raises(ValueError, match="empty selection"):
         _plan(root, base, smoke_budget_s=0.00001)
+
+
+def test_selected_execution_without_a_measured_commit_fails_closed(history, monkeypatch):
+    root, base, _ = history
+    decision = decisions.SelectionDecision(
+        mode="selected", selected_tests=("tests/test_app.py::test_smoke",),
+        reason="invalid fixture", baseline_generation=None, baseline_commit_on_main=None,
+        fallback_set={"selected_tests": ["tests/test_app.py::test_smoke"]},
+    )
+    monkeypatch.setattr(execution, "decide", lambda *_args, **_kwargs: decision)
+    with pytest.raises(ValueError, match="requires a measured baseline commit"):
+        _plan(root, base)
 
 
 @pytest.mark.parametrize("failure", ["budget", "invalid-timings"])

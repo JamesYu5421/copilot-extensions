@@ -2032,6 +2032,10 @@ floor, never the implicated tests or complete invocation. Current debt limits
 are 200 intervening commits and seven days. Curation uses compact line bitsets
 and lazy marginal-gain ranking, with the same greedy score/cost/node-ID ties
 and hard budget as the original algorithm.
+Selected test modules that changed since the earned baseline also run in full,
+including upstream-only edits absent from the PR diff. The decision retains
+every selected node and explicitly records those whole modules; it does not
+invent fresh coverage or expand unrelated modules.
 
 Diff attribution uses the merge-base's **old** changed line numbers, remapping
 the earned baseline to that fork point rather than invalidating it against the
@@ -2062,8 +2066,10 @@ manifest, for example:
 
 Use one named plugin and no other selection mode. Paths must identify existing,
 unlinked plugin-relative test files; node IDs must match collected items
-exactly, including parameter IDs. Missing/renamed nodes, empty files, malformed
-or empty evidence fail rather than silently deselecting everything. Selection
+exactly, including parameter IDs. A retired node is covered only when its existing,
+nonempty containing file is explicitly whole-selected. Missing/renamed nodes
+elsewhere, empty files, malformed or empty evidence fail rather than silently
+deselecting everything. Selection
 diagnostics report total counts and bounded samples; the manifest/decision
 artifact retains the complete requested selection. The
 portable validator rejects POSIX absolute paths, Windows drive/UNC paths and

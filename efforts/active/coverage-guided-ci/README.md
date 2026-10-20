@@ -745,6 +745,47 @@ _Pending review of this plan._
 
 ## Journal
 
+### 2026-10-19 - Carry changed selected modules forward from their earned baseline
+- Current e2446f48 required CI39337432691 reaches the strict Dispatch
+  consumer, then correctly refuses one uncollected exact node. The archived
+  fallback selects the old unparameterized supervisor test, whereas the
+  current upstream module defines three authority/route parameters. That
+  module changed after the earned fc61ab3a baseline but is absent from this
+  PR's own changed-test list. Preserve the strict consumer; do not admit
+  prefixes, discard the requested node or invent replacement coverage.
+- Planning now compares selected modules against the actual measured commit
+  as well as the PR diff, explicitly whole-selecting only existing selected
+  modules with proven baseline drift. Preserve every original node and the
+  ordinary changed-file union. Unrelated modules do not expand, and unknown
+  nodes outside explicit nonempty whole files still fail closed. The prior
+  strict-consumer owner confirms this producer seam is disjoint.
+- A real Git-history regression parameterizes an upstream test and adds
+  another case before the candidate fork, then executes all five current
+  cases through the actual contained consumer while retaining the old node
+  in the manifest. Missing measured-commit evidence is a hard error. The
+  complete producer/strict-consumer files pass77 cases with18 existing
+  platform/opt-in skips in52.52 seconds.
+- Replay the actual archived CI decision, not a recomputed coverage baseline:
+  retain all2159 nodes and expand the proven whole-file list from1 to22.
+  Admission succeeds and the Windows consumer executes through81% without
+  a reported case failure, then hits Dispatch's unchanged600-second group
+  limit, returning124 in605.55 seconds inclusive. This is a failed bounded
+  diagnostic, not CI qualification; Dispatch's existing600/1800 defaults and
+  the actual selected CI lane's540-second limits are distinct and unchanged.
+  Fresh complete required CI still must pass after publication.
+- The full unchanged eighth Worktrees group now passes721 cases with29
+  existing skips in136.31 pytest seconds,145.48 inclusive, using exactly
+  two workers and all25 original files. A separate alias-fixture allocation
+  experiment moves the same211-case file from70.52 to67.30 seconds inclusive;
+  reject its additional type coupling as insufficient material benefit and
+  restore the original fixture completely. No authority cache is introduced.
+- Verify the agreed CodeSpaces copy seam with its actual unchanged source
+  and materialized standalone-status consumers: both pass in31.30 pytest
+  seconds,34.64 inclusive under the original30-second item/45-second child
+  bounds, retaining all13 dependency libraries, helper bytes, source removal,
+  isolation and no-UV assertions. This does not certify the separate automatic
+  installer portfolio or the full Worktrees900-second aggregate.
+
 ### 2026-10-19 - Reconcile the private PR and complete the shared-copy seam
 - Provider readback confirms published e022c23e conflicts with the advancing
   integration branch; there is no CI run for that head to credit. Commit the
@@ -763,7 +804,7 @@ _Pending review of this plan._
   through the existing canonical shared copier. Preserve all bytes, existing
   exclusions, real native copy/error/reparse handling and publication checks.
   No mutex, fixture, guard, lifecycle, planner or selection hunk is absorbed.
-- Source/materialized CodeSpaces consumer verification is pending. Retain the
+- At that publication, source/materialized CodeSpaces verification is pending. Retain the
   agreed local quiet window for the other owner's complete automatic run;
   do not treat the timing agreement, the other three copy consumers' evidence,
   or a published candidate as native CodeSpaces qualification.
