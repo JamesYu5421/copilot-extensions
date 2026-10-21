@@ -133,7 +133,7 @@ def retire(branch):
         if _linux_confirm_group is not None:
             try:
                 _linux_confirm_group(branch.process)
-            except (OSError, RuntimeError) as error:
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 raise CleanupError(
                     "construction process group still has unconfirmed live members",
                     process=branch.process,
@@ -294,12 +294,13 @@ def main():
             try:
                 if sys.platform.startswith("linux"):
                     sys.path.insert(0, sys.argv[3])
-                    from agent_procutil._caller_owned import _confirm_group
+                    from agent_procutil._caller_owned import _confirm_group, _require_posix_support
 
+                    _require_posix_support()
                     _linux_confirm_group = _confirm_group
                 listener.bind(os.path.basename(sys.argv[2]))
                 listener.listen()
-            except (OSError, ImportError) as error:
+            except (OSError, ImportError, RuntimeError) as error:
                 send_frame(root, {"ready": False, "error": str(error)})
                 raise SystemExit(1) from error
             broker = Broker(listener, root, endpoint=sys.argv[2])

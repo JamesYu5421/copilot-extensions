@@ -73,7 +73,8 @@ def test_identity_confirmed_zombies_are_accepted_before_reaping_the_group_leader
     assert branch.reaped
 
 
-def test_live_group_refusal_retains_the_leader_without_signalling_it_again(monkeypatch):
+@pytest.mark.parametrize("failure", [TimeoutError, subprocess.SubprocessError])
+def test_live_group_refusal_retains_the_leader_without_signalling_it_again(monkeypatch, failure):
     events = []
     branch = broker.Branch(SimpleNamespace(
         pid=123, communicate=lambda **_: events.append("reaped"),
@@ -84,7 +85,7 @@ def test_live_group_refusal_retains_the_leader_without_signalling_it_again(monke
     )
 
     def refuse(_):
-        raise TimeoutError("identity-pinned member is still live")
+        raise failure("identity-pinned member is still live")
 
     monkeypatch.setattr(broker, "_linux_confirm_group", refuse)
     for _ in range(2):
