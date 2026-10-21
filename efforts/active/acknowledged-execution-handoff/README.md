@@ -88,6 +88,10 @@ grants.
 - [x] Obtain explicit implementation scope and assign an implementation owner.
 - [ ] Extend the existing coordinator/supervisor admission and drain accounting,
       including complete existing-assignment enumeration and legacy refusal.
+      The internal queue construction slice persists closure and inventories
+      tasks, reservations and wakes under existing transactions; authenticated
+      coordinator resolution, runtime enrollment and final launch gates remain
+      open. An empty inventory is never an acknowledgement.
 - [ ] Define the adopter effect-fence adapter and implement generation-bound
       mutation admission without conflating effect authority with task ownership.
       The first source slice defines and validates the optional
@@ -136,6 +140,42 @@ do not treat a validated adapter response as complete task admission or live
 handoff support.
 
 ## Journal
+
+### 2026-10-20 - Durable queue-closure construction
+- Added a same-queue, operation-bound admission closure and transaction-consistent
+  inventory without replacing task, allocation, attachment or producer history.
+- Queue claims, starts/resumes, new reservations and wake-delivery claims honor
+  explicit closure. New natural work may still be recorded; unrelated sources
+  continue normally.
+- Review follow-through covers create-and-claim, steering-triggered resumes
+  and detached-waiter wake claims as well. The consistent inventory retains
+  both wake outboxes, including pending and already leased detached deliveries;
+  exact accepted creation/steering replays remain intact.
+- Evaluator rejection cannot restore submitted-task ownership after closure;
+  an exact rejection accepted before closure remains replayable without another
+  mutation or wake.
+- Cleanup-only detached-waiter claim releases remain deliverable after closure,
+  including terminal completion. A regression verifies claim release without
+  owner resumption while a genuine wake in the same scope stays blocked.
+- Admission closure preserves already-successful start and non-adopting resume
+  retries without relaxing owner, generation or session fences. New starts,
+  resumes and adoption remain blocked; regression coverage exercises response
+  loss followed by closure before replay.
+- No HTTP/CLI control, acknowledgement, destination activation or handback is
+  exposed. Runtime enrollment, already admitted launches/deliveries, legacy
+  qualification and adopter effects remain explicit barriers. Continue those
+  existing Phase 2 obligations rather than claiming a live handoff.
+
+### 2026-10-20 - Effect-adapter construction merged; admission integration next
+- #7516 merged to `dev` as `3e785cc2851f78424825f1914ec08fac12a5d0b2`
+  after current-head Copilot approval and the required PR checks.
+- The scoped effect-response boundary and its focused tests are source-merged,
+  pending release and separately authorized rollout. No coordinator admission
+  or adopter mutation is wired by this slice.
+- Continue Phase 2 with durable coordinator admission/drain accounting and
+  complete existing-assignment enumeration; retain legacy refusal, the adopter
+  effect barrier and the same task/workspace/history authorities. The effort
+  and #7268 remain open.
 
 ### 2026-10-20 - Source/test scope accepted; adapter construction started
 - The existing proposal owner accepted implementation ownership under #7268.
