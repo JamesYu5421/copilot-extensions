@@ -637,6 +637,22 @@ _package_cutoffs = partial(_configuration.package_cutoffs, balanced=_balanced, e
 _resolver_configuration = partial(
     _configuration.resolver_configuration, balanced=_balanced, error_type=DependencyPolicyError,
 )
+_mirror = _configuration
+
+
+def _mirror_arguments(projection, arguments, projects, files, destination, cutoffs, now, environment):
+    if environment.get("UV_OFFLINE", "").lower() in ("1", "true"):
+        return []
+    requirements = [value for option, value in _argument_pairs(arguments) if not option]
+    for project in projects:
+        requirements.extend(_toml(project / "pyproject.toml").get("project", {}).get("dependencies", []))
+    for path in files:
+        text = re.sub(r"\\\r?\n", " ", Path(_native_retained_path(path)).read_text(encoding="utf-8"))
+        requirements.extend(re.sub(r"\s+(?:--hash=|#).*", "", line) for line in text.splitlines())
+    return _mirror.mirror_index_arguments(
+        projection, requirements, cutoffs, destination, balanced=_balanced,
+        error_type=DependencyPolicyError, now=now,
+    )
 
 
 def _config_inputs(arguments, environment, base):
@@ -934,6 +950,10 @@ def retain_uv_install(
             raise DependencyPolicyError("retained UV configuration differs from the configured resolver")
         if editables:
             admitted.extend(["--config-setting", "editable_mode=compat"])
+        admitted.extend(_mirror_arguments(
+            retained_projection[0], admitted, retained_roots, tuple(mirror(path) for path in files),
+            root / "mirror-index", admitted, now, retained_environment,
+        ))
         yield RetainedUVInstall(
             (uv, "pip", "install", *admitted), retained_environment, retained_base,
             {path: mirror(path) for path in projects}, source_hashes,
@@ -959,9 +979,49 @@ def run_uv_install(
         )
 
 
+def run_uv_project(
+    uv: str, project: Path, arguments: list[str], *, env=None, cwd=None, now=None, **run_options,
+) -> subprocess.CompletedProcess:
+    """Keep UV project resolution, correcting only proven mirror-cache dates."""
+    now = datetime.now(timezone.utc) if now is None else now
+    environment = _captured_environment(env)
+    project = Path(project).resolve()
+    result = subprocess.run(
+        [uv, "run", "--project", str(project), "--show-settings", "python", "-c", "pass"],
+        env=environment, cwd=cwd, capture_output=True, text=True,
+        timeout=SETTINGS_TIMEOUT_SECONDS, creationflags=_HEADLESS,
+    )
+    if result.returncode:
+        raise DependencyPolicyError("UV project resolver settings could not be read")
+    matches = list(re.finditer(r"\bresolver: ResolverSettings \{", result.stdout))
+    if len(matches) != 1 or len(re.findall(r"(?m)^RunSettings \{", result.stdout)) != 1:
+        raise DependencyPolicyError("UV project resolver settings are unsupported")
+    body, _ = _balanced(result.stdout, result.stdout.index("{", matches[0].start()), "{", "}")
+    projection = "PipInstallSettings {\n settings: PipSettings {" + body + "}\n}"
+    cutoffs = cutoff_arguments(projection, now=now)
+    # Project runs retain UV's ordinary sync behavior, rather than forcing a
+    # reinstall on every launch as an installer transaction does.
+    cutoffs.remove("--reinstall")
+    requirements = _toml(project / "pyproject.toml").get("project", {}).get("dependencies", [])
+    with _temporary_inputs(None) as temporary:
+        root = _private_retained_root(Path(temporary)).resolve()
+        indexes = [] if environment.get("UV_OFFLINE", "").lower() in ("1", "true") else (
+            _mirror.mirror_index_arguments(
+                projection, requirements, cutoffs, root / "mirror-index",
+                balanced=_balanced, error_type=DependencyPolicyError, now=now,
+            )
+        )
+        run_options.setdefault("creationflags", _HEADLESS)
+        return subprocess.run(
+            [uv, "run", "--quiet", "--project", str(project), *cutoffs, *indexes, "--", *arguments],
+            env=environment, cwd=cwd, **run_options,
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--uv", required=True)
+    parser.add_argument("--run-project", type=Path)
     sources = parser.add_mutually_exclusive_group()
     sources.add_argument("--trusted-source-root", action="append", type=Path, default=[])
     sources.add_argument(
@@ -971,6 +1031,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     arguments = args.arguments[1:] if args.arguments[:1] == ["--"] else args.arguments
     try:
+        if args.run_project is not None:
+            return run_uv_project(
+                args.uv, args.run_project, arguments, stdout=sys.stdout, stderr=sys.stderr,
+            ).returncode
         roots = () if args.registry_only else (tuple(args.trusted_source_root) or _anchor_roots())
         return run_uv_install(
             args.uv, arguments, trusted_source_roots=roots,

@@ -176,7 +176,7 @@ if command -v uv >/dev/null 2>&1 \
         # session already superseded this one for the same
         # (project, worktree_id) -- an old pane's delayed teardown must
         # never tombstone a newer, still-live session's mapping.
-        ( uv run --quiet --project "$WM_ROOT" -m worktree_manager mux-daemon remove \
+        ( uv run --quiet --no-project --no-config --no-env-file python -I "$WM_ROOT/run.py" python -m worktree_manager mux-daemon remove \
             --project="$AW_PROJECT" \
             --worktree-id="$AW_WT" \
             ${AW_MUX_SESSION:+--mux-session="$AW_MUX_SESSION"} \

@@ -136,7 +136,7 @@ function Set-AwPsmuxServerPriority {
 # (mux-bind-relay effort, Step 1).
 function Get-AwMuxCompanionKeybindFragment {
     param([Parameter(Mandatory)][string]$ManagerRoot)
-    $popupCmd = "uv run --quiet --project \`"$ManagerRoot\`" -m worktree_manager companion"
+    $popupCmd = "uv run --quiet --no-project --no-config --no-env-file python -I \`"$ManagerRoot\run.py\`" python -m worktree_manager companion"
     "bind-key -T root C-k display-popup -E -w 80% -h 80% `"$popupCmd`""
 }
 

@@ -112,9 +112,9 @@ Push-Location (Join-Path $PayloadParent 'worktree-manager')
 try {
     # Version-install the fetched payload (idempotent, version-gated): publishes
     # the versions/<ver> slot + current-version marker + ~/.local/bin binstub.
-    uv run --quiet python -m worktree_manager self-install --apply
+    uv run --quiet --no-project --no-config --no-env-file python -I .\run.py python -m worktree_manager self-install --apply
     # Then run whatever the caller asked for through the freshly-installed app.
-    uv run --quiet python -m worktree_manager @args
+    uv run --quiet --no-project --no-config --no-env-file python -I .\run.py python -m worktree_manager @args
 } finally {
     Pop-Location
 }

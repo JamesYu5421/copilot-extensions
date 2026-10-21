@@ -52,6 +52,11 @@ def _write_payload(root: Path, version: str) -> None:
         f"[project]\nname='copilot-extensions-worktree-manager'\nversion='{version}'\n",
         "utf-8",
     )
+    for relative in si._SLOT_KEY_FILES:
+        path = root / "worktree-manager" / relative
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("", encoding="utf-8")
     references = root / "worktree-manager" / "references"
     references.mkdir()
     shutil.copyfile(

@@ -178,6 +178,9 @@ def version_slot(version: str, root: Path | None = None) -> Path:
 _SLOT_COMPLETE_MARKER = ".install-complete"
 _SLOT_KEY_FILES = (
     "pyproject.toml",
+    "run.py",
+    "scripts/installer_dependency_policy.py",
+    "scripts/installer_dependency_config.py",
     "src/worktree_manager/__init__.py",
     "src/worktree_manager/__main__.py",
 )
@@ -191,9 +194,8 @@ def _slot_is_complete(slot: Path) -> bool:
     """``True`` only when ``slot`` is proven complete by its own marker --
     published solely as the last step of a fully successful payload copy
     and pointer materialization -- AND still carries the key files the
-    shipped binstubs need to launch (``uv run --project <slot> python -m
-    worktree_manager``: ``pyproject.toml``, ``src/worktree_manager/
-    __init__.py``, and ``src/worktree_manager/__main__.py``).
+    shipped binstubs need to launch, including the pre-resolution runner and
+    its shared seasoning helpers, the project manifest, and the module target.
 
     The marker alone proves the install completed; it does not prove the
     slot hasn't been damaged since (a file removed by something outside
@@ -471,7 +473,8 @@ def _sh_binstub() -> str:
         'set -euo pipefail\n'
         'root="${WORKTREE_MANAGER_ROOT:-$HOME/.worktree-manager}"\n'
         'ver="$(cat "$root/current-version")"\n'
-        'exec uv run --quiet --project "$root/versions/$ver" python -m worktree_manager "$@"\n'
+        'exec uv run --quiet --no-project --no-config --no-env-file python -I '
+        '"$root/versions/$ver/run.py" python -m worktree_manager "$@"\n'
     )
 
 
@@ -482,7 +485,8 @@ def _cmd_binstub() -> str:
         'set "PYTHONUTF8=1"\r\n'
         'if "%WORKTREE_MANAGER_ROOT%"=="" set "WORKTREE_MANAGER_ROOT=%USERPROFILE%\\.worktree-manager"\r\n'
         'set /p VER=<"%WORKTREE_MANAGER_ROOT%\\current-version"\r\n'
-        'uv run --quiet --project "%WORKTREE_MANAGER_ROOT%\\versions\\%VER%" '
+        'uv run --quiet --no-project --no-config --no-env-file python -I '
+        '"%WORKTREE_MANAGER_ROOT%\\versions\\%VER%\\run.py" '
         "python -m worktree_manager %*\r\n"
     )
 
@@ -495,7 +499,8 @@ def _ps1_binstub() -> str:
         'else { Join-Path $env:USERPROFILE ".worktree-manager" }\n'
         '$ver = (Get-Content (Join-Path $root "current-version") -Raw).Trim()\n'
         '$slot = Join-Path (Join-Path $root "versions") $ver\n'
-        "uv run --quiet --project $slot python -m worktree_manager @args\n"
+        "uv run --quiet --no-project --no-config --no-env-file python -I "
+        '(Join-Path $slot "run.py") python -m worktree_manager @args\n'
     )
 
 

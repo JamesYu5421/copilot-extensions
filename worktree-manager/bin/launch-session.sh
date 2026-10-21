@@ -1336,7 +1336,7 @@ print(str(leg.get('state', '')) if isinstance(leg, dict) and leg.get('provider')
             # resolve overhead -- never block create/join on it. Mirrors the
             # existing background-subshell dispatch already used above for
             # activity-log.
-            ( uv run --quiet --project "$wm_root" -m worktree_manager mux-daemon register \
+            ( uv run --quiet --no-project --no-config --no-env-file python -I "$wm_root/run.py" python -m worktree_manager mux-daemon register \
                 --project="$LAUNCH_PROJECT" \
                 --worktree-id="$WORKTREE_ID" \
                 --worktree-path="$spath" \

@@ -28,6 +28,16 @@ is not repeatedly presented as a first-time Phase 2 install. The summary is
 read-only and does not claim a complete health or authentication verdict;
 use `doctor` for deeper inspection.
 
+The bootstrap and installed `worktree-manager` binstubs preserve UV project
+resolution while applying the shared dependency-age policy before it runs.
+For a governed mirror that reports cache time as upload time, an exact pin can
+use canonically old, SHA-256-verified bytes downloaded from that same feed;
+the seven-day floor and stricter cutoffs remain intact. See
+[dependency seasoning](../docs/install-contract.md#external-dependency-seasoning).
+To use this same path from a source checkout, run
+`uv run --quiet --no-project --no-config --no-env-file python -I ./run.py python -m worktree_manager <args>`.
+An ordinary direct `uv run` invocation does not enter this pre-resolution path.
+
 ```bash
 uv run python -m worktree_manager doctor        # report prerequisites + the core install
 uv run python -m worktree_manager setup         # plan provisioning + core install (dry-run)

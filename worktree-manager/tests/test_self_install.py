@@ -37,6 +37,11 @@ def _fake_payload(tmp: Path, version: str) -> Path:
     (pkg / "__init__.py").write_text(f'__version__ = "{version}"\n')
     (pkg / "__main__.py").write_text("")
     (pd / "pyproject.toml").write_text("[project]\nname='x'\n")
+    for relative in si._SLOT_KEY_FILES:
+        path = pd / relative
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("")
     return pd
 
 
@@ -429,7 +434,11 @@ def test_needs_install_rejects_an_empty_broken_slot(tmp_path, monkeypatch):
     assert needs_install("1.2.3", root) is False
 
 
-def test_needs_install_rejects_a_slot_missing_the_module_launch_target(tmp_path, monkeypatch):
+@pytest.mark.parametrize("missing", [
+    "src/worktree_manager/__main__.py", "run.py",
+    "scripts/installer_dependency_policy.py", "scripts/installer_dependency_config.py",
+])
+def test_needs_install_rejects_a_slot_missing_the_module_launch_target(tmp_path, monkeypatch, missing):
     """A slot can retain ``src/worktree_manager/__init__.py`` while still
     missing another file the shipped binstubs need to launch (``uv run
     --project <slot> python -m worktree_manager``, which also requires
@@ -445,7 +454,7 @@ def test_needs_install_rejects_a_slot_missing_the_module_launch_target(tmp_path,
     assert needs_install("1.2.3", root) is False
 
     slot = version_slot("1.2.3", root)
-    (slot / "src" / "worktree_manager" / "__main__.py").unlink()
+    (slot / missing).unlink()
     assert (slot / "src" / "worktree_manager" / "__init__.py").is_file()
 
     assert needs_install("1.2.3", root) is True, (

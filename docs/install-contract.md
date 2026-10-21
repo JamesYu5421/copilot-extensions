@@ -2708,6 +2708,35 @@ execution clocks advance.
 trusting a previously installed, potentially newer package. Skipping dependency
 or isolated-build resolution is not an age-enforcement fallback.
 
+For exact registry pins on a single, non-explicit mirror, the policy can
+correct a recent mirror cache timestamp using canonical PyPI release metadata.
+The exact filename and SHA-256 must match, and the canonical artifact must be
+older than the enforced cutoff, including any stricter package cutoff.
+Unknown/future dates, young or yanked files, and hash mismatches do not qualify.
+Other versions and later files in the same release retain their original
+metadata and remain subject to UV's unchanged cutoff.
+
+Only metadata is read from PyPI. Qualifying artifacts are downloaded from the
+configured feed into the existing private transaction directory and SHA-256
+verified before a temporary Simple page exposes those copies to UV. This
+explicit verification is necessary because UV does not enforce Simple-link
+hash fragments by default. Artifact redirects to public PyPI download hosts
+are refused. Metadata reads are bounded to sixteen MiB, artifact reads to
+512 MiB, with thirty-second network timeouts; unavailable or malformed evidence
+fails explicitly. Offline operations and unsupported index arrangements
+(multiple/explicit indexes or credential/query-bearing index URLs) retain
+native UV behavior without correction. There is no package-wide age exception
+or public artifact-download fallback.
+
+Worktree Manager's bootstrap and installed binstubs enter `run.py` using a
+dependency-free UV invocation before resolving the Manager project itself.
+The shared `run_uv_project` path probes native project resolver settings,
+applies the same mirror evidence and cutoff policy, and still uses ordinary
+`uv run` project synchronization and universal marker resolution. It does not
+force a reinstall on each launch, construct a separately qualified runtime, or
+freeze a new dependency lock. Temporary evidence is regenerated for subsequent
+runs and removed after the child exits.
+
 `run_uv_install` owns admission and execution as one lifetime. UV consumes
 private retained source metadata, recursive requirements and configuration,
 with an explicitly captured environment, rather than reopening the caller's

@@ -143,6 +143,11 @@ def main() -> int:
         pairs.append((config_bytes, plugin / "scripts" / DEPENDENCY_CONFIG.name))
         pairs.extend((data, plugin / "scripts" / name) for name, data in component_bytes.items())
 
+    manager = REPO / "worktree-manager"
+    if manager.is_dir():
+        for source in (DEPENDENCY_POLICY, DEPENDENCY_CONFIG):
+            pairs.append((source.read_bytes(), manager / "scripts" / source.name))
+
     resolver_plugins = _resolver_plugins()
     resolver_bytes: dict[str, bytes] = {}
     for name in RESOLVER_NAMES:
