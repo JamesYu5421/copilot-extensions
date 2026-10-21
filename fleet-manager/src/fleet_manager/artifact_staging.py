@@ -238,6 +238,25 @@ class StagedArtifacts:
         with self._operation_lock:
             return self._reverify(policy, clock=clock)
 
+    def read_artifacts(
+        self, policy: object, *, clock: Callable[[], int] = _clock,
+    ) -> dict[str, bytes]:
+        """Consume the selected snapshots with constant-count closure verification."""
+        with self._operation_lock:
+            evidence = self._reverify(policy, clock=clock)
+            expected = {item["component"]: item for item in evidence["components"]}
+            snapshots = {}
+            for name, path in self._artifacts:
+                content = _bytes(path, MAX_ARTIFACT_BYTES)
+                if (
+                    len(content) != expected[name]["bytes"]
+                    or hashlib.sha256(content).hexdigest() != expected[name]["artifact_sha256"]
+                ):
+                    raise PlanError("artifact snapshot digest mismatch")
+                snapshots[name] = content
+            self._reverify(policy, clock=clock)
+            return snapshots
+
     def _close(self) -> None:
         with self._operation_lock:
             self._closed.set()
@@ -264,7 +283,7 @@ class StagedArtifacts:
         result = {
             "schema": "fleet-manager.staged-artifacts", "version": 1,
             "status": "retained-byte-stage", "evidence": "current-owned-stage-reverification",
-            "release": authenticated["release"], "release_digest": self.release_digest,
+            "release": authenticated["release"], "release_digest": authenticated["release_digest"],
             "authority": self.authority, "installation": self.installation, "role": self.role,
             "sequence": authenticated["sequence"], "verified_at": authenticated["verified_at"],
             "valid_until": authenticated["valid_until"],
