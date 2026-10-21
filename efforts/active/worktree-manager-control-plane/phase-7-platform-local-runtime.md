@@ -4,7 +4,8 @@
 - **Status:** Active; original proposal reviewed and merged in #7339;
   operator-approved runtime-isolation revision pending review in #7420.
 - **Coordination:** [#7305](https://github.com/ThomasMichon/copilot-extensions/issues/7305)
-- **Participant / PR owner:** Platform runtime implementer (`spry-workbench`).
+- **Participant / PR owner:** Platform runtime implementer; active stewardship
+  `gleaming-chisel`, original preserved source custody `spry-workbench`.
 
 ## Request and guiding intent
 
@@ -165,13 +166,43 @@ implementation; public-file absence is not proof of unpublished custody.
       Terminal profile JSON, the update's final exit status, and preservation of
       the original live CLI. No GUI/mux activation or remote-machine mutation
       is needed merely to qualify this bounded headless runtime contract.
-- [ ] Native Linux nested-construction custody: execute the preserved timeout,
+- [x] Native Linux nested-construction custody: execute the preserved timeout,
       interruption and escaped-session negative-control cases in an approved
       Linux lane. The Windows state-machine contracts do not qualify this
       native POSIX behavior. Keep this gate owned by the platform runtime slice
       under #7305 until it is executed or explicitly transferred.
 
 ## Journal
+
+- **2026-10-21** - The operator authorized active stewardship of the same
+  implementation PR #7420. The original driver paused and retained its checkout
+  and claims; its installed handoff command explicitly refuses cross-machine
+  acceptance, so no claim transfer or force-release is asserted. Preserved and
+  reconciled both uncommitted source snapshots in managed `gleaming-chisel`,
+  including the final broker/client tests and ignored-`SIGCHLD` correction.
+  No competing PR or production runtime change was created.
+  The finite POSIX broker now registers nested groups before execution and
+  acknowledges only after synchronous subtree retirement. Unconfirmed cleanup
+  retains candidate/bootstrap/retired paths. Added or completed refusal,
+  failed-grant, cancellation/registration-race, descriptor/frame and retention
+  coverage, plus portable outer cancellation and escaped-session witnesses.
+  Nine exact-source stdlib cases passed in a pinned, read-only,
+  network-disconnected Linux namespace with CPU/memory/PID bounds: inner
+  timeout/interruption/capture/success, ignored `SIGCHLD`, outer
+  timeout/interruption/foreign-home and the expected failing escape control.
+  Each test namespace was removed and its claim settled.
+  This is native Linux custody proof, not a complete Linux pytest suite,
+  native macOS qualification, a fresh installed runtime or deployed recovery.
+  The direct-registry dependency-preparation path was not used; configured
+  feeds and seasoning remain unchanged. Broader Windows caller validation
+  exposed a timeout fixture that could expire before its descendant started;
+  its startup allowance is now inside the unchanged item watchdog, with the
+  original teardown assertion preserved and an explicit missing-witness
+  diagnostic. The final eight-file bounded Manager selection passes **269
+  tests**, with 15 explicit platform/opt-in skips. Touched-Python lint,
+  install-contract, effort structure, documentation consistency, module-size
+  and headless-launch checks pass. Review, merge, promotion and the
+  published-consumer gate remain open.
 
 - **2026-10-20** - Addressed the subsequent review's malformed-completion
   recovery case: invalid UTF-8 now classifies the slot as incomplete instead of

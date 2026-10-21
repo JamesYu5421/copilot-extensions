@@ -58,44 +58,32 @@ def test_cancel_closes_job_or_owned_group(monkeypatch, failure, windows):
 
 
 @pytest.mark.parametrize("failure", [None, subprocess.TimeoutExpired("nested", 1), KeyboardInterrupt()])
-def test_nested_posix_commands_keep_the_outer_group_owner(monkeypatch, failure):
+def test_nested_posix_commands_register_with_the_outer_broker(monkeypatch, failure):
     events = []
-    process = SimpleNamespace(returncode=0 if failure is None else None)
-    process.poll = lambda: process.returncode
-    process.kill = lambda: events.append("kill")
-
-    def communicate(timeout):
-        events.append(("communicate", timeout))
-        if timeout == 1 and failure is not None:
+    def registered(argv, **kwargs):
+        events.append(kwargs)
+        if failure is not None:
             raise failure
-        process.returncode = 0
-        return "output", "errors"
-
-    process.communicate = communicate
-
-    def spawn(argv, **kwargs):
-        events.append(("spawn", kwargs))
-        return process, None
+        return subprocess.CompletedProcess(argv, 0, "output", "errors")
 
     monkeypatch.setattr(ep, "_WINDOWS", False)
     monkeypatch.setattr(ep, "contained_test_mode", lambda: False)
     monkeypatch.setenv(ep.OWNED_GROUP_ENV, "1")
     monkeypatch.setattr(ep, "detached_kwargs", lambda: pytest.fail("nested command detached"))
+    monkeypatch.setattr(ep.engine_posix_process, "run", registered)
     monkeypatch.setattr(
-        ep.engine_posix_process, "run", lambda *_a, **_k: pytest.fail("nested group owner created"),
+        ep, "spawn_sync_in_kill_on_close_job",
+        lambda *_a, **_k: pytest.fail("unregistered nested process"),
     )
-    monkeypatch.setattr(ep, "spawn_sync_in_kill_on_close_job", spawn)
     if failure is None:
         result = ep.run(["nested"], timeout=1, env={}, stdout=subprocess.PIPE)
         assert result.stdout == "output"
     else:
         with pytest.raises(type(failure)):
             ep.run(["nested"], timeout=1, env={}, stdout=subprocess.PIPE)
-        assert events[-2:] == ["kill", ("communicate", 5)]
-    options = events[0][1]
-    assert "start_new_session" not in options
+    options = events[0]
+    assert options["inherited"] is True
     assert options["env"][ep.OWNED_GROUP_ENV] == "1"
-    assert options["allow_breakaway"] is False
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows descendant Job integration")

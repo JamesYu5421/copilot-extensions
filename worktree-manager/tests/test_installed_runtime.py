@@ -175,8 +175,10 @@ def test_runtime_command_timeout_retires_its_native_descendants(tmp_path):
         "creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0));"
         "pathlib.Path(sys.argv[1]).write_text(str(child.pid));time.sleep(30)"
     )
-    with pytest.raises(RuntimeError, match="runtime command failed"):
-        runtime._run([sys.executable, "-c", code, str(pid_file)], cwd=tmp_path, timeout=2)
+    # Cover teardown after native interpreter startup, not a cold-start speed budget.
+    with pytest.raises(RuntimeError, match="runtime command failed") as failure:
+        runtime._run([sys.executable, "-c", code, str(pid_file)], cwd=tmp_path, timeout=10)
+    assert pid_file.is_file(), f"Descendant never started: {failure.value}"
     pid = int(pid_file.read_text())
     from mux_windows_observer import processes
     assert pid not in processes()

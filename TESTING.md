@@ -1601,11 +1601,28 @@ the already-prepared Worktrees test interpreter and select
 `test_native_engine_probe_preserves_the_installed_environment` through the
 standalone contained runner. `MANAGER_RUNTIME_WINDOWS_E2E=1` also observes its
 two no-UV probe cycles for visible windows and focus changes.
-The nested-constructor bootstrap cases require native Linux pidfds. Their
-escaped-session negative control deliberately exercises refused cleanup, pins
-the exact constructor identity and retires it before returning. Windows skips
-those cases explicitly; its group state-machine checks are not POSIX execution
-evidence.
+The POSIX nested-constructor cases execute the same stdlib-only
+`worktree-manager/tests/fixtures/nested_custody.py` witness for inner timeout,
+interruption, capture failure and success; ignored `SIGCHLD`; outer timeout,
+interruption and foreign Python home; and an escaped-session negative control.
+Private Unix streams witness exit before destructive cleanup; Linux also checks
+identity-pinned pidfds when available. The negative control must detect the live
+escape and retain the bootstrap runner, then retire its own worker through its
+private control stream. It does not claim arbitrary unregistered sessions are
+owned. Windows skips native POSIX cases explicitly; state-machine tests are not
+POSIX execution evidence. The Windows native timeout fixture allows interpreter
+startup within the unchanged item watchdog; it tests descendant retirement,
+not a two-second cold-start performance target.
+
+```text
+python tools/run-plugin-tests.py worktree-manager --test-file tests/test_engine_posix_process.py --test-file tests/test_engine_process.py --test-file tests/test_bootstrap_runtime.py
+```
+
+Run native cases in an owned isolated POSIX test namespace. Where pytest is not
+already available, the same fixture can be invoked directly with a source root,
+a new private test workspace and one of the outcomes above; no package download
+or feed exception is needed for that stdlib consumer proof. Record it separately
+from a complete native pytest suite, installer qualification or published rollout.
 
 There is no host-wide test singleton. Each target takes a lease keyed by its
 **concrete environment directory's filesystem identity** (`st_dev`, `st_ino`),

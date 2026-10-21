@@ -91,7 +91,7 @@ item in this umbrella.
 |-------------|---------------------|-------------|
 | Solo operator (private control repo) | Drives every phase end-to-end: claims the next unclaimed Plan item in the Journal, dispatches implementation, lands each slice's PR, and journals the outcome. | `copilot-extensions` worktrees created from a private control repo; no standing feature branch between slices. |
 | Restart recovery implementer | Owns the reviewed machine-restart recovery slice under #4564, with milestone reports and separate implementation PRs. | Dedicated native CLI/mux session, launched and messaged through agent-bridge; public source handle `steady-resistor`. |
-| Platform runtime implementer | Owns only the Phase 7 platform-local runtime slice coordinated under #7305; preserves initializer/profile-diagnostic and restart-recovery ownership. | Managed source worktree; public source handle `spry-workbench`; coordination through #7305 and the linked slice plan. |
+| Platform runtime implementer | Owns only the Phase 7 platform-local runtime slice coordinated under #7305; preserves initializer/profile-diagnostic and restart-recovery ownership. | Active PR stewardship in managed source `gleaming-chisel`; original source `spry-workbench` retains preserved checkout custody; coordination through #7305 and the linked slice plan. |
 
 ## Context
 

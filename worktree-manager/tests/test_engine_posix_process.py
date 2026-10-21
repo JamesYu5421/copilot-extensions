@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import json
 import os
 import subprocess
@@ -14,51 +13,300 @@ from pathlib import Path
 import pytest
 
 from worktree_manager import engine_posix_process as pp
+from worktree_manager import engine_posix_broker as broker
 
 
-@pytest.mark.parametrize("outcome", ["success", "timeout", "interrupt", "invalid", "closed", "launch-failed"])
-def test_group_owner_is_not_reaped_before_descendant_sweep(monkeypatch, outcome):
+@pytest.mark.parametrize("gone", [False, True])
+def test_group_owner_is_not_reaped_before_descendant_sweep(monkeypatch, gone):
     events = []
     owner = SimpleNamespace(
         pid=123,
-        stdout=io.StringIO(
-            '{"error":"engine executable missing"}\n' if outcome == "launch-failed" else
-            '{"returncode":0}\n' if outcome not in ("invalid", "closed")
-            else '{"returncode":true}\n' if outcome == "invalid" else ""
-        ),
         poll=lambda: pytest.fail("reaped the group owner before cleanup"),
     )
     owner.communicate = lambda **kwargs: events.append(("reap", kwargs["timeout"]))
 
+    def signal_group(pid, sig):
+        events.append(("signal", pid, sig))
+        if sig == 0 or gone:
+            raise ProcessLookupError
+
+    monkeypatch.setattr(broker.signal, "SIGKILL", 9, raising=False)
+    monkeypatch.setattr(broker.os, "killpg", signal_group, raising=False)
+    branch = broker.Branch(owner, None, None, 0)
+    broker.retire(branch)
+    assert events == [("signal", 123, 9), ("reap", 5), ("signal", 123, 0)]
+    assert branch.reaped
+
+
+def test_reaped_group_is_only_observed_never_signalled_again(monkeypatch):
+    events = []
+    branch = broker.Branch(SimpleNamespace(pid=123), None, None, 0, reaped=True)
+    monkeypatch.setattr(broker.time, "monotonic", iter([0, 6]).__next__)
+    monkeypatch.setattr(
+        broker.os, "killpg", lambda pid, sig: events.append((pid, sig)), raising=False,
+    )
+    with pytest.raises(broker.CleanupError, match="has not disappeared"):
+        broker.retire(branch)
+    assert events == [(123, 0)]
+
+
+def test_branch_is_registered_before_command_permission(monkeypatch):
+    events = []
+    state = broker.Broker(SimpleNamespace(getsockname=lambda: "private-socket"), None)
+    process = SimpleNamespace(
+        stdin=SimpleNamespace(
+            write=lambda data: events.append((data, len(state.branches))),
+            flush=lambda: None,
+        ),
+    )
     def spawn(argv, **kwargs):
-        assert argv[:6] == [sys.executable, "-I", "-B", "-X", "utf8", "-c"]
-        events.append(("spawn", kwargs))
-        os.write(int(argv[-1]), b'{"action":"exec"}')
-        return owner
+        assert kwargs["start_new_session"] is True
+        assert kwargs["env"][broker.GROUP_ENV] == "1"
+        assert kwargs["env"][broker.ENDPOINT_ENV] == "private-socket"
+        return process
 
-    def ready(*args):
-        if outcome == "interrupt":
-            raise KeyboardInterrupt()
-        return ([] if outcome == "timeout" else [owner.stdout]), [], []
+    monkeypatch.setattr(broker.subprocess, "Popen", spawn)
+    state.launch(None, {"parent": None, "env": {}, "argv": ["engine"], "cwd": None, "timeout": 1}, [1, 2])
+    assert events == [(b"G", 1)]
 
-    monkeypatch.setattr(pp.subprocess, "Popen", spawn)
-    monkeypatch.setattr(pp.select, "select", ready)
-    monkeypatch.setattr(pp.signal, "SIGKILL", 9, raising=False)
-    monkeypatch.setattr(pp.os, "killpg", lambda pid, sig: events.append(("sweep", pid, sig)), raising=False)
-    if outcome == "success":
-        result = pp.run(["engine"], timeout=1, text=True, env={}, stderr=subprocess.DEVNULL)
-        assert result.returncode == 0
-        assert result.stdout == '{"action":"exec"}'
+
+def test_outer_branch_retires_nested_groups_before_acknowledging(monkeypatch):
+    events = []
+    root = SimpleNamespace(close=lambda: events.append("close-root"))
+    nested = SimpleNamespace(close=lambda: events.append("close-nested"))
+    state = broker.Broker(None, root)
+    state.branches = {
+        "root": broker.Branch(SimpleNamespace(pid=1), root, None, 0),
+        "nested": broker.Branch(SimpleNamespace(pid=2), nested, "root", 0),
+    }
+    monkeypatch.setattr(broker, "retire", lambda branch: events.append(("retire", branch.process.pid)))
+    monkeypatch.setattr(broker, "send_frame", lambda connection, _: events.append(
+        "ack-root" if connection is root else "ack-nested",
+    ))
+    state.finish("root", {"returncode": 0})
+    assert events == [("retire", 2), "ack-nested", "close-nested",
+                      ("retire", 1), "ack-root", "close-root"]
+
+
+def _request(**overrides):
+    return {"parent": None, "env": {}, "argv": ["engine"], "cwd": None,
+            "timeout": 1, **overrides}
+
+
+def test_retired_parent_cannot_register_more_work(monkeypatch):
+    state = broker.Broker(None, None)
+    monkeypatch.setattr(
+        broker.subprocess, "Popen", lambda *_a, **_k: pytest.fail("orphan branch spawned"),
+    )
+    with pytest.raises(OSError, match="parent branch is no longer owned"):
+        state.launch(None, _request(parent="retired"), [1, 2])
+    assert not state.branches
+
+
+@pytest.mark.parametrize("cleanup_confirmed", [False, True])
+def test_failed_execution_grant_cannot_acknowledge_before_retirement(
+    monkeypatch, cleanup_confirmed,
+):
+    events = []
+    connection = SimpleNamespace(
+        settimeout=lambda _: None, close=lambda: events.append("closed"),
+    )
+    state = broker.Broker(SimpleNamespace(getsockname=lambda: "private-socket"), connection)
+
+    def fail_grant(_):
+        raise BrokenPipeError("execution grant failed")
+
+    def retire(branch):
+        events.append(("retired", branch.process.pid))
+        if not cleanup_confirmed:
+            raise broker.CleanupError("still live")
+
+    process = SimpleNamespace(
+        pid=123, stdin=SimpleNamespace(write=fail_grant, flush=lambda: None),
+    )
+    monkeypatch.setattr(broker.subprocess, "Popen", lambda *_a, **_k: process)
+    monkeypatch.setattr(broker, "receive_frame", lambda *_a, **_k: (_request(), [101, 102]))
+    monkeypatch.setattr(broker, "retire", retire)
+    monkeypatch.setattr(broker, "send_frame", lambda _c, value: events.append(("ack", value)))
+    monkeypatch.setattr(broker, "os", SimpleNamespace(
+        close=lambda fd: events.append(("closed-fd", fd)),
+    ))
+    if cleanup_confirmed:
+        state.accept(connection)
+        assert events[0] == ("retired", 123)
+        assert events[1][0] == "ack" and events[1][1]["cleaned"] is True
+        assert events[2] == "closed"
+        assert not state.branches
     else:
-        error = (
-            subprocess.TimeoutExpired if outcome == "timeout" else
-            KeyboardInterrupt if outcome == "interrupt" else OSError
-        )
-        with pytest.raises(error):
-            pp.run(["engine"], timeout=1, text=True, env={}, stderr=subprocess.DEVNULL)
-    assert events[0][1]["start_new_session"] is True
-    assert events[0][1]["stdin"] is subprocess.PIPE
-    assert events[-2:] == [("sweep", 123, 9), ("reap", 5)]
+        with pytest.raises(broker.CleanupError, match="still live"):
+            state.accept(connection)
+        assert len(state.branches) == 1
+        assert all(item != "closed" and item[0] != "ack" for item in events)
+    assert events[-2:] == [("closed-fd", 101), ("closed-fd", 102)]
+
+
+def test_cancellation_wins_over_a_queued_nested_registration(monkeypatch):
+    events = []
+    connection = SimpleNamespace(
+        recv=lambda _: b"", close=lambda: events.append("closed"),
+    )
+    listener = SimpleNamespace(accept=lambda: pytest.fail("registered work after cancellation"))
+    state = broker.Broker(listener, connection)
+    state.branches["root"] = broker.Branch(
+        SimpleNamespace(pid=123, stdout=object()), connection, None, float("inf"),
+    )
+    monkeypatch.setattr(state, "accept", lambda _: None)
+    monkeypatch.setattr(broker.select, "select", lambda *_: ([connection, listener], [], []))
+    monkeypatch.setattr(broker, "retire", lambda _: events.append("retired"))
+    monkeypatch.setattr(broker, "send_frame", lambda *_: events.append("ack"))
+    state.run()
+    assert events == ["retired", "ack", "closed"]
+    assert not state.branches
+
+
+def test_truncated_descriptor_delivery_closes_every_received_descriptor(monkeypatch):
+    import array
+    import struct
+
+    closed = []
+    constants = SimpleNamespace(
+        SOL_SOCKET=1, SCM_RIGHTS=2, MSG_CTRUNC=8, CMSG_SPACE=lambda _: 32,
+    )
+    monkeypatch.setattr(broker, "socket", constants)
+    monkeypatch.setattr(broker, "os", SimpleNamespace(close=closed.append))
+    connection = SimpleNamespace(recvmsg=lambda *_: (
+        struct.pack("!I", 2), [(1, 2, array.array("i", [101, 102]).tobytes())], 8, None,
+    ))
+    with pytest.raises(OSError, match="descriptors are incomplete"):
+        broker.receive_frame(connection, descriptors=True)
+    assert closed == [101, 102]
+
+
+def test_oversized_completion_is_rejected_without_reading_its_body():
+    import struct
+
+    calls = []
+    connection = SimpleNamespace(
+        recv=lambda size: calls.append(size) or struct.pack("!I", broker._MAX_FRAME + 1),
+    )
+    with pytest.raises(ValueError, match="frame is too large"):
+        broker.receive_frame(connection)
+    assert calls == [4]
+
+
+@pytest.mark.parametrize("value", [None, {}, {"cleaned": False}, {"cleaned": 1}])
+def test_missing_cleanup_acknowledgement_never_confirms_custody(monkeypatch, value):
+    connection = SimpleNamespace(settimeout=lambda _: None)
+    monkeypatch.setattr(pp.select, "select", lambda *_: ([connection], [], []))
+    monkeypatch.setattr(broker, "receive_frame", lambda _: (value, []))
+    with pytest.raises(broker.CleanupError, match="receipt"):
+        pp._complete(connection, ["engine"], 1)
+
+
+def test_failed_retirement_never_sends_cleanup_acknowledgement(monkeypatch):
+    connection = SimpleNamespace(close=lambda: pytest.fail("custody connection released"))
+    state = broker.Broker(None, connection)
+    state.branches["root"] = broker.Branch(None, connection, None, 0)
+
+    def refused(_):
+        raise broker.CleanupError("group remains live")
+
+    monkeypatch.setattr(broker, "retire", refused)
+    monkeypatch.setattr(broker, "send_frame", lambda *_: pytest.fail("false cleanup receipt"))
+    with pytest.raises(broker.CleanupError, match="remains live"):
+        state.finish("root", {"returncode": 0})
+    assert "root" in state.branches
+
+
+@pytest.mark.parametrize("field,value", [
+    ("timeout", 0), ("timeout", -1), ("timeout", float("nan")),
+    ("timeout", float("inf")), ("timeout", True),
+    ("argv", []), ("argv", ["bad\0argument"]), ("env", {"NAME": 1}),
+    ("cwd", "relative"), ("parent", []),
+])
+def test_invalid_request_cannot_launch_work(monkeypatch, field, value):
+    state = broker.Broker(None, None)
+    request = _request(**{field: value})
+    monkeypatch.setattr(
+        broker.subprocess, "Popen", lambda *_a, **_k: pytest.fail("invalid work launched"),
+    )
+    with pytest.raises((ValueError, OSError)):
+        state.launch(None, request, [])
+    assert not state.branches
+
+
+def test_unconfirmed_cleanup_preserves_broker_and_its_directory(monkeypatch, tmp_path):
+    directory = tmp_path / "broker"
+    directory.mkdir()
+    connection = SimpleNamespace(close=lambda: pytest.fail("unconfirmed connection closed"))
+    child = SimpleNamespace(fileno=lambda: 42, close=lambda: None)
+    process = SimpleNamespace(pid=123)
+    monkeypatch.setattr(pp.tempfile, "mkdtemp", lambda **_: str(directory))
+    monkeypatch.setattr(pp.socket, "socketpair", lambda: (connection, child))
+    monkeypatch.setattr(pp.subprocess, "Popen", lambda *_a, **_k: process)
+    monkeypatch.setattr(broker, "send_frame", lambda *_: None)
+
+    def interrupted(*_):
+        raise KeyboardInterrupt()
+
+    def unconfirmed(_):
+        raise broker.CleanupError("missing acknowledgement")
+
+    monkeypatch.setattr(pp, "_complete", interrupted)
+    monkeypatch.setattr(pp, "_acknowledge", unconfirmed)
+    with pytest.raises(broker.CleanupError) as raised:
+        pp.run(["engine"], timeout=1, env={})
+    assert raised.value.process is process
+    assert raised.value.connection is connection
+    assert raised.value.directory == directory
+    assert directory.is_dir()
+
+
+def test_partial_request_failure_still_requires_cleanup_ack(monkeypatch, tmp_path):
+    events = []
+    directory = tmp_path / "broker"
+    directory.mkdir()
+    connection = SimpleNamespace(close=lambda: events.append("closed"))
+    child = SimpleNamespace(fileno=lambda: 42, close=lambda: None)
+    process = SimpleNamespace(wait=lambda **_: events.append("reaped"))
+    monkeypatch.setattr(pp.tempfile, "mkdtemp", lambda **_: str(directory))
+    monkeypatch.setattr(pp.socket, "socketpair", lambda: (connection, child))
+    monkeypatch.setattr(pp.subprocess, "Popen", lambda *_a, **_k: process)
+
+    def partial(*_):
+        raise OSError("partial request")
+
+    monkeypatch.setattr(broker, "send_frame", partial)
+    monkeypatch.setattr(pp, "_acknowledge", lambda _: events.append("acknowledged"))
+    with pytest.raises(OSError, match="partial request"):
+        pp.run(["engine"], timeout=1, env={})
+    assert events == ["acknowledged", "closed", "reaped"]
+    assert not directory.exists()
+
+
+@pytest.mark.parametrize("missing", [broker.ENDPOINT_ENV, broker.TOKEN_ENV])
+def test_incomplete_inherited_context_refuses_before_launch(monkeypatch, missing):
+    monkeypatch.setenv(broker.ENDPOINT_ENV, "unused-endpoint")
+    monkeypatch.setenv(broker.TOKEN_ENV, "unused-token")
+    monkeypatch.delenv(missing)
+    monkeypatch.setattr(
+        pp.subprocess, "Popen", lambda *_a, **_k: pytest.fail("unowned nested launch"),
+    )
+    with pytest.raises(RuntimeError, match="outside the older Manager process"):
+        pp.run(["engine"], inherited=True, timeout=1, env={})
+
+
+@pytest.mark.skipif(os.name == "nt", reason="native Linux/macOS construction ownership")
+@pytest.mark.parametrize("outcome", ["timeout", "interrupt", "capture", "success", "signal-ignored"])
+def test_native_inner_cleanup_precedes_candidate_deletion(tmp_path, outcome):
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", str(Path(__file__).parent / "fixtures" / "nested_custody.py"),
+         str(root), str(tmp_path), outcome],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"outcome": outcome, "exited_before_cleanup": True}
 
 
 @pytest.mark.skipif(os.name == "nt", reason="native POSIX group lifetime")

@@ -125,14 +125,14 @@ request a bounded plan call.
 An explicitly bounded SSH prompt plan allows at least 240 seconds for the
 target's 180-second admission call and host overhead; an unbounded preparation
 call remains unbounded.
-Captured preparation owns a kill-on-close Job on Windows and a dedicated
-process group on POSIX. A POSIX group owner stays unreaped until the engine's
-completion receipt has been read and the entire group has been cleaned up,
-including when an inner render failure degrades and the engine exits normally.
-Foreground projection inherits the latter rather than
-detaching from its launch owner, so an explicit timeout or cancellation also
-terminates renderer and Git descendants. The bounded asynchronous backup
-worker keeps its independent lifetime and containment.
+Captured preparation owns a kill-on-close Job on Windows and a finite
+construction broker on POSIX. The broker keeps each process-group leader
+unreaped through its cleanup signal, then waits for group disappearance before
+acknowledging completion. This also covers an inner render failure that degrades
+while the engine exits normally. Foreground projection stays in that owned
+branch rather than detaching from it, so timeout or cancellation also retires
+renderer and Git descendants. The bounded asynchronous backup worker keeps its
+independent lifetime and containment.
 
 Instruction projection is shipped inside agent-worktrees itself. It does not
 require customizing-copilot to be installed or globally enabled: promotion
@@ -381,10 +381,16 @@ First-touch bootstrap uses a temporary qualified runner to enter this
 same self-install contract before importing runtime-dependent CLI modules;
 it removes that runner before launching the installed environment. A healthy
 current installation skips runner construction.
-Nested POSIX construction calls inherit the existing foreground group owner
-rather than opening independent sessions. The outer timeout/cancellation
-boundary therefore retains construction descendants through runner cleanup;
-Windows construction retains its existing nested Job ownership.
+Nested POSIX construction groups register with their finite outer broker before
+executing work. An inner timeout, capture failure or interruption waits for
+subtree retirement before candidate cleanup; outer cancellation cascades through
+registered nested groups before bootstrap removes its temporary runner. Missing
+cleanup acknowledgement retains the affected candidate, runner and retired paths
+instead of deleting or renaming them on unconfirmed custody. The broker is a
+per-operation owner, not a resident service. A legacy inherited-group marker
+without the broker context refuses before launching work: run the supported
+bootstrap from a shell outside that older Manager process. Windows construction
+retains its existing nested Job ownership.
 
 If you hit `No module named worktree_manager`, the `worktree-manager` binstub
 itself is unusable (it runs `python -m worktree_manager` straight out of the

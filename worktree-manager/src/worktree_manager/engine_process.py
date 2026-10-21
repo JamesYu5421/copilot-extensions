@@ -21,7 +21,7 @@ def run(argv: list[str], **kwargs) -> subprocess.CompletedProcess:
     kwargs.pop("check", None)
     env = dict(kwargs["env"])
     contained = contained_test_mode()
-    # Nested foreground work must stay inside the outer owner's cleanup group.
+    # Nested groups register with the finite outer broker before executing work.
     inherited_group = (
         not _WINDOWS and not contained
         and os.environ.get(OWNED_GROUP_ENV) == "1"
@@ -32,8 +32,8 @@ def run(argv: list[str], **kwargs) -> subprocess.CompletedProcess:
     else:
         env.pop(OWNED_GROUP_ENV, None)
     kwargs["env"] = env
-    if owns_group:
-        return engine_posix_process.run(argv, timeout=timeout, **kwargs)
+    if owns_group or inherited_group:
+        return engine_posix_process.run(argv, inherited=inherited_group, timeout=timeout, **kwargs)
     process, job = spawn_sync_in_kill_on_close_job(
         argv, require_job=_WINDOWS, allow_breakaway=False,
         **kwargs, **(detached_kwargs() if not _WINDOWS and not inherited_group else {}),

@@ -1,5 +1,5 @@
 {
-  "comment": "Construct and qualify platform-local Manager runtimes before publication; launch installed environments without universal dependency solves.",
+  "comment": "Construct and qualify platform-local Manager runtimes before publication; launch without universal dependency solves and retire nested construction before candidate cleanup.",
   "changes": [
     {
       "plugin": "worktree-manager",

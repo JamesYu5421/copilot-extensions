@@ -18,6 +18,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .installed_runtime import RUNTIME_DIR, build_runtime, probe_runtime
+from .engine_posix_process import CleanupError
 
 
 def _materialize_payload_pointers(payload_dir: Path, slot: Path) -> None:
@@ -238,6 +239,8 @@ def _copy_payload_unsafe(payload_dir: Path, slot: Path) -> None:
             _mark_slot_complete(candidate)
 
         _swap_in_staged_slot(staging, slot, validate=validate_final_path)
+    except CleanupError:
+        raise
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -268,6 +271,8 @@ def _swap_in_staged_slot(
         _replace_with_retry(staging, slot)
         if validate is not None:
             validate(slot)
+    except CleanupError:
+        raise
     except BaseException:
         if slot.exists():
             _replace_with_retry(slot, staging)

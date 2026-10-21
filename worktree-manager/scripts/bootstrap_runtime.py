@@ -13,6 +13,7 @@ PAYLOAD = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PAYLOAD / "src"))
 
 from worktree_manager.installed_runtime import _owned_runner, runtime_python
+from worktree_manager.engine_posix_process import CleanupError
 from worktree_manager.self_install import (
     current_version, default_root, needs_install, payload_version, version_slot,
 )
@@ -30,6 +31,7 @@ def main(args: list[str]) -> int:
         return _launch(root, args)
     runner = Path(tempfile.mkdtemp(prefix=".bootstrap.", dir=root))
     slot = runner / "payload"
+    retain = False
     try:
         _copy_payload(PAYLOAD, slot)
         result = _owned_runner(
@@ -41,11 +43,16 @@ def main(args: list[str]) -> int:
         print(result.stderr, end="", file=sys.stderr)
         if result.returncode:
             return result.returncode
+    except CleanupError as exc:
+        retain = True
+        print(f"Manager bootstrap cleanup unconfirmed; retained {runner}: {exc}", file=sys.stderr)
+        return 1
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         print(f"Manager bootstrap failed: {exc}", file=sys.stderr)
         return 1
     finally:
-        shutil.rmtree(runner)
+        if not retain:
+            shutil.rmtree(runner)
     return _launch(root, args)
 
 
