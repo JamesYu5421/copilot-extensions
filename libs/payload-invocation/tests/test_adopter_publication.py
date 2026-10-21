@@ -4,12 +4,15 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
+import time
+from pathlib import Path
 
 import pytest
 
 from test_command_binding import (
-    POWERSHELL, ROOT, _catalog_environment, _snapshot,
+    POWERSHELL, ROOT, _catalog_environment, _snapshot, _write,
     binding_fixture as binding_fixture,
     powershell_host as powershell_host,
 )
@@ -53,6 +56,7 @@ def _adopter(fixture: dict, plugin: str) -> dict[str, str]:
     for name in (
         "COPILOT_EXTENSIONS_CONTEXT", "COPILOT_EXTENSIONS_COMMAND_LIFECYCLE",
         "COPILOT_PLUGIN_INSTALL_STAGED", "COPILOT_PLUGIN_STAGED_FROM",
+        "COPILOT_PROJECT_DIR", "COPILOT_EXTENSIONS_INSTALL_PROJECT_ROOT",
     ):
         environment.pop(name, None)
     if os.name != "nt":
@@ -69,6 +73,24 @@ def _adopter(fixture: dict, plugin: str) -> dict[str, str]:
         )
         getent.chmod(0o755)
     return environment
+
+
+def _without_python(fixture: dict, environment: dict[str, str]) -> None:
+    if os.name == "nt":
+        environment["PATH"] = ""
+        return
+    commands = fixture["home"] / "native-tools"
+    commands.mkdir()
+    for name in (
+        "awk", "bash", "basename", "cat", "chmod", "cp", "cut", "date", "dirname",
+        "find", "flock", "getent", "grep", "head", "id", "ln", "mkdir", "mktemp", "mv", "od", "pwd",
+        "readlink", "realpath", "rm", "sed", "sha256sum", "shasum", "sleep", "sort",
+        "stat", "tail", "tr", "uname", "wc",
+    ):
+        executable = shutil.which(name, path=environment["PATH"])
+        if executable is not None:
+            (commands / name).symlink_to(executable)
+    environment["PATH"] = str(commands)
 
 
 def _assert_refusal(
@@ -211,3 +233,143 @@ def test_logger_python_free_policy_admission(binding_fixture: dict, state: str, 
         assert result.returncode == 0, result.stdout + result.stderr
         smoke = json.loads((binding_fixture["legacy"] / "smoke.json").read_text(encoding="utf-8-sig"))
         assert smoke["staged"] is True
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("spelling", [
+    "default", "relative", "trailing", "missing-relative", "missing-trailing",
+])
+def test_python_free_explicit_standalone_preserves_source_and_root(
+    binding_fixture: dict, shell: str, spelling: str,
+) -> None:
+    environment = _adopter(binding_fixture, "agent-logger")
+    _without_python(binding_fixture, environment)
+    root = binding_fixture["legacy"]
+    options: list[str] = []
+    if spelling != "default":
+        root = binding_fixture["home"] / "runtime"
+        value = "./runtime" if spelling.endswith("relative") else str(root) + os.sep
+        options = ["--install-dir" if shell == "bash" else "-InstallDir", value]
+    arguments = {**binding_fixture["arguments"], "legacy_root": root}
+    _policy(binding_fixture, root, arguments, "missing" if spelling.startswith("missing-") else "standalone")
+    if spelling.startswith("missing-"):
+        assert not root.exists()
+    result = _run(
+        binding_fixture, environment,
+        [*_command(binding_fixture, shell, "install"), "stamp", *options],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    smoke = json.loads((binding_fixture["legacy"] / "smoke.json").read_text(encoding="utf-8-sig"))
+    assert smoke["staged_from"] == str(binding_fixture["payload"])
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+@pytest.mark.parametrize("python_available", [False, True])
+def test_relocated_admission_retains_launch_project(
+    binding_fixture: dict, shell: str, python_available: bool,
+) -> None:
+    environment = _adopter(binding_fixture, "agent-logger")
+    if not python_available:
+        _without_python(binding_fixture, environment)
+    environment.pop("COPILOT_PROJECT_DIR", None)
+    environment.pop("COPILOT_EXTENSIONS_INSTALL_PROJECT_ROOT", None)
+    _write(binding_fixture["home"] / ".copilot/settings.json", {})
+    project = binding_fixture["home"] / "launch-project"
+    _write(project / ".github/copilot/settings.json", {
+        "extraKnownMarketplaces": {
+            "example": {"source": {"source": "github", "repo": "Project/Plugins"}},
+        },
+    })
+    arguments = {**binding_fixture["arguments"], "project_root": project}
+    _policy(binding_fixture, binding_fixture["legacy"], arguments, "standalone")
+    result = subprocess.run(
+        [*_command(binding_fixture, shell, "install"), "stamp"],
+        env=environment, cwd=project, capture_output=True, text=True, timeout=30,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    smoke = json.loads((binding_fixture["legacy"] / "smoke.json").read_text(encoding="utf-8-sig"))
+    assert smoke["staged"] is True
+
+
+@pytest.mark.portfolio_tier("T3")
+@pytest.mark.parametrize("shell", SHELLS)
+def test_waiting_admission_releases_replaceable_payload(
+    binding_fixture: dict, shell: str,
+) -> None:
+    environment = _adopter(binding_fixture, "agent-logger")
+    command = [*_command(binding_fixture, shell, "install"), "stamp"]
+    _assert_waiting_payload_released(binding_fixture, environment, command)
+
+
+def _assert_waiting_payload_released(
+    binding_fixture: dict, environment: dict[str, str], command: list[str],
+    *, cwd: Path | None = None,
+) -> None:
+    environment["COPILOT_PLUGIN_INSTALL_SMOKE_SLEEP"] = "6"
+    payload = binding_fixture["payload"]
+    smoke = binding_fixture["legacy"] / "smoke.json"
+    process = subprocess.Popen(
+        command, env=environment, cwd=cwd or payload, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    try:
+        deadline = time.monotonic() + 15
+        while not smoke.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not smoke.exists():
+            stdout, stderr = process.communicate(timeout=10)
+            pytest.fail("Installer did not reach the held staging seam: " + stdout + stderr)
+        assert process.poll() is None
+        if os.name != "nt":
+            proc = Path("/proc") / str(process.pid)
+            assert not (proc / "cwd").resolve().is_relative_to(payload)
+            for descriptor in (proc / "fd").iterdir():
+                try:
+                    target = Path(os.readlink(descriptor))
+                except FileNotFoundError:
+                    continue
+                assert not target.is_relative_to(payload), target
+        replacement = payload.with_name("replaceable-payload")
+        payload.rename(replacement)
+        replacement.rename(payload)
+    finally:
+        stdout, stderr = process.communicate(timeout=10)
+    assert process.returncode == 0, stdout + stderr
+
+
+@pytest.mark.portfolio_tier("T3")
+@pytest.mark.skipif(os.name != "nt", reason="Native Windows Git Bash")
+def test_windows_bash_waiting_admission_releases_payload(binding_fixture: dict) -> None:
+    git = shutil.which("git")
+    bash = Path(git).resolve().parent.parent / "bin/bash.exe" if git else None
+    if bash is None or not bash.is_file():
+        pytest.skip("Native Windows Git Bash is unavailable")
+    environment = _adopter(binding_fixture, "agent-logger")
+    environment["HOME"] = binding_fixture["home"].as_posix()
+    command = [
+        str(bash), (binding_fixture["payload"] / "scripts/install.sh").as_posix(), "stamp",
+    ]
+    _assert_waiting_payload_released(
+        binding_fixture, environment, command, cwd=binding_fixture["home"],
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Native Windows Git Bash")
+def test_windows_bash_retains_payload_cwd_readiness_refusal(binding_fixture: dict) -> None:
+    git = shutil.which("git")
+    bash = Path(git).resolve().parent.parent / "bin/bash.exe" if git else None
+    if bash is None or not bash.is_file():
+        pytest.skip("Native Windows Git Bash is unavailable")
+    environment = _adopter(binding_fixture, "agent-logger")
+    environment["HOME"] = binding_fixture["home"].as_posix()
+    before = _snapshot(binding_fixture["home"])
+    result = subprocess.run(
+        [str(bash), (binding_fixture["payload"] / "scripts/install.sh").as_posix(), "stamp"],
+        env=environment, cwd=binding_fixture["payload"], capture_output=True,
+        text=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    assert result.returncode != 0
+    assert "Windows shell launch CWD pins the payload" in result.stderr
+    assert _snapshot(binding_fixture["home"]) == before

@@ -71,11 +71,18 @@ creating or reclaiming staging directories. An available bootstrap Python uses
 the [shared source-qualified lifecycle](../../libs/payload-invocation/README.md#source-qualified-command-binding),
 including live management-purpose custody and revalidation by the staged child.
 PowerShell accepts `-BootstrapPython` to select an existing absolute interpreter.
-Absent Python, the canonical native deployment probe preserves default
-standalone stamping and refuses managed or invalid policy without installing an
-interpreter. No environment boolean or staged-origin hint grants management
+Absent Python, the canonical native deployment probe preserves missing-policy
+and explicit standalone stamping and refuses managed or invalid policy without
+installing an interpreter. Staged probes revalidate the original payload's
+source and the canonical addressed root, including relative and trailing-slash
+spellings. No environment boolean or staged-origin hint grants management
 permission. Scoped installations check their own addressed root; command
 catalogs and non-publication actions retain their existing contracts.
+Waiting supervisors release replaceable payload working directories and script
+handles while retaining the launch project's read context. Windows Bash retains
+its existing requirement to launch outside the payload (for example from HOME);
+the unsafe payload-CWD form refuses before staging, rather than pinning an
+outer shell throughout installation.
 
 Both native installers accept a canonically prepared `runtime-source.json`
 payload. They pin its full identity before the installation lock and revalidate

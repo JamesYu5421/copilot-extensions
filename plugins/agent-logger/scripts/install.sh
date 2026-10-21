@@ -24,6 +24,21 @@ PLUGIN_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Staging itself writes installation state, so publication admission precedes it.
 case "$ACTION" in
     install|update|stamp|provision)
+        # Preserve the existing Windows shell readiness check before rerooting.
+        case "${OSTYPE:-}:$PWD" in
+            msys*:*/.copilot/installed-plugins/*|cygwin*:*/.copilot/installed-plugins/*)
+                printf 'self-stage failed: Windows shell launch CWD pins the payload; launch from HOME or use install.ps1\n' >&2
+                exit 1
+                ;;
+        esac
+        __publication_project="${COPILOT_PROJECT_DIR:-$PWD}"
+        if [[ -n "${COPILOT_EXTENSIONS_INSTALL_PROJECT_ROOT:-}" &&
+              ( -n "${COPILOT_EXTENSIONS_COMMAND_LIFECYCLE:-}" ||
+                ( -n "${COPILOT_PLUGIN_INSTALL_STAGED:-}" && "$SCRIPT_DIR" == */.install-stage/* ) ) ]]; then
+            __publication_project="$COPILOT_EXTENSIONS_INSTALL_PROJECT_ROOT"
+        fi
+        __publication_project="$(cd -P -- "$__publication_project" && pwd)" || exit 1
+        export COPILOT_EXTENSIONS_INSTALL_PROJECT_ROOT="$__publication_project"
         __publication_args=("$@")
         __publication_root="$INSTALL_DIR"
         for ((__publication_i=1; __publication_i<${#__publication_args[@]}; __publication_i++)); do
@@ -60,6 +75,7 @@ case "$ACTION" in
                 -I -B -X utf8 "$SCRIPT_DIR/command_binding.py"
                 --payload-root "$PLUGIN_DIR" --plugin-id agent-logger
                 --legacy-root "$__publication_root" --source-payload-root "$__publication_payload"
+                --project-root "$__publication_project"
             )
             if [[ -n "${COPILOT_EXTENSIONS_COMMAND_LIFECYCLE:-}" ]]; then
                 "$__publication_python" "${__publication_binding[@]}" \
@@ -67,9 +83,11 @@ case "$ACTION" in
             else
                 unset COPILOT_PLUGIN_STAGED_FROM
                 [[ "$ACTION" != stamp ]] || __publication_binding+=(--deferred-runtime)
-                "$__publication_python" "${__publication_binding[@]}" --run-lifecycle -- \
+                cd "$HOME" || exit 1
+                # MSYS may retain a native-exec parent; close its script descriptor first.
+                exec bash -c 'exec "$@"' bash \
+                    "$__publication_python" "${__publication_binding[@]}" --run-lifecycle -- \
                     "$(type -P bash)" "$SCRIPT_DIR/install.sh" "$@"
-                exit $?
             fi
         elif [[ -n "${COPILOT_EXTENSIONS_COMMAND_LIFECYCLE:-}" ]]; then
             printf '%s\n' 'Runtime publication refused: lifecycle custody requires an existing Python 3.10+ executable.' >&2
@@ -82,18 +100,16 @@ case "$ACTION" in
                 printf '%s\n' 'Runtime publication refused: installation helper is unavailable.' >&2
                 exit 3
             }
+            __publication_native_payload="$__publication_payload"
+            if [[ -n "${COPILOT_PLUGIN_INSTALL_STAGED:-}" &&
+                  -n "${COPILOT_PLUGIN_STAGED_FROM:-}" &&
+                  "$PLUGIN_DIR" != */.copilot/installed-plugins/* ]]; then
+                __publication_native_payload="$COPILOT_PLUGIN_STAGED_FROM"
+            fi
             __publication_code=0
-            __publication_json="$(
-                if [[ -n "${COPILOT_PLUGIN_INSTALL_STAGED:-}" &&
-                      -n "${COPILOT_PLUGIN_STAGED_FROM:-}" &&
-                      "${COPILOT_PLUGIN_ROOT:-}" == "$COPILOT_PLUGIN_STAGED_FROM" &&
-                      "$PLUGIN_DIR" != */.copilot/installed-plugins/* ]]; then
-                    unset COPILOT_PLUGIN_ROOT
-                fi
-                bash "$__publication_helper" probe-plugin-publication \
-                    --payload-root "$__publication_payload" --plugin-id agent-logger \
-                    --legacy-root "$__publication_root"
-            )" || __publication_code=$?
+            __publication_json="$(bash "$__publication_helper" probe-plugin-publication \
+                --payload-root "$__publication_native_payload" --plugin-id agent-logger \
+                --legacy-root "$__publication_root" --project-root "$__publication_project")" || __publication_code=$?
             __publication_allowed="$(LC_ALL=C awk -f "$__publication_query" -v mode=get \
                 -v query_path=$'deployment\034allowPluginPublication' <<<"$__publication_json")" || exit 3
             __publication_type="$(LC_ALL=C awk -f "$__publication_query" -v mode=type \
@@ -102,11 +118,22 @@ case "$ACTION" in
             [[ -z "${COPILOT_EXTENSIONS_CONTEXT:-}" ]] || __publication_root_query=runtimeRoot
             __publication_actual="$(LC_ALL=C awk -f "$__publication_query" -v mode=get \
                 -v "query_path=$__publication_root_query" <<<"$__publication_json")" || exit 3
+            __publication_path="$(LC_ALL=C awk -f "$__publication_query" -v mode=get \
+                -v query_path=$'deployment\034path' <<<"$__publication_json")" || exit 3
             if [[ "$__publication_code" != 0 || "$__publication_type" != boolean ||
-                  "$__publication_allowed" != true || "$__publication_actual" != "$__publication_root" ]]; then
+                  "$__publication_allowed" != true || "$__publication_actual" != /* ||
+                  "$__publication_path" != "$__publication_actual/runtime-deployment.json" ||
+                  ( -n "${COPILOT_EXTENSIONS_CONTEXT:-}" && "$__publication_actual" != "$__publication_root" ) ]]; then
                 printf 'Runtime publication refused: %s Use explicit installation management to install or repair this runtime.\n' "$__publication_json" >&2
                 exit 3
             fi
+            for ((__publication_i=1; __publication_i<${#__publication_args[@]}; __publication_i++)); do
+                if [[ "${__publication_args[__publication_i]}" == --install-dir ]]; then
+                    __publication_i=$((__publication_i + 1))
+                    __publication_args[__publication_i]="$__publication_actual"
+                fi
+            done
+            set -- "${__publication_args[@]}"
         fi
         ;;
 esac

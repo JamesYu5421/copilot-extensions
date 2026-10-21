@@ -165,6 +165,15 @@ catalogs, protocol callers and other lifecycle actions do not infer human mode
 from their output or environment. Structured-context installers retain their
 separate native owner; this does not wrap those entrypoints.
 
+Lifecycle/publication CLI callers may pass `--project-root` to retain their
+launch project's source declarations while moving waiting supervisors out of a
+replaceable payload. Omission retains the original current-directory behavior;
+the option is not accepted by ordinary read-only catalog discovery. Logger
+carries that read context across its native staging handoff while the same
+live lease still validates source/root/purpose. On Windows Bash, re-executing
+a command-string Bash before native Python avoids retaining the payload script
+descriptor in MSYS's native-exec parent.
+
 Legacy `uninstall` uses the same ownership-validated transaction without a
 runtime-build reservation. The shared lock is a sibling of the canonical
 runtime root, so deleting that root cannot remove the lock or admit a concurrent

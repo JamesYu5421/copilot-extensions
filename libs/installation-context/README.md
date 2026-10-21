@@ -64,11 +64,17 @@ selected snapshot to their exact payload root and version. Every mutation
 requires an explicit `--context` / `-Context`; it never adopts an ambient
 `COPILOT_EXTENSIONS_CONTEXT` as authorization.
 
-JSON inputs use one strict language on every entry point: UTF-8 without BOM,
+Installation-context protocol JSON inputs use one strict language on every entry point: UTF-8 without BOM,
 case-sensitive and non-duplicated object names, escaped control characters, and
 string types for identity, path, payload-version, locator, and manifest fields.
 Filesystem plugin ids are portable across both platforms, including rejection
 of Windows device basenames.
+
+The Python `read_deployment_manifest` compatibility reader also accepts the
+single UTF-8 BOM emitted by existing PowerShell 5.1 deployment writers.
+Lifecycle manifest reads use that reader without changing protocol receipts or
+`read_json`'s strict language. Duplicate keys, invalid UTF-8 and malformed JSON
+still refuse; digest evidence continues to describe the original file bytes.
 
 ## CLI
 
