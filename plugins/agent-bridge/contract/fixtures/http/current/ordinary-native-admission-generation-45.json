@@ -41,10 +41,17 @@
       "code": "native_receipt_missing"
     }
   },
+  "cli_mixed_option_refusal": {
+    "outcome": "refused_invalid",
+    "target": "bridge-a",
+    "retryable": false,
+    "reason": "mixed_native_invocation",
+    "error": "keyed native invocation cannot mix alternate prompt/delivery options"
+  },
   "scope": "Independently authored synthetic HTTP vectors, replayed through ASGI and the real turn journal with a mock SDK. Admission is not execution or native-source qualification.",
   "evidence_family": "ordinary-native-keyed-admission-v1",
   "captured_from": {
-    "commit": "c9c688139f8582496a83c1c7632f3d426fa7b855",
+    "commit": "d24a6fd0f3d3cf5ee2943fb2900915e46f7e5266",
     "plugin_version": "0.4.1-dev3",
     "source_path": "plugins/agent-bridge/src/agent_bridge/native_keyed_admission.py",
     "source_git_blob": "fce4792c6e54c321181ff68e9314af13cddf5ce6",

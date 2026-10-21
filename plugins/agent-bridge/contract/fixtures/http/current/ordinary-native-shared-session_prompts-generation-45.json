@@ -41,14 +41,21 @@
       "code": "native_receipt_missing"
     }
   },
+  "cli_mixed_option_refusal": {
+    "outcome": "refused_invalid",
+    "target": "bridge-a",
+    "retryable": false,
+    "reason": "mixed_native_invocation",
+    "error": "keyed native invocation cannot mix alternate prompt/delivery options"
+  },
   "scope": "Independently authored synthetic HTTP vectors, replayed through ASGI and the real turn journal with a mock SDK. Admission is not execution or native-source qualification.",
   "evidence_family": "ordinary-native-keyed-admission-v1",
   "shared_operation_evidence": {
     "path": "plugins/agent-bridge/contract/fixtures/http/current/ordinary-native-admission-generation-45.json",
-    "sha256": "58dd04d8916bdf5e5a6b57700dc0ffe8ce6076e3b9291640f6681ff8b0e893ac"
+    "sha256": "f49908b39ccce150c6cab6476e7e5628bb2410f7b407ae8191faf840fb1884f5"
   },
   "captured_from": {
-    "commit": "c9c688139f8582496a83c1c7632f3d426fa7b855",
+    "commit": "d24a6fd0f3d3cf5ee2943fb2900915e46f7e5266",
     "plugin_version": "0.4.1-dev3",
     "source_path": "plugins/agent-bridge/src/agent_bridge/session_prompts.py",
     "source_git_blob": "dc4c9f20477c925d24547ef8b20941f424dea8ac",
