@@ -85,9 +85,68 @@ bodies nor claims #6909's installer work.
 No hunk is assigned to a catch-all wave-6 implementation batch. Wave 6 is
 the still-open #5694/#5682 qualification and residual-settlement obligation.
 
+## Admitted fixture-semantic batches
+
+### B-RECORD foundation: persisted records without publication setup
+
+Baseline: Dev `8a70551c987775375310794e38d3c89aaee4607d`, the actual
+#7457 final mechanical-family merge. Add function-private `record_repo` with
+the existing base fixture's config, worktree identity and tracking bindings,
+but no Git repository, commits, remote or publication. The local `recorded_pr`
+fixture supplies explicit synthetic fork/head/base/patch inputs and stamps a
+fresh frozen identity through the existing production helper. These inputs
+are record-model test data, never live publication or merge authority.
+
+Convert exactly 36 methods / 42 expanded cases: the fourteen
+`TestSetPRAndStatus` methods except `test_set_pr_merges_with_create_pr`,
+the nine B-RECORD `TestPRStatusLive` methods and four `TestPRThreads` methods
+listed below, and all nine reassignment/stale-writer methods (fifteen cases)
+now in `test_pr_record_reassignment.py`. The real create-pr association
+control retains its original `pr_repo` and actual publication.
+
+Complete real collection preserves every original 317 identity and adds two
+fixture regressions. All original subject/assertion/decorator/parameter/mark/
+base AST is preserved: only the named fixture arguments/unpacks and the
+reassignment methods' setup-only `_fork_headed_rerun` calls change, with
+additive missing-identity precondition assertions described below.
+The other 275 original cases have identical full method and resolved-fixture
+metadata. Collection passes take 23.92 and 13.61 seconds inclusive.
+
+All 45 targeted cases pass without skips on native Windows in 17.38 seconds
+(21.19 inclusive): all 42 converted consumers, both new construction
+regressions that reject any Git invocation, and the retained real-publication
+control. Exactly two work-stealing workers and unchanged 30-second item,
+240-second diagnostic group and resource limits apply. Ruff F/E9 and the
+thirteen-plugin install-contract guard pass with zero violations.
+No provider double, production code, seed reuse, native-operation assertion,
+test tier or CI admission changes enter this batch.
+
+The shared synthetic fixture leaves `head_identity` absent from its first
+persisted state. Record merging restores a nonempty durable identity, so
+the case explicitly asserts both loaded snapshots lack it before the other
+writer backfills. All 45 cases pass without skips in
+18.18 seconds (22.17 inclusive); final collection takes 14.38 seconds inclusive.
+A separate contained in-memory mutation suppressing only identity backfill
+causes this case to fail at its original final preservation assertion, not
+at the new preconditions (3.23 seconds pytest / 6.62 inclusive). This negative
+control is expected failure evidence, not a passing suite or qualification.
+
+This admits only the named B-RECORD foundation/consumers; other record-only
+conversions in legacy/native-state files remain separately scoped. B-SEED,
+B-BASE, B-PUBLISHED, B-REBASED and B-FORK are not implemented by this batch.
+Fresh fixture construction is exercised directly in private native sandboxes;
+installer clean-room provisioning is inapplicable and unavailable Linux/external
+execution gets no credit. Repeated complete same-head Windows qualification
+and the original #5694/#5682 completion gate remain open.
+
 ## Mechanical move mapping: preserved, not conflated with fixtures
 
 ### Final mechanical family: retain the legacy publication module path
+
+**Actually merged:** #7457 as
+`8a70551c987775375310794e38d3c89aaee4607d`. The original 317-case
+mechanical family partition is complete; fixture-semantic contracts and
+parent qualification remain open.
 
 Baseline: Dev `98b77a6d2de17cec5c850b742ea1a0d08f7dab5e`, the actual
 #7452 push-changes partition merge. The 33 remaining methods already form
