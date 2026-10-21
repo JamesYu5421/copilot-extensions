@@ -9,6 +9,7 @@ import sys
 import time
 from types import SimpleNamespace
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -271,6 +272,7 @@ def test_unconfirmed_cleanup_preserves_broker_and_its_directory(monkeypatch, tmp
     monkeypatch.setattr(pp.tempfile, "mkdtemp", lambda **_: str(directory))
     monkeypatch.setattr(pp.socket, "socketpair", lambda: (connection, child))
     monkeypatch.setattr(pp.subprocess, "Popen", lambda *_a, **_k: process)
+    monkeypatch.setattr(pp, "_ready", lambda _: None)
     monkeypatch.setattr(broker, "send_frame", lambda *_: None)
 
     def interrupted(*_):
@@ -299,6 +301,7 @@ def test_partial_request_failure_still_requires_cleanup_ack(monkeypatch, tmp_pat
     monkeypatch.setattr(pp.tempfile, "mkdtemp", lambda **_: str(directory))
     monkeypatch.setattr(pp.socket, "socketpair", lambda: (connection, child))
     monkeypatch.setattr(pp.subprocess, "Popen", lambda *_a, **_k: process)
+    monkeypatch.setattr(pp, "_ready", lambda _: None)
 
     def partial(*_):
         raise OSError("partial request")
@@ -323,6 +326,86 @@ def test_incomplete_inherited_context_refuses_before_launch(monkeypatch, missing
         pp.run(["engine"], inherited=True, timeout=1, env={})
 
 
+@pytest.mark.parametrize("reply", [
+    {"ready": False, "error": "injected bind failure"}, None, {},
+])
+def test_broker_startup_failure_is_reported_before_construction(monkeypatch, reply):
+    connection = SimpleNamespace(settimeout=lambda _: None)
+    monkeypatch.setattr(broker, "receive_frame", lambda _: (reply, []))
+    with pytest.raises(OSError, match="construction broker startup failed"):
+        pp._ready(connection)
+
+
+def test_broker_startup_clears_its_finite_readiness_timeout(monkeypatch):
+    waits = []
+    connection = SimpleNamespace(settimeout=waits.append)
+    monkeypatch.setattr(broker, "receive_frame", lambda _: ({"ready": True}, []))
+    pp._ready(connection)
+    assert waits == [broker.CLEANUP_TIMEOUT, None]
+
+
+@pytest.mark.parametrize("retirement", ["confirmed", "timeout", "interrupted"])
+def test_relative_connector_preserves_directory_and_exact_custody(
+    monkeypatch, tmp_path, retirement,
+):
+    endpoint = tmp_path / ("long" * 40) / "broker"
+    channel, child, connection = MagicMock(), MagicMock(), MagicMock()
+    child.fileno.return_value = 42
+    process = SimpleNamespace(returncode=0)
+    events = []
+
+    def wait(**kwargs):
+        events.append(("wait", kwargs["timeout"]))
+        if retirement == "timeout":
+            raise subprocess.TimeoutExpired(["connector"], kwargs["timeout"])
+        if retirement == "interrupted":
+            raise KeyboardInterrupt()
+        assert not connection.close.called
+
+    def spawn(argv, **kwargs):
+        assert argv[-3:] == ["--connect", "42", "broker"]
+        assert kwargs["cwd"] == endpoint.parent
+        assert kwargs["pass_fds"] == (42,)
+        return process
+
+    process.wait = wait
+    monkeypatch.setattr(pp.socket, "socketpair", lambda: (channel, child))
+    monkeypatch.setattr(pp.socket, "socket", lambda **_: connection)
+    monkeypatch.setattr(pp.subprocess, "Popen", spawn)
+    monkeypatch.setattr(broker, "receive_frame", lambda *_a, **_k: (
+        {"connected": True}, [101],
+    ))
+    if retirement == "confirmed":
+        assert pp._connect(str(endpoint)) is connection
+        connection.settimeout.assert_called_once_with(None)
+    else:
+        with pytest.raises(broker.CleanupError, match="connector retirement") as caught:
+            pp._connect(str(endpoint))
+        assert caught.value.process is process
+        assert caught.value.connection is connection
+        assert caught.value.directory == endpoint.parent
+        assert not connection.close.called
+    assert events == [("wait", broker.CLEANUP_TIMEOUT)]
+
+
+def test_failed_connector_surfaces_startup_stderr_after_confirmed_exit(monkeypatch, tmp_path):
+    channel, child = MagicMock(), MagicMock()
+    child.fileno.return_value = 42
+
+    def spawn(_argv, **kwargs):
+        kwargs["stderr"].write(b"injected connect failure")
+        return SimpleNamespace(returncode=1, wait=lambda **_: None)
+
+    def refuse(*_a, **_k):
+        raise OSError("connection ended before descriptor delivery")
+
+    monkeypatch.setattr(pp.socket, "socketpair", lambda: (channel, child))
+    monkeypatch.setattr(pp.subprocess, "Popen", spawn)
+    monkeypatch.setattr(broker, "receive_frame", refuse)
+    with pytest.raises(OSError, match="injected connect failure"):
+        pp._connect(str(tmp_path / "broker"))
+
+
 @pytest.mark.skipif(os.name == "nt", reason="native Linux/macOS construction ownership")
 @pytest.mark.parametrize(
     "outcome", [
@@ -339,6 +422,52 @@ def test_native_inner_cleanup_precedes_candidate_deletion(tmp_path, outcome):
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {"outcome": outcome, "exited_before_cleanup": True}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="native POSIX relative Unix endpoints")
+def test_native_nested_construction_keeps_long_temporary_root(tmp_path):
+    temporary = tmp_path / ("long-root-" * 16)
+    temporary.mkdir()
+    assert len(os.fsencode(str(temporary))) > 118
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", str(Path(__file__).parent / "fixtures" / "nested_custody.py"),
+         str(root), str(tmp_path), "success"],
+        env=dict(os.environ, TMPDIR=str(temporary)),
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"outcome": "success", "exited_before_cleanup": True}
+    assert not list(temporary.iterdir())
+
+
+@pytest.mark.skipif(os.name == "nt", reason="native POSIX broker working directory")
+def test_broker_private_working_directory_does_not_change_target_default(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = pp.run(
+        [sys.executable, "-I", "-B", "-c", "import os;print(os.getcwd())"],
+        timeout=10, env=dict(os.environ), stdout=subprocess.PIPE, text=True,
+    )
+    assert result.returncode == 0
+    assert Path(result.stdout.strip()) == tmp_path
+
+
+@pytest.mark.skipif(os.name == "nt", reason="native POSIX broker startup failure")
+def test_native_bind_failure_reports_cause_without_launching_work(tmp_path, monkeypatch):
+    directory = tmp_path / "broker-root"
+    directory.mkdir()
+    (directory / "broker").write_text("occupied")
+    effect = tmp_path / "must-not-exist"
+    monkeypatch.setattr(pp.tempfile, "mkdtemp", lambda **_: str(directory))
+    with pytest.raises(OSError, match="construction broker startup failed") as caught:
+        pp.run(
+            [sys.executable, "-I", "-B", "-c",
+             f"from pathlib import Path;Path({str(effect)!r}).touch()"],
+            timeout=10, env=dict(os.environ),
+        )
+    assert not isinstance(caught.value, pp.CleanupError)
+    assert not effect.exists()
+    assert not directory.exists()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="native POSIX group lifetime")

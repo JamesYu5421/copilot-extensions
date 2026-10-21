@@ -71,17 +71,19 @@ def send_frame(connection, value, descriptors=()):
         connection.sendall(data)
 
 
-def receive_frame(connection, *, descriptors=False):
+def receive_frame(connection, *, descriptors=False, descriptor_count=2):
     received = []
     try:
         if descriptors:
-            header, ancillary, flags, _ = connection.recvmsg(4, socket.CMSG_SPACE(8))
+            header, ancillary, flags, _ = connection.recvmsg(
+                4, socket.CMSG_SPACE(array.array("i").itemsize * descriptor_count),
+            )
             for level, kind, data in ancillary:
                 if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
                     values = array.array("i")
                     values.frombytes(data[:len(data) - len(data) % values.itemsize])
                     received.extend(values)
-            if flags & socket.MSG_CTRUNC or len(received) != 2:
+            if flags & socket.MSG_CTRUNC or len(received) != descriptor_count:
                 raise OSError("construction broker output descriptors are incomplete")
         else:
             header = connection.recv(4)
@@ -139,8 +141,9 @@ def retire(branch):
 
 
 class Broker:
-    def __init__(self, listener, root):
+    def __init__(self, listener, root, *, endpoint=None):
         self.listener, self.root = listener, root
+        self.endpoint = endpoint
         self.branches = {}
 
     def launch(self, connection, request, descriptors):
@@ -174,7 +177,8 @@ class Broker:
         token = uuid.uuid4().hex
         env = dict(request["env"])
         env.update({
-            ENDPOINT_ENV: self.listener.getsockname(), TOKEN_ENV: token, GROUP_ENV: "1",
+            ENDPOINT_ENV: self.endpoint or self.listener.getsockname(),
+            TOKEN_ENV: token, GROUP_ENV: "1",
         })
         process = subprocess.Popen(
             [sys.executable, "-I", "-B", "-X", "utf8", "-c", _OWNER,
@@ -262,20 +266,28 @@ class Broker:
 
 
 def main():
+    if sys.argv[1] == "--connect":
+        with socket.socket(fileno=int(sys.argv[2])) as channel:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+                connection.settimeout(CLEANUP_TIMEOUT)
+                connection.connect(sys.argv[3])
+                send_frame(channel, {"connected": True}, (connection.fileno(),))
+        return
     signal.signal(signal.SIGCHLD, signal.SIG_DFL)
-    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    listener.bind(sys.argv[2])
-    listener.listen()
-    root = socket.socket(fileno=int(sys.argv[1]))
-    broker = Broker(listener, root)
-    try:
-        broker.run()
-    finally:
-        try:
-            broker.close()
-        finally:
-            listener.close()
-            root.close()
+    with socket.socket(fileno=int(sys.argv[1])) as root:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            try:
+                listener.bind(os.path.basename(sys.argv[2]))
+                listener.listen()
+            except OSError as error:
+                send_frame(root, {"ready": False, "error": str(error)})
+                raise SystemExit(1) from error
+            broker = Broker(listener, root, endpoint=sys.argv[2])
+            send_frame(root, {"ready": True})
+            try:
+                broker.run()
+            finally:
+                broker.close()
 
 
 if __name__ == "__main__":

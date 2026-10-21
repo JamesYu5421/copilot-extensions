@@ -51,6 +51,72 @@ def _acknowledge(connection):
     _require_cleanup_receipt(reply, connection)
 
 
+def _ready(connection):
+    connection.settimeout(broker.CLEANUP_TIMEOUT)
+    reply, _ = broker.receive_frame(connection)
+    if not isinstance(reply, dict) or reply.get("ready") is not True:
+        detail = reply.get("error") if isinstance(reply, dict) else "invalid startup receipt"
+        raise OSError(f"construction broker startup failed: {detail}")
+    connection.settimeout(None)
+
+
+def _connect(endpoint):
+    """Dial from a finite helper's private cwd without changing this process's cwd."""
+    endpoint = Path(endpoint)
+    if not endpoint.is_absolute():
+        raise RuntimeError("construction broker endpoint must be absolute")
+    channel, child = socket.socketpair()
+    process = connection = failure = None
+    with channel, child, tempfile.TemporaryFile() as errors:
+        try:
+            process = subprocess.Popen(
+                [sys.executable, "-I", "-B", "-X", "utf8",
+                 str(Path(broker.__file__).resolve()), "--connect",
+                 str(child.fileno()), endpoint.name],
+                cwd=endpoint.parent, pass_fds=(child.fileno(),),
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors,
+            )
+            child.close()
+            channel.settimeout(broker.CLEANUP_TIMEOUT)
+            reply, descriptors = broker.receive_frame(
+                channel, descriptors=True, descriptor_count=1,
+            )
+            connection = socket.socket(fileno=descriptors[0])
+            connection.settimeout(None)
+            if reply != {"connected": True}:
+                raise OSError("construction broker connector returned an invalid receipt")
+        except BaseException as error:
+            failure = error
+        finally:
+            child.close()
+            if process is not None:
+                try:
+                    process.wait(timeout=broker.CLEANUP_TIMEOUT)
+                except BaseException as error:
+                    raise CleanupError(
+                        "construction broker connector retirement is unconfirmed",
+                        process=process, connection=connection, directory=endpoint.parent,
+                    ) from error
+        if failure is not None:
+            if connection is not None:
+                connection.close()
+            if isinstance(failure, (OSError, ValueError)):
+                errors.seek(0)
+                detail = errors.read().decode("utf-8", errors="replace").strip()
+                raise OSError(
+                    f"construction broker connection failed: {detail or failure}",
+                ) from failure
+            raise failure
+        if process.returncode:
+            connection.close()
+            errors.seek(0)
+            raise OSError(
+                "construction broker connector failed: "
+                + errors.read().decode("utf-8", errors="replace").strip(),
+            )
+        return connection
+
+
 def run(argv: list[str], *, inherited=False, **kwargs) -> subprocess.CompletedProcess:
     timeout = kwargs.pop("timeout")
     env = kwargs["env"]
@@ -67,9 +133,7 @@ def run(argv: list[str], *, inherited=False, **kwargs) -> subprocess.CompletedPr
                         "inherited construction broker context is incomplete; run the supported "
                         "bootstrap from a shell outside the older Manager process"
                     )
-                connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                connection.settimeout(broker.CLEANUP_TIMEOUT)
-                connection.connect(os.environ[broker.ENDPOINT_ENV])
+                connection = _connect(os.environ[broker.ENDPOINT_ENV])
                 parent = os.environ[broker.TOKEN_ENV]
             else:
                 directory = Path(tempfile.mkdtemp(prefix="wm-"))
@@ -79,11 +143,12 @@ def run(argv: list[str], *, inherited=False, **kwargs) -> subprocess.CompletedPr
                         [sys.executable, "-I", "-B", "-X", "utf8",
                          str(Path(broker.__file__).resolve()), str(child.fileno()),
                          str(directory / "broker")],
-                        pass_fds=(child.fileno(),), stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        cwd=directory, pass_fds=(child.fileno(),), stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL, stderr=errors,
                     )
                 finally:
                     child.close()
+                _ready(connection)
                 parent = None
             stderr = kwargs.get("stderr")
             descriptor = errors.fileno() if stderr in (None, subprocess.PIPE, subprocess.DEVNULL) else (
@@ -93,7 +158,7 @@ def run(argv: list[str], *, inherited=False, **kwargs) -> subprocess.CompletedPr
             try:
                 broker.send_frame(connection, {
                     "argv": argv, "env": env,
-                    "cwd": str(kwargs["cwd"]) if kwargs.get("cwd") else None,
+                    "cwd": str(kwargs["cwd"]) if kwargs.get("cwd") else os.getcwd(),
                     "timeout": timeout, "parent": parent,
                 }, (output.fileno(), descriptor))
                 reply = _complete(connection, argv, timeout)

@@ -98,6 +98,55 @@ def test_failed_windows_retirement_retains_payload_staging(
     assert not any(stream.closed for stream in failed_retirement[2])
 
 
+@pytest.mark.parametrize("existing_slot", [False, True])
+def test_self_install_propagates_exact_cleanup_custody_and_retained_paths(
+    tmp_path, monkeypatch, existing_slot,
+):
+    source = tmp_path / "payload"
+    source.mkdir()
+    (source / "pyproject.toml").write_text("fixture")
+    root = tmp_path / "manager"
+    root.mkdir()
+    marker = root / "current-version"
+    marker.write_text("1.0.0")
+    slot = root / "versions" / "1.2.3"
+    if existing_slot:
+        slot.mkdir(parents=True)
+        (slot / "original").write_text("unchanged")
+    process, job, connection = object(), object(), object()
+    error = CleanupError(
+        "construction retirement refused", process=process, job=job, connection=connection,
+    )
+    released = []
+
+    def refuse(_):
+        raise error
+
+    monkeypatch.setattr(self_install, "_SLOT_KEY_FILES", ["pyproject.toml"])
+    monkeypatch.setattr(self_install, "payload_version", lambda _: "1.2.3")
+    monkeypatch.setattr(self_install, "clean_legacy_artifacts", lambda _: [])
+    monkeypatch.setattr(self_install, "needs_install", lambda *_: True)
+    monkeypatch.setattr(self_install, "_runtime_install_satisfied", lambda *_: False)
+    monkeypatch.setattr(self_install, "_currently_running_from", lambda _: False)
+    monkeypatch.setattr(self_install, "_reap_stranded_cutover_passive", lambda *_: None)
+    monkeypatch.setattr(self_install, "_acquire_install_cutover_lease", lambda _: (
+        SimpleNamespace(release=lambda: released.append(True)), None,
+    ))
+    monkeypatch.setattr(self_install_payload, "_materialize_payload_pointers", lambda *_: None)
+    monkeypatch.setattr(self_install_payload, "build_runtime", refuse)
+    with pytest.raises(CleanupError) as caught:
+        self_install.self_install(source, root=root, dry_run=False)
+    assert caught.value is error
+    assert (error.process, error.job, error.connection) == (process, job, connection)
+    assert marker.read_text() == "1.0.0"
+    retained = list(slot.parent.glob("1.2.3.staging.*"))
+    assert len(retained) == 1 and (retained[0] / "pyproject.toml").is_file()
+    assert slot.exists() == existing_slot
+    if existing_slot:
+        assert (slot / "original").read_text() == "unchanged"
+    assert released == [True]
+
+
 @pytest.mark.skipif(os.name != "nt", reason="native Windows retained-Job failure")
 @pytest.mark.parametrize("operation", ["bootstrap", "payload"])
 def test_native_failed_retirement_keeps_live_constructor_and_paths_until_cleanup(

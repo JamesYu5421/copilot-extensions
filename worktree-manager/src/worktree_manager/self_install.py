@@ -799,6 +799,8 @@ def self_install(
                                      slot=str(slot), reason=refusal, cleaned=cleaned)
         try:
             _copy_payload(pd, slot)
+        except CleanupError:
+            raise
         except RuntimeError as e:
             # _copy_payload builds the replacement entirely in a sibling
             # staging directory and only atomically swaps it into `slot`

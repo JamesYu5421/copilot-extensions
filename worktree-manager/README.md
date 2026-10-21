@@ -398,7 +398,14 @@ bootstrap from a shell outside that older Manager process. Windows construction
 retains its existing nested Job ownership. If Job retirement or pipe-reader
 settlement fails, construction raises the same fatal cleanup error and retains
 the exact process, Job, bootstrap runner and staging paths for their owner;
-ordinary command-failure handling must not delete them.
+ordinary command-failure handling, including the public `self_install()` API,
+must not delete them or discard their custody handles.
+POSIX brokers bind a short relative name within their private temporary
+directory. A finite connector uses that same directory as its own working
+directory and returns the connected Unix descriptor, so long `TMPDIR` values
+work without escaping the selected sandbox or changing the caller's working
+directory. Broker startup reports readiness or its actual bind failure before
+any construction is admitted.
 
 If you hit `No module named worktree_manager`, the `worktree-manager` binstub
 itself is unusable (it runs `python -m worktree_manager` straight out of the
