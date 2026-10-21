@@ -226,9 +226,10 @@ def _wrap_batch_for_windows(
     target_path = resolved or exe
 
     if target_path.lower().endswith((".cmd", ".bat")):
-        comspec = os.environ.get("COMSPEC", "cmd.exe")
-        args = [comspec, "/d", "/s", "/c", target_path, *args[1:]]
-        log.debug("Wrapped batch file for Windows: %s", " ".join(args))
+        from plugin_resolve.execution import windows_batch_command
+
+        args = windows_batch_command([target_path, *args[1:]], env)
+        log.debug("Wrapped batch file %s for Windows: %s", target_path, " ".join(args))
 
     elif resolved:
         # Use the fully resolved path even for non-batch executables
@@ -539,6 +540,7 @@ async def resolve_local_launch(
     *,
     tracker: ConnectTracker | None = None,
     session_id: str = "",
+    prepare_plugins: bool = True,
 ) -> tuple[list[str], str | None, dict[str, str]]:
     """Resolve a local spawn into a concrete launch plan ``(args, cwd, env)``.
 
@@ -587,11 +589,35 @@ async def resolve_local_launch(
     else:
         if not target.cwd:
             raise ValueError("Local agent without 'project' requires 'cwd'")
-        copilot = target.copilot_path or _find_copilot()
+        copilot = _find_copilot(env, cwd=target.cwd, explicit_path=target.copilot_path)
         args = [copilot, "--acp", "--stdio", "--no-auto-update"] + target.copilot_args
         work_dir = target.cwd
         log.info("Resolved local agent launch: %s (cwd=%s)", " ".join(args), work_dir)
 
+    if (
+        prepare_plugins and target.type == "local" and target.local_plugin_preparation
+        and not target.elevated and not target.spawn_command
+        and not target.codespace and not target.container
+    ):
+        from .venue_plugins import prepare_local_plugins
+
+        prepared_context = {}
+        target.prepared_plugins = None
+        replacement = await prepare_local_plugins(target, work_dir, env, prepared_context=prepared_context)
+        target.prepared_plugins = prepared_context
+        if replacement is not None:
+            prefix = target.static_plugin_args
+            if not isinstance(prefix, dict):
+                raise RuntimeError("Static plugin argument provenance is missing")
+            base, automatic = prefix["base"], prefix["automatic"]
+            original = [*base, *automatic]
+            if target.copilot_args[:len(original)] != original:
+                raise RuntimeError("Static plugin argument provenance no longer matches launch")
+            # Only this resolver's automatic span is replaced. Request/config
+            # flags, including repeated --plugin-dir flags, remain verbatim.
+            trailing = target.copilot_args[len(original):]
+            launch_prefix = args[:-len(target.copilot_args)] if target.copilot_args else args
+            args = [*launch_prefix, *base, *replacement, *trailing]
     args = _wrap_batch_for_windows(args, env)
     return args, work_dir, env
 
@@ -1132,14 +1158,26 @@ async def spawn_raw(
     return AgentProcess(proc, target)
 
 
-def _find_copilot() -> str:
+def _find_copilot(
+    environment: dict[str, str] | None = None, *, cwd: str | None = None,
+    explicit_path: str | None = None,
+) -> str:
     """Find the copilot CLI binary."""
     # Check environment override
-    path = os.environ.get("COPILOT_PATH")
+    env = os.environ if environment is None else environment
+    path = explicit_path or env.get("COPILOT_PATH")
+    if path and os.path.isabs(path):
+        return path
+    if cwd is not None:
+        from plugin_resolve.execution import execution_executable
+
+        return execution_executable(path or "copilot", dict(env), cwd, required=False)
     if path:
         return path
 
     # Default to "copilot" on PATH
+    if environment is not None:
+        return shutil.which("copilot", path=env.get("PATH", "")) or "copilot"
     return "copilot"
 
 
