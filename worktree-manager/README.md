@@ -354,7 +354,8 @@ legacy slot with a zero-byte completion marker and intact source manifest.
 Missing or broken qualified environments never fall back to project resolution.
 Launcher files are published through complete temporary files and atomic
 replacement; rollback retains their prior bytes and permissions.
-Source-only legacy completion markers are not runtime readiness; a no-op also
+Source-only, unknown-format or undecodable completion markers are not runtime
+readiness and request repair instead of aborting decoding; a no-op also
 requires actual installed health. Stale binstubs or provider metadata are
 repaired without rebuilding a healthy environment.
 Launcher-only repair takes the same install lease, rechecks readiness there

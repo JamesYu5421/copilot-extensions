@@ -173,6 +173,15 @@ implementation; public-file absence is not proof of unpublished custody.
 
 ## Journal
 
+- **2026-10-20** - Addressed the subsequent review's malformed-completion
+  recovery case: invalid UTF-8 now classifies the slot as incomplete instead of
+  escaping `needs_install()` as a decoding failure. The regression checks both
+  readiness and the actual bootstrap repair decision, alongside empty, prior
+  and unknown formats. The contained install/isolation selection passes
+  **76 tests**, with two explicit Windows symlink-permission skips; touched
+  Python lint passes. This does not waive the separate native Linux or
+  published-consumer gates.
+
 - **2026-10-20** - Qualified the revised layout against committed candidate
   `b56efeb8623055c263c3f8e2e14cf90886a1767c`. Native PowerShell 5.1 and 7
   each fetched a complete, clean candidate checkout, constructed a fresh

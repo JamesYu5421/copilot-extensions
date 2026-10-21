@@ -157,12 +157,15 @@ def test_payload_copy_never_inherits_source_environments(tmp_path, monkeypatch, 
     assert runtime.runtime_python(slot).is_file()
 
 
-@pytest.mark.parametrize("marker", ["", "platform-runtime-v1\n", "unknown-format\n"])
+@pytest.mark.parametrize("marker", [b"", b"platform-runtime-v1\n", b"unknown-format\n", b"\xff"])
 def test_prior_completion_formats_do_not_qualify_the_isolated_layout(
     standalone_runtime, marker,
 ):
     slot = standalone_runtime
-    (slot / ".install-complete").write_text(marker, encoding="utf-8")
+    (slot / ".install-complete").write_bytes(marker)
+    root = slot.parent.parent
+    si._write_marker(root, "1.2.3")
     assert not si._slot_is_complete(slot)
+    assert si.needs_install("1.2.3", root)
     si._mark_slot_complete(slot)
     assert si._slot_is_complete(slot)

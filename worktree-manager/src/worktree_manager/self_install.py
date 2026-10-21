@@ -199,7 +199,7 @@ def _slot_is_complete(slot: Path) -> bool:
     """
     try:
         complete = (slot / _SLOT_COMPLETE_MARKER).read_text("utf-8").strip() == RUNTIME_FORMAT
-    except OSError:
+    except (OSError, UnicodeError):
         return False
     return complete and runtime_python(slot).is_file() and all(
         (slot / rel).is_file() for rel in _SLOT_KEY_FILES
