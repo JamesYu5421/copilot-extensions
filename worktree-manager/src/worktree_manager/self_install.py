@@ -34,6 +34,7 @@ from .installed_runtime import RUNTIME_FORMAT, payload_root, probe_runtime, runt
 from .installed_runtime import cmd_binstub as _cmd_binstub
 from .installed_runtime import ps1_binstub as _ps1_binstub
 from .installed_runtime import sh_binstub as _sh_binstub
+from .engine_posix_process import CleanupError
 
 MARKER = "current-version"
 VERSIONS_DIR = "versions"
@@ -395,6 +396,8 @@ def _runtime_install_satisfied(version: str, root: Path | None = None) -> bool:
         return False
     try:
         probe_runtime(version_slot(version, r), version)
+    except CleanupError:
+        raise
     except RuntimeError as exc:
         logging.getLogger(__name__).warning("Manager installed runtime is not healthy: %s", exc)
         return False

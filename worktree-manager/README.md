@@ -125,8 +125,10 @@ request a bounded plan call.
 An explicitly bounded SSH prompt plan allows at least 240 seconds for the
 target's 180-second admission call and host overhead; an unbounded preparation
 call remains unbounded.
-Captured preparation owns a kill-on-close Job on Windows and a finite
-construction broker on POSIX. The broker keeps each process-group leader
+Captured preparation owns a kill-on-close Job on Windows and a per-operation
+construction broker on POSIX. Default unbounded preparation remains unbounded
+through client waiting and branch deadlines; retirement acknowledgement still
+has its own finite cleanup bound. The broker keeps each process-group leader
 unreaped through its cleanup signal, then waits for group disappearance before
 acknowledging completion. This also covers an inner render failure that degrades
 while the engine exits normally. Foreground projection stays in that owned
@@ -356,7 +358,10 @@ Launcher files are published through complete temporary files and atomic
 replacement; rollback retains their prior bytes and permissions.
 Source-only, unknown-format or undecodable completion markers are not runtime
 readiness and request repair instead of aborting decoding; a no-op also
-requires actual installed health. Stale binstubs or provider metadata are
+requires actual installed health. Unconfirmed probe retirement aborts the
+readiness/repair decision rather than classifying the slot as merely unhealthy
+and allowing replacement while probe processes remain live.
+Stale binstubs or provider metadata are
 repaired without rebuilding a healthy environment.
 Launcher-only repair takes the same install lease, rechecks readiness there
 and retains the previous launcher bytes through a partial write or interruption;

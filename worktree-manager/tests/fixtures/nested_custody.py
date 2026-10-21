@@ -46,7 +46,7 @@ def exercise(root, workspace, outcome):
         f"while not Path({str(ready)!r}).exists(): time.sleep(.01)\n"
         + (
             "raise SystemExit(7)\n" if outcome == "signal-ignored"
-            else "" if outcome == "success" else "time.sleep(60)\n"
+            else "" if outcome in ("success", "unbounded") else "time.sleep(60)\n"
         )
     )
     original = owned._complete
@@ -62,8 +62,8 @@ def exercise(root, workspace, outcome):
             try:
                 identity.append(os.pidfd_open(int(ready.read_text())))
             except ProcessLookupError:
-                assert outcome in ("success", "signal-ignored")
-        if outcome == "interrupt":
+                assert outcome in ("success", "signal-ignored", "unbounded")
+        if outcome in ("interrupt", "unbounded-interrupt"):
             raise KeyboardInterrupt()
         if outcome == "capture":
             raise OSError("injected capture failure")
@@ -72,15 +72,30 @@ def exercise(root, workspace, outcome):
     owned._complete = capture
     try:
         try:
-            result = installed_runtime._owned_runner(
-                [sys.executable, "-c", policy], cwd=stage, timeout=2,
-            )
-            assert outcome in ("success", "signal-ignored")
-            assert result.returncode == (7 if outcome == "signal-ignored" else 0)
+            if outcome in ("unbounded", "unbounded-interrupt"):
+                from worktree_manager import engine_client
+
+                plan = {
+                    "action": "exec", "work_dir": str(stage), "status_path": str(stage),
+                    "cmd": [sys.executable, "--version"], "env": {},
+                    "worktree_id": "fixture", "post_exit": False, "no_mux": True,
+                }
+                command = policy + f"print({json.dumps(plan)!r})\n"
+                os.environ[engine_client.ENGINE_ARGV_ENV] = json.dumps([
+                    sys.executable, "-I", "-B", "-c", command,
+                ])
+                resolved = engine_client.resolve_launch_plan("fixture", worktree_id="fixture")
+                assert resolved.is_exec and resolved.work_dir == str(stage)
+            else:
+                result = installed_runtime._owned_runner(
+                    [sys.executable, "-c", policy], cwd=stage, timeout=2,
+                )
+                assert outcome in ("success", "signal-ignored")
+                assert result.returncode == (7 if outcome == "signal-ignored" else 0)
         except subprocess.TimeoutExpired:
             assert outcome == "timeout"
         except KeyboardInterrupt:
-            assert outcome == "interrupt"
+            assert outcome in ("interrupt", "unbounded-interrupt")
         except OSError as error:
             assert outcome == "capture" and "injected" in str(error)
         connection, _ = listener.accept()
@@ -250,7 +265,8 @@ def main():
     result = engine_process.run(
         [sys.executable, "-I", "-B", str(Path(__file__).resolve()),
          str(root), str(workspace), outcome, "--engine"],
-        env=dict(os.environ), timeout=20, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=dict(os.environ), timeout=None if outcome.startswith("unbounded") else 20,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["exited_before_cleanup"]

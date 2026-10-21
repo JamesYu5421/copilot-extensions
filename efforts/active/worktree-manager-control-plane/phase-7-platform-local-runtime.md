@@ -174,6 +174,25 @@ implementation; public-file absence is not proof of unpublished custody.
 
 ## Journal
 
+- **2026-10-21** - The review of continuation `8d3c9f55` confirms both prior
+  custody findings resolved, and identified two further correctness cases:
+  default unbounded launch preparation must retain `timeout=None` throughout
+  client waiting, broker validation, deadline construction and expiry; an
+  unconfirmed installed-health cleanup error must not become an ordinary
+  unhealthy-slot result permitting replacement. Corrected both paths and added
+  direct deadline/ack contracts, a real default non-contained launch-plan
+  fixture and its interruption, and error-identity propagation through health,
+  `needs_install()` and same-version repair with selected-slot preservation.
+  The focused four-file contained selection passes **93 tests**, with 15
+  platform/opt-in skips. A preceding invocation passed its assertions but
+  correctly refused host-state qualification while an independent system
+  package installation changed machine PATH; no shared state was rolled back
+  and the unchanged guard passed the quiet revalidation. The expanded eight-file
+  selection then passes **275 tests**, with 17 platform/opt-in skips.
+  Lint, install-contract, module-size and headless-launch checks pass.
+  Final native qualification of the added unbounded cases and refreshed
+  current-head review remain open.
+
 - **2026-10-21** - The operator authorized active stewardship of the same
   implementation PR #7420. The original driver paused and retained its checkout
   and claims; its installed handoff command explicitly refuses cross-machine

@@ -38,6 +38,39 @@ def _fake_build(slot: Path) -> None:
     python.write_text("fixture interpreter", encoding="utf-8")
 
 
+@pytest.mark.parametrize("operation", ["runtime-readiness", "needs-install", "same-version-repair"])
+def test_unconfirmed_probe_cleanup_cannot_request_runtime_replacement(
+    tmp_path, monkeypatch, operation,
+):
+    root = tmp_path / "manager"
+    slot = _source(si.version_slot("1.2.3", root))
+    _fake_build(slot)
+    si._mark_slot_complete(slot)
+    (root / si.MARKER).write_text("1.2.3", encoding="utf-8")
+    retained = slot / "retained"
+    retained.write_text("previous runtime", encoding="utf-8")
+    failure = si.CleanupError("probe descendants are still owned")
+
+    def unconfirmed(*_):
+        raise failure
+
+    monkeypatch.setattr(si, "probe_runtime", unconfirmed)
+    monkeypatch.setattr(si, "_copy_payload", lambda *_: pytest.fail("unsafe runtime replacement"))
+    monkeypatch.setattr(si, "_currently_running_from", lambda *_: False)
+    with pytest.raises(si.CleanupError) as observed:
+        if operation == "runtime-readiness":
+            si._runtime_install_satisfied("1.2.3", root)
+        elif operation == "needs-install":
+            si.needs_install("1.2.3", root)
+        else:
+            source = _source(tmp_path / "source")
+            si.self_install(source, root=root, dry_run=False)
+    assert observed.value is failure
+    assert retained.read_text(encoding="utf-8") == "previous runtime"
+    assert (root / si.MARKER).read_text(encoding="utf-8") == "1.2.3"
+    assert not list(slot.parent.glob("*.staging.*"))
+
+
 def test_source_policy_does_not_come_from_a_foreign_manager_venv(tmp_path, monkeypatch):
     expected = runtime.payload_root()
     foreign = _source(tmp_path / "old-manager")

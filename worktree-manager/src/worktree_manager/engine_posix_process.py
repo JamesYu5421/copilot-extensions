@@ -16,7 +16,8 @@ from .engine_posix_broker import CleanupError
 
 
 def _complete(connection, argv, timeout):
-    ready, _, _ = select.select([connection], [], [], timeout + broker.CLEANUP_TIMEOUT + 1)
+    wait = None if timeout is None else timeout + broker.CLEANUP_TIMEOUT + 1
+    ready, _, _ = select.select([connection], [], [], wait)
     if not ready:
         raise subprocess.TimeoutExpired(argv, timeout)
     connection.settimeout(broker.CLEANUP_TIMEOUT)

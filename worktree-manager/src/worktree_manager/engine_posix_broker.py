@@ -110,7 +110,7 @@ class Branch:
     process: subprocess.Popen
     connection: socket.socket
     parent: str | None
-    deadline: float
+    deadline: float | None
     receipt: bytes = b""
     reaped: bool = False
 
@@ -155,8 +155,10 @@ class Broker:
                 or not key or "=" in key or "\0" in key or "\0" in value
                 for key, value in env.items()
             )
-            or type(timeout) not in (int, float)
-            or not math.isfinite(timeout) or timeout <= 0
+            or timeout is not None and (
+                type(timeout) not in (int, float)
+                or not math.isfinite(timeout) or timeout <= 0
+            )
             or request["cwd"] is not None and (
                 not isinstance(request["cwd"], str) or not os.path.isabs(request["cwd"])
                 or "\0" in request["cwd"]
@@ -180,7 +182,8 @@ class Broker:
             start_new_session=True, pass_fds=tuple(descriptors),
             env=env, cwd=request["cwd"],
         )
-        branch = Branch(process, connection, parent, time.monotonic() + request["timeout"])
+        deadline = None if timeout is None else time.monotonic() + timeout
+        branch = Branch(process, connection, parent, deadline)
         self.branches[token] = branch
         # Registration precedes permission to execute, including the cancellation race.
         process.stdin.write(b"G")
@@ -236,7 +239,7 @@ class Broker:
                 if branch.connection in ready:
                     branch.connection.recv(1)
                     self.finish(token, {"error": "cancelled"})
-                elif time.monotonic() >= branch.deadline:
+                elif branch.deadline is not None and time.monotonic() >= branch.deadline:
                     self.finish(token, {"error": "timeout"})
                 elif branch.process.stdout in ready:
                     chunk = os.read(branch.process.stdout.fileno(), 4096)

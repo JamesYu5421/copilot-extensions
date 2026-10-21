@@ -1603,8 +1603,9 @@ standalone contained runner. `MANAGER_RUNTIME_WINDOWS_E2E=1` also observes its
 two no-UV probe cycles for visible windows and focus changes.
 The POSIX nested-constructor cases execute the same stdlib-only
 `worktree-manager/tests/fixtures/nested_custody.py` witness for inner timeout,
-interruption, capture failure and success; ignored `SIGCHLD`; outer timeout,
-interruption and foreign Python home; and an escaped-session negative control.
+interruption, capture failure and success; ignored `SIGCHLD`; default unbounded
+launch-plan preparation and its interruption; outer timeout, interruption and
+foreign Python home; and an escaped-session negative control.
 Private Unix streams witness exit before destructive cleanup; Linux also checks
 identity-pinned pidfds when available. The negative control must detect the live
 escape and retain the bootstrap runner, then retire its own worker through its
@@ -1613,6 +1614,9 @@ owned. Windows skips native POSIX cases explicitly; state-machine tests are not
 POSIX execution evidence. The Windows native timeout fixture allows interpreter
 startup within the unchanged item watchdog; it tests descendant retirement,
 not a two-second cold-start performance target.
+Readiness regressions also require an unconfirmed probe-cleanup error to
+propagate unchanged through runtime health, `needs_install()` and a same-version
+repair, without replacing the selected slot or publishing a candidate.
 
 ```text
 python tools/run-plugin-tests.py worktree-manager --test-file tests/test_engine_posix_process.py --test-file tests/test_engine_process.py --test-file tests/test_bootstrap_runtime.py

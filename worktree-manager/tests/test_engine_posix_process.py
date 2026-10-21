@@ -70,6 +70,32 @@ def test_branch_is_registered_before_command_permission(monkeypatch):
     assert events == [(b"G", 1)]
 
 
+def test_unbounded_completion_wait_still_requires_cleanup_acknowledgement(monkeypatch):
+    cleanup_waits = []
+    connection = SimpleNamespace(settimeout=cleanup_waits.append)
+    waits = []
+    monkeypatch.setattr(
+        pp.select, "select",
+        lambda _read, _write, _errors, timeout: waits.append(timeout) or ([connection], [], []),
+    )
+    reply = {"returncode": 0, "cleaned": True}
+    monkeypatch.setattr(broker, "receive_frame", lambda _: (reply, []))
+    assert pp._complete(connection, ["engine"], None) is reply
+    assert waits == [None]
+    assert cleanup_waits == [broker.CLEANUP_TIMEOUT]
+
+
+def test_unbounded_branch_registers_without_a_numeric_deadline(monkeypatch):
+    state = broker.Broker(SimpleNamespace(getsockname=lambda: "private-socket"), None)
+    process = SimpleNamespace(
+        stdin=SimpleNamespace(write=lambda _: None, flush=lambda: None),
+    )
+    monkeypatch.setattr(broker.subprocess, "Popen", lambda *_a, **_k: process)
+    state.launch(None, _request(timeout=None), [1, 2])
+    assert len(state.branches) == 1
+    assert next(iter(state.branches.values())).deadline is None
+
+
 def test_outer_branch_retires_nested_groups_before_acknowledging(monkeypatch):
     events = []
     root = SimpleNamespace(close=lambda: events.append("close-root"))
@@ -235,7 +261,8 @@ def test_invalid_request_cannot_launch_work(monkeypatch, field, value):
     assert not state.branches
 
 
-def test_unconfirmed_cleanup_preserves_broker_and_its_directory(monkeypatch, tmp_path):
+@pytest.mark.parametrize("timeout", [1, None])
+def test_unconfirmed_cleanup_preserves_broker_and_its_directory(monkeypatch, tmp_path, timeout):
     directory = tmp_path / "broker"
     directory.mkdir()
     connection = SimpleNamespace(close=lambda: pytest.fail("unconfirmed connection closed"))
@@ -255,7 +282,7 @@ def test_unconfirmed_cleanup_preserves_broker_and_its_directory(monkeypatch, tmp
     monkeypatch.setattr(pp, "_complete", interrupted)
     monkeypatch.setattr(pp, "_acknowledge", unconfirmed)
     with pytest.raises(broker.CleanupError) as raised:
-        pp.run(["engine"], timeout=1, env={})
+        pp.run(["engine"], timeout=timeout, env={})
     assert raised.value.process is process
     assert raised.value.connection is connection
     assert raised.value.directory == directory
@@ -297,7 +324,12 @@ def test_incomplete_inherited_context_refuses_before_launch(monkeypatch, missing
 
 
 @pytest.mark.skipif(os.name == "nt", reason="native Linux/macOS construction ownership")
-@pytest.mark.parametrize("outcome", ["timeout", "interrupt", "capture", "success", "signal-ignored"])
+@pytest.mark.parametrize(
+    "outcome", [
+        "timeout", "interrupt", "capture", "success", "signal-ignored",
+        "unbounded", "unbounded-interrupt",
+    ],
+)
 def test_native_inner_cleanup_precedes_candidate_deletion(tmp_path, outcome):
     root = Path(__file__).resolve().parents[2]
     result = subprocess.run(
