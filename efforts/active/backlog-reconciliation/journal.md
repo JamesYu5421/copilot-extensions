@@ -688,3 +688,58 @@ Canonical contract: [README.md](README.md).
   Oldest-first publication continues with batch thirty-one; the effort stays
   Active. No product implementation, tests, native probes, deployment,
   process/service, credential or live custody changes were made.
+
+## 2026-10-21 - Batches thirty-one and thirty-two, 640 original issues reviewed
+
+- The complete paginated census at 15:59 UTC records **1,147 open issues**:
+  1,144 original-cohort issues and inflow #7556/#7587/#7606. **640 distinct
+  originals are reviewed; 313 were closed by this campaign**. Including
+  unrelated #5610 and concurrent inflow, the live net reduction is 311.
+  No campaign closure was observed reopened. The fixed guidance checkpoint
+  remains at most 729.
+- These batches closed 18 trackers: seventeen completed finite scopes and
+  one requirement-preserving consolidation. #4058's full Bridge-specific
+  payload-to-serving-runtime checklist was appended to final-open #4015
+  and read back before closure. The canonical body, prior acceptance,
+  source/ref/pin, native-serving and implementation-owner obligations remain.
+- Completed scopes include attributable command discovery, nonempty custom
+  handoff seeds, explicit non-TTY creation intent, the accepted stale-fetch
+  warning alternative, isolated reconciliation fixtures and actual Picker
+  maintenance wiring. These do not certify every guidance admission,
+  successor-consumption, freshness, removal or triage-masking outcome.
+- Picker default-hidden/reveal, Stay-default quit confirmation, background
+  update-check ordering, lazy per-tab lists and inner WSL mux routing are
+  implemented. Each closes its finite original capability, not a newly
+  invented universal performance or current installed-platform gate.
+  User-origin ACP visibility and explicit no-mux/programmatic intent remain
+  distinct from lifecycle kind and remote interactive wrapping.
+- Other completed scopes are the declared routing-test dependency, reliable
+  hook CWD/explicit-worktree routing, required-PR push refusal, machine-local
+  adoption/launch configuration, paired Windows PS1/CMD adapters and
+  finalized-worktree PR reconciliation. Exact source and merged-history
+  evidence are credited; no fresh import, fixture, UI or native run is claimed.
+- #4096 credits the actual class-downgrade repair while retaining its separate
+  confirmation-policy acceptance. #4111's original valid-context routing fix
+  does not close the distinct #4134 current-project selection defect.
+  #4118 retains create-time producer stamping, not an added historical
+  backfill programme; #4119 retains independent launch-origin/API semantics.
+- Remaining scopes include actual-work concurrent-update qualification,
+  scheduler work receipts, full startup workflow guidance, prelaunch plugin
+  reconciliation, lossless configuration and multi-provider attribution,
+  exact worktree first-turn identity, nonallocating new-worktree preview,
+  single-owner PR projection and the complete fleet API. Existing partial
+  mechanisms are credited without treating them as whole-program completion.
+- #4122 installer tolerance and #4123 fixture-origin cleanup remain distinct.
+  Ignoring or removing old artifacts does not establish safe handling of
+  existing debris or teardown of newly created links. #4124 stays open:
+  #4564's explicit non-expiring recovery reservation was not released or
+  widened merely because its assignee field is empty.
+- A bounded operational documentation finding is preserved for later filing
+  permission: the handoff skill's `claims show --json` example is not the
+  current default-read grammar; `claims --json` is the supported read form.
+  The read-only inspection succeeded using that form. No product change,
+  new issue, claim release or custody workaround was performed.
+- Four disjoint read-only researchers are supplied through batch forty-three.
+  Oldest-first publication continues with batch thirty-three; the effort
+  stays Active. No product implementation, tests, native probes, deployment,
+  process/service, credential or live custody changes were made.
