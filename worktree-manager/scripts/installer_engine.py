@@ -20,7 +20,9 @@ from types import ModuleType
 import tomllib
 import versioned_runtime as runtime
 import versioned_runtime_source as runtime_source
-from installer_dependency_policy import RetainedUVInstall, retain_uv_install
+from installer_dependency_policy import (
+    DependencyPolicyError, RetainedUVInstall, _bundled_dbus_next, _contained, retain_uv_install,
+)
 from installer_engine_process import ChildLaunchError, ChildTimeoutExpired, run_owned
 
 _GENERATED_DIRECTORIES = {
@@ -87,7 +89,14 @@ def _package_roots(plugin: Path) -> tuple[Path, ...]:
             path = source["path"]
             if not isinstance(path, str) or not path:
                 raise ValueError(f"Runtime dependency path is invalid for {dependency}: {manifest}")
-            pending.append((root / path, dependency))
+            child = root / path
+            if child.is_file():
+                child = _contained(child, (root,))
+                if not _bundled_dbus_next(key, dependency, child):
+                    raise DependencyPolicyError("local UV artifacts cannot prove release age")
+                # The admitted artifact is already covered by its owning package's files.
+                continue
+            pending.append((child, dependency))
     return tuple(sorted(roots))
 
 
@@ -186,8 +195,11 @@ def _retained_inputs(inputs: FrozenInputs, uv: Path, python: Path, *, refresh: b
         environment.pop(name, None)
     with retain_uv_install(
         str(uv.resolve(strict=True)),
-        ["--python", str(python), "--no-sources", "--no-editable", "--link-mode", "copy",
-         *(["--reinstall"] if refresh else []), *map(str, inputs.packages)],
+        ["--python", str(python), "--no-editable", "--link-mode", "copy",
+         *(["--reinstall"] if refresh else []),
+         *(argument for package in inputs.packages
+           for argument in ("-r", str(package / "pyproject.toml"))),
+         *map(str, inputs.packages)],
         env=environment, cwd=inputs.plugin,
         trusted_source_roots=inputs.packages,
     ) as transaction:
