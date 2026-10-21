@@ -27,6 +27,7 @@ from .queue_common import (
     _check_expected_status,
 )
 from .queue_records import SpawnState, Status, TaskError
+from .queue_execution_handoff import require_execution_admission
 from .registrations import RegistrationKind, RegistrationStatus
 from .steering import SteeringError, steer_request_fingerprint
 
@@ -254,6 +255,10 @@ class QueueSteeringMixin:
                         else ""
                     )
                 )
+            if task.status == Status.SUSPENDED or (
+                wake_requested and task.owner and task.owner_session_id is not None
+            ):
+                require_execution_admission(conn, task_id)
             inserted = conn.execute(
                 "INSERT INTO task_steer"
                 " (task_id, ts, fields, sender, idempotency_key, request_fingerprint)"
@@ -598,6 +603,9 @@ class QueueSteeringMixin:
                 row = conn.execute(
                     "SELECT * FROM wake_outbox"
                     " WHERE status = 'pending' AND not_before <= ?"
+                    " AND NOT EXISTS (SELECT 1 FROM execution_admission_closures c"
+                    " JOIN tasks t ON t.repo = c.repo AND t.source = c.source"
+                    " WHERE t.id = wake_outbox.task_id)"
                     " ORDER BY created_at ASC, id ASC LIMIT 1",
                     (ts,),
                 ).fetchone()
