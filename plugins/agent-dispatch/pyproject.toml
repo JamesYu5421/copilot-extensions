@@ -7,7 +7,7 @@ exclude-newer = "7 days"
 
 [project]
 name = "agent-dispatch"
-version = "0.18.15-dev1"
+version = "0.18.16-dev1"
 description = "Portable agent task-queue + per-host coordinator: a single-writer SQLite work queue so agents coordinate without push latency or an account per agent."
 readme = "README.md"
 license = "MIT"
@@ -26,9 +26,11 @@ dependencies = [
     "agent-plugin-activation",
     "agent-plugin-resolve",
     "agent-single-instance-lease",
+    "agent-worktree-identity",
 ]
 
 [tool.uv.sources]
+agent-worktree-identity = { path = "libs/worktree-identity" }
 # zero-downtime cutover primitives -- the routing table + cutover orchestrator
 # (module ``zdd``). This is a `uv`-editable canonical reference
 # (vendor-pointer-generalization effort, Phase 1): `path` escapes this
