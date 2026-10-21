@@ -18,6 +18,82 @@ _STRUCTURED_CUTOFF = re.compile(
 )
 
 
+def anchor_roots(helper, *, contained, toml, identity, error_type):
+    """Attribute CLI source roots to the helper's payload and canonical roster."""
+    owner_payload = None
+    repository = None
+    if helper.parent.name == "scripts":
+        payload = helper.parent.parent
+        try:
+            manifest = json.loads(contained(payload / "plugin.json", (payload,)).read_text(encoding="utf-8"))
+            project = toml(contained(payload / "pyproject.toml", (payload,)))["project"]
+            if (identity(manifest["name"]) == identity(project["name"])
+                    and manifest["version"] == project["version"]
+                    and manifest.get("repository") == "https://github.com/ThomasMichon/copilot-extensions"):
+                candidate = payload.parent.parent
+                if (payload.parent.name == "plugins"
+                        and (candidate / ".github" / "plugin" / "marketplace.json").is_file()):
+                    repository, owner_payload = candidate, payload
+                else:
+                    return (payload,)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        if repository is None:
+            return ()
+    # Canonical source graphs are roster-owned plugins plus their explicitly
+    # named library references. Standalone projects need caller attestation.
+    if repository is None:
+        if helper.parent.name != "installer-engine" or helper.parent.parent.name != "libs":
+            return ()
+        repository = helper.parents[2]
+    roster = repository / ".github" / "plugin" / "marketplace.json"
+    if not roster.is_file():
+        return ()
+    try:
+        data = json.loads(contained(roster, (repository,)).read_text(encoding="utf-8"))
+        if data.get("name") != "copilot-extensions":
+            return ()
+        roots = set()
+        pending = []
+        for entry in data["plugins"]:
+            source = entry.get("source", "")
+            if not isinstance(source, str) or not re.fullmatch(r"plugins/[A-Za-z0-9_-]+", source):
+                continue
+            path = contained(repository / source, (repository,))
+            manifest_path = contained(path / "plugin.json", (repository,))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if manifest["name"] != entry["name"] or manifest["version"] != entry["version"]:
+                raise error_type("canonical plugin roster identity is inconsistent")
+            if (path / "pyproject.toml").is_file():
+                project = toml(contained(path / "pyproject.toml", (repository,)))
+                if identity(project["project"]["name"]) != identity(entry["name"]):
+                    raise error_type("canonical project identity is inconsistent")
+                roots.add(path)
+                pending.append((path, path / "libs"))
+        if owner_payload is not None and owner_payload not in roots:
+            raise error_type("installer helper owner is not a roster-attributed project")
+        while pending:
+            source, library_root = pending.pop()
+            mappings = toml(contained(source / "pyproject.toml", (repository,))).get("tool", {}).get("uv", {}).get("sources", {})
+            for name, entries in mappings.items():
+                for entry in entries if isinstance(entries, list) else [entries]:
+                    if not isinstance(entry, dict) or "path" not in entry:
+                        continue
+                    child = contained(source / entry["path"], (repository,))
+                    if not (child.is_relative_to(repository / "libs")
+                            or child.is_relative_to(library_root)):
+                        raise error_type("canonical local graph lacks library attribution")
+                    if identity(toml(contained(child / "pyproject.toml", (repository,)))["project"]["name"]) != identity(name):
+                        raise error_type("canonical library identity is inconsistent")
+                    if child not in roots:
+                        roots.add(child)
+                        child_root = repository / "libs" if child.is_relative_to(repository / "libs") else library_root
+                        pending.append((child, child_root))
+        return tuple(sorted(roots))
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise error_type("canonical source ownership could not be established") from exc
+
+
 def config_inputs(arguments, environment, base, *, argument_pairs, toml, error_type):
     pairs = dict(argument_pairs(arguments))
     if "--no-config" in pairs or environment.get("UV_NO_CONFIG", "").lower() in ("1", "true"):

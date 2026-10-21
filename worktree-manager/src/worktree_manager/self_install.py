@@ -197,16 +197,10 @@ def _slot_is_complete(slot: Path) -> bool:
     shipped binstubs need to launch, including the pre-resolution runner and
     its shared seasoning helpers, the project manifest, and the module target.
 
-    The marker alone proves the install completed; it does not prove the
-    slot hasn't been damaged since (a file removed by something outside
-    this module's control after a genuinely successful install). The key
-    files remain a cheap, independent second check against that later
-    damage. Directory existence, or any subset of files present without
-    the marker, proves nothing: a slot can exist, and even partially
-    survive a failed ``_copy_payload()`` recopy (one that imports or
-    materialized libraries it depends on at runtime may still be missing),
-    while still being unlaunchable (``No module named worktree_manager``
-    or an equivalent failure at run time).
+    The marker proves publication, not freedom from later damage. Key files
+    independently detect missing launch dependencies. A directory or partial
+    copy without the marker never proves completion, even if its module target
+    survives a failed recopy while required imports or libraries do not.
     """
     return (slot / _SLOT_COMPLETE_MARKER).is_file() and all(
         (slot / rel).is_file() for rel in _SLOT_KEY_FILES

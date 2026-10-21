@@ -270,79 +270,10 @@ def _inspect_project(
 
 def _anchor_roots() -> tuple[Path, ...]:
     """CLI-only attribution from the helper's owner, never installation inputs."""
-    helper = Path(__file__).resolve()
-    owner_payload = None
-    repository = None
-    if helper.parent.name == "scripts":
-        payload = helper.parent.parent
-        try:
-            manifest = json.loads(_contained(payload / "plugin.json", (payload,)).read_text(encoding="utf-8"))
-            project = _toml(_contained(payload / "pyproject.toml", (payload,)))["project"]
-            if (_identity(manifest["name"]) == _identity(project["name"])
-                    and manifest["version"] == project["version"]
-                    and manifest.get("repository") == "https://github.com/ThomasMichon/copilot-extensions"):
-                candidate = payload.parent.parent
-                if (payload.parent.name == "plugins"
-                        and (candidate / ".github" / "plugin" / "marketplace.json").is_file()):
-                    repository, owner_payload = candidate, payload
-                else:
-                    return (payload,)
-        except (OSError, ValueError, KeyError, TypeError):
-            pass
-        if repository is None:
-            return ()
-    # Canonical source graphs are roster-owned plugins plus their explicitly
-    # named library references. Standalone projects need caller attestation.
-    if repository is None:
-        if helper.parent.name != "installer-engine" or helper.parent.parent.name != "libs":
-            return ()
-        repository = helper.parents[2]
-    roster = repository / ".github" / "plugin" / "marketplace.json"
-    if not roster.is_file():
-        return ()
-    try:
-        data = json.loads(_contained(roster, (repository,)).read_text(encoding="utf-8"))
-        if data.get("name") != "copilot-extensions":
-            return ()
-        roots = set()
-        pending = []
-        for entry in data["plugins"]:
-            source = entry.get("source", "")
-            if not isinstance(source, str) or not re.fullmatch(r"plugins/[A-Za-z0-9_-]+", source):
-                continue
-            path = _contained(repository / source, (repository,))
-            manifest_path = _contained(path / "plugin.json", (repository,))
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            if manifest["name"] != entry["name"] or manifest["version"] != entry["version"]:
-                raise DependencyPolicyError("canonical plugin roster identity is inconsistent")
-            if (path / "pyproject.toml").is_file():
-                project = _toml(_contained(path / "pyproject.toml", (repository,)))
-                if _identity(project["project"]["name"]) != _identity(entry["name"]):
-                    raise DependencyPolicyError("canonical project identity is inconsistent")
-                roots.add(path)
-                pending.append((path, path / "libs"))
-        if owner_payload is not None and owner_payload not in roots:
-            raise DependencyPolicyError("installer helper owner is not a roster-attributed project")
-        while pending:
-            source, library_root = pending.pop()
-            mappings = _toml(_contained(source / "pyproject.toml", (repository,))).get("tool", {}).get("uv", {}).get("sources", {})
-            for name, entries in mappings.items():
-                for entry in entries if isinstance(entries, list) else [entries]:
-                    if not isinstance(entry, dict) or "path" not in entry:
-                        continue
-                    child = _contained(source / entry["path"], (repository,))
-                    if not (child.is_relative_to(repository / "libs")
-                            or child.is_relative_to(library_root)):
-                        raise DependencyPolicyError("canonical local graph lacks library attribution")
-                    if _identity(_toml(_contained(child / "pyproject.toml", (repository,)))["project"]["name"]) != _identity(name):
-                        raise DependencyPolicyError("canonical library identity is inconsistent")
-                    if child not in roots:
-                        roots.add(child)
-                        child_root = repository / "libs" if child.is_relative_to(repository / "libs") else library_root
-                        pending.append((child, child_root))
-        return tuple(sorted(roots))
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise DependencyPolicyError("canonical source ownership could not be established") from exc
+    return _configuration.anchor_roots(
+        Path(__file__).resolve(), contained=_contained, toml=_toml,
+        identity=_identity, error_type=DependencyPolicyError,
+    )
 
 
 def _balanced(text: str, start: int, opening: str, closing: str) -> tuple[str, int]:
