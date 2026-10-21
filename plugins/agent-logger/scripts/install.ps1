@@ -297,6 +297,8 @@ if (-not $env:COPILOT_PLUGIN_INSTALL_STAGED -or
                 $__wdChild = Start-Process -FilePath $__selfStageExe -PassThru -NoNewWindow `
                     -WorkingDirectory $env:USERPROFILE `
                     -ArgumentList $__selfStageArgs
+                # Windows PowerShell must retain the handle before waiting to preserve ExitCode.
+                $null = $__wdChild.Handle
                 if ($__wdDeadline -gt 0 -and -not $__wdChild.WaitForExit($__wdDeadline * 1000)) {
                     try { & taskkill.exe /PID $__wdChild.Id /T /F 2>&1 | Out-Null } catch {}
                     try { Stop-Process -Id $__wdChild.Id -Force -ErrorAction SilentlyContinue } catch {}
@@ -926,46 +928,9 @@ function Test-SnapshotRequiresMaterializedEngine {
 
 function Publish-SnapshotSource {
     param([string]$SnapshotDir)
-    if ($env:COPILOT_EXTENSIONS_CONTEXT) { return }
-    $helper = Join-Path $ScriptDir 'installation-context\installation-context.ps1'
-    $resolved = @(& $helper -Action resolve -PayloadRoot $publicationSource `
-        -PluginId agent-logger -ProjectRoot $publicationProject)
-    if ($LASTEXITCODE -ne 0) {
-        if (Test-Path -LiteralPath (Join-Path $InstallDir 'runtime-deployment.json')) {
-            throw 'Cannot preserve canonical snapshot source under an explicit deployment policy.'
-        }
-        Write-Warning 'Snapshot has no canonical source evidence; explicit deployment ownership will require repair.'
-        return
-    }
-    $resolution = ($resolved -join "`n") | ConvertFrom-Json -ErrorAction Stop
-    $receipt = Join-Path $SnapshotDir 'snapshot-provenance.json'
-    if (Test-Path -LiteralPath $receipt) {
-        $entry = Get-Item -LiteralPath $receipt -Force
-        if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-            throw 'Snapshot source must be an ordinary file.'
-        }
-        $previous = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json -ErrorAction Stop
-        if ($previous.schema -cne 'copilot-extensions.legacy-snapshot-source' -or
-            ($previous.version -isnot [int] -and $previous.version -isnot [long]) -or
-            $previous.version -ne 1 -or
-            $previous.resolution.sourceFingerprint -cne $resolution.sourceFingerprint -or
-            $previous.resolution.pluginId -cne $resolution.pluginId) {
-            throw 'Existing snapshot source belongs to another owner or is invalid.'
-        }
-        return
-    }
-    $document = [ordered]@{
-        schema = 'copilot-extensions.legacy-snapshot-source'
-        version = 1
-        resolution = $resolution
-    } | ConvertTo-Json -Depth 30
-    $temporary = Join-Path $SnapshotDir ('.source-provenance-' + [guid]::NewGuid().ToString('N'))
-    try {
-        [IO.File]::WriteAllText($temporary, $document, [Text.UTF8Encoding]::new($false))
-        [IO.File]::Move($temporary, $receipt)
-    } finally {
-        if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
-    }
+    Publish-LegacySnapshotSource -SnapshotDir $SnapshotDir -HelperDirectory $ScriptDir `
+        -PayloadRoot $publicationSource -PluginId agent-logger -RuntimeRoot $InstallDir `
+        -ProjectRoot $publicationProject
 }
 
 function Publish-PayloadSnapshot {
