@@ -94,6 +94,28 @@ def test_apply_installs_marker_slot_and_binstub(tmp_path, monkeypatch):
     assert payload["provider_root"] == str(root.resolve())
 
 
+@pytest.mark.parametrize("root_source", ["argument", "environment"])
+def test_relative_root_installs_into_the_resolved_caller_directory(
+    tmp_path, monkeypatch, root_source,
+):
+    source = _fake_payload(tmp_path, "1.2.3")
+    monkeypatch.chdir(tmp_path)
+    _patch_local_bin(monkeypatch, tmp_path)
+    _patch_provider_registry(monkeypatch, tmp_path)
+    arguments = {}
+    if root_source == "environment":
+        monkeypatch.setenv("WORKTREE_MANAGER_ROOT", "manager")
+    else:
+        arguments["root"] = Path("manager")
+    result = self_install(source, dry_run=False, **arguments)
+    expected = tmp_path / "manager"
+    assert result.action == "installed"
+    assert Path(result.root) == expected
+    assert Path(result.slot) == expected / "versions" / "1.2.3"
+    assert current_version(expected) == "1.2.3"
+    assert si.runtime_python(Path("manager") / "versions" / "1.2.3").is_file()
+
+
 def test_windows_binstubs_force_utf8_mode():
     """``worktree-manager.cmd``/``.ps1`` must set ``PYTHONUTF8=1`` so the
     launched interpreter's stdout/stderr are UTF-8 regardless of the active

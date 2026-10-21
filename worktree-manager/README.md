@@ -129,8 +129,11 @@ Captured preparation owns a kill-on-close Job on Windows and a per-operation
 construction broker on POSIX. Default unbounded preparation remains unbounded
 through client waiting and branch deadlines; retirement acknowledgement still
 has its own finite cleanup bound. The broker keeps each process-group leader
-unreaped through its cleanup signal, then waits for group disappearance before
-acknowledging completion. This also covers an inner render failure that degrades
+unreaped through its one cleanup signal. On Linux, the selected canonical
+helper confirms each identity-pinned member has exited before reaping that
+leader; an exited zombie need not wait for an unrelated parent's reap.
+Other POSIX hosts conservatively require group disappearance. No live member
+permits a cleanup acknowledgement. This also covers an inner render failure that degrades
 while the engine exits normally. Foreground projection stays in that owned
 branch rather than detaching from it, so timeout or cancellation also retires
 renderer and Git descendants. The bounded asynchronous backup worker keeps its
@@ -386,6 +389,8 @@ First-touch bootstrap uses a temporary qualified runner to enter this
 same self-install contract before importing runtime-dependent CLI modules;
 it removes that runner before launching the installed environment. A healthy
 current installation skips runner construction.
+Relative installation roots and slots resolve against the caller's working
+directory before constructor or health-probe command paths are derived.
 Nested POSIX construction groups register with their finite outer broker before
 executing work. An inner timeout, capture failure or interruption waits for
 subtree retirement before candidate cleanup; outer cancellation cascades through

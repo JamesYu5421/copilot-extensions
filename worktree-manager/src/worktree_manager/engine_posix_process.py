@@ -136,13 +136,16 @@ def run(argv: list[str], *, inherited=False, **kwargs) -> subprocess.CompletedPr
                 connection = _connect(os.environ[broker.ENDPOINT_ENV])
                 parent = os.environ[broker.TOKEN_ENV]
             else:
+                from .installed_runtime import process_library
+
+                library = process_library()
                 directory = Path(tempfile.mkdtemp(prefix="wm-"))
                 connection, child = socket.socketpair()
                 try:
                     process = subprocess.Popen(
                         [sys.executable, "-I", "-B", "-X", "utf8",
                          str(Path(broker.__file__).resolve()), str(child.fileno()),
-                         str(directory / "broker")],
+                         str(directory / "broker"), str(library)],
                         cwd=directory, pass_fds=(child.fileno(),), stdin=subprocess.DEVNULL,
                         stdout=subprocess.DEVNULL, stderr=errors,
                     )

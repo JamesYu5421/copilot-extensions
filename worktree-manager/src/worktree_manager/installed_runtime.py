@@ -36,20 +36,25 @@ def payload_root() -> Path:
 
 
 def runtime_python(slot: Path) -> Path:
-    return slot / RUNTIME_DIR / ("Scripts" if os.name == "nt" else "bin") / (
+    return slot.resolve() / RUNTIME_DIR / ("Scripts" if os.name == "nt" else "bin") / (
         "python.exe" if os.name == "nt" else "python"
     )
 
 
-def _owned_runner(
-    argv: list[str], *, cwd: Path, timeout: float,
-) -> subprocess.CompletedProcess[str]:
+def process_library() -> Path:
     root = payload_root()
     library = root / "libs" / "agent-procutil" / "src"
     if not library.is_dir() and root == root.parent / "worktree-manager":
         library = root.parent / "libs" / "agent-procutil" / "src"
     if not (library / "agent_procutil" / "__init__.py").is_file():
         raise RuntimeError("Manager's owned process helper is missing")
+    return library
+
+
+def _owned_runner(
+    argv: list[str], *, cwd: Path, timeout: float,
+) -> subprocess.CompletedProcess[str]:
+    library = process_library()
     # The bootstrap has not installed dependencies yet. Use this executing
     # payload's stdlib-only helper, never code from the fetched candidate.
     before = sys.path.copy()
@@ -102,6 +107,7 @@ def _run(argv: list[str], *, cwd: Path, timeout: float) -> subprocess.CompletedP
 
 
 def build_runtime(slot: Path) -> None:
+    slot = slot.resolve()
     uv = shutil.which("uv")
     if not uv:
         raise RuntimeError("Cannot construct the Manager runtime: uv is not available")
@@ -128,6 +134,7 @@ def build_runtime(slot: Path) -> None:
 
 
 def probe_runtime(slot: Path, version: str) -> None:
+    slot = slot.resolve()
     python = runtime_python(slot)
     if not python.is_file():
         raise RuntimeError(f"Manager runtime interpreter is missing: {python}")

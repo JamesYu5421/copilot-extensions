@@ -718,7 +718,7 @@ def self_install(
     Idempotent + version-gated: a no-op when the marker already names this
     version and its slot + binstub exist. Dry-run by default.
     """
-    r = root or default_root()
+    r = (root or default_root()).resolve()
     pd = payload_dir or running_payload_dir()
     version = payload_version(pd)
     if version is None:

@@ -93,7 +93,7 @@ def exercise(root, workspace, outcome):
                 assert outcome in ("success", "signal-ignored")
                 assert result.returncode == (7 if outcome == "signal-ignored" else 0)
         except subprocess.TimeoutExpired:
-            assert outcome == "timeout"
+            assert outcome in ("timeout", "held-zombie")
         except KeyboardInterrupt:
             assert outcome in ("interrupt", "unbounded-interrupt")
         except OSError as error:
@@ -245,9 +245,45 @@ def outer_exercise(root, workspace, outcome):
         listener.close()
 
 
+def live_refusal(root):
+    sys.path[:0] = [
+        str(root / "worktree-manager" / "src"), str(root / "libs" / "agent-procutil" / "src"),
+    ]
+    from agent_procutil._caller_owned import _confirm_group
+    from worktree_manager import engine_posix_broker as broker
+
+    process = subprocess.Popen(
+        [sys.executable, "-I", "-B", "-c", "import time;time.sleep(30)"],
+        start_new_session=True, stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    branch = broker.Branch(process, None, None, None)
+    killpg = os.killpg
+    try:
+        with mock.patch.object(broker, "_linux_confirm_group", _confirm_group), mock.patch.object(
+            broker.os, "killpg", lambda *_: None,
+        ):
+            try:
+                broker.retire(branch)
+            except broker.CleanupError as error:
+                assert error.process is process
+            else:
+                raise AssertionError("a live identity-pinned group was accepted")
+        assert branch.signalled and not branch.reaped
+        assert process.poll() is None
+    finally:
+        killpg(process.pid, signal.SIGKILL)
+        _confirm_group(process)
+        process.communicate(timeout=5)
+    return {"outcome": "live-refusal", "exited_before_cleanup": True}
+
+
 def main():
     root, workspace = map(Path, sys.argv[1:3])
     outcome = sys.argv[3]
+    if outcome == "live-refusal":
+        print(json.dumps(live_refusal(root)), flush=True)
+        return
     if outcome.startswith("outer-") or outcome == "escaped-control":
         print(json.dumps(outer_exercise(root, workspace, outcome)), flush=True)
         return
@@ -260,6 +296,12 @@ def main():
     from worktree_manager import engine_process
 
     engine_process.contained_test_mode = lambda: False
+    if outcome == "held-zombie":
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(36, 1, 0, 0, 0):
+            raise OSError(ctypes.get_errno(), "fixture subreaper setup failed")
     if outcome == "signal-ignored":
         signal.signal(signal.SIGCHLD, signal.SIG_IGN)
     result = engine_process.run(
@@ -270,6 +312,11 @@ def main():
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["exited_before_cleanup"]
+    if outcome == "held-zombie":
+        pid = int((workspace / "ready").read_text())
+        observed = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+        assert observed is not None and observed.si_pid == pid, "descendant was not held unreaped"
+        assert os.waitpid(pid, os.WNOHANG)[0] == pid
     print(result.stdout, end="")
 
 

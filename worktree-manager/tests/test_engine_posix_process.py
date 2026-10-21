@@ -51,6 +51,49 @@ def test_reaped_group_is_only_observed_never_signalled_again(monkeypatch):
     assert events == [(123, 0)]
 
 
+def test_identity_confirmed_zombies_are_accepted_before_reaping_the_group_leader(monkeypatch):
+    events = []
+    process = SimpleNamespace(
+        pid=123, communicate=lambda **_: events.append("reaped"),
+    )
+    branch = broker.Branch(process, None, None, 0)
+    monkeypatch.setattr(broker.signal, "SIGKILL", 9, raising=False)
+    monkeypatch.setattr(
+        broker.os, "killpg", lambda pid, sig: events.append((pid, sig)), raising=False,
+    )
+
+    def confirm(expected):
+        assert expected is process
+        assert not branch.reaped and branch.signalled
+        events.append("all-members-exited")
+
+    monkeypatch.setattr(broker, "_linux_confirm_group", confirm)
+    broker.retire(branch)
+    assert events == [(123, 9), "all-members-exited", "reaped"]
+    assert branch.reaped
+
+
+def test_live_group_refusal_retains_the_leader_without_signalling_it_again(monkeypatch):
+    events = []
+    branch = broker.Branch(SimpleNamespace(
+        pid=123, communicate=lambda **_: events.append("reaped"),
+    ), None, None, 0)
+    monkeypatch.setattr(broker.signal, "SIGKILL", 9, raising=False)
+    monkeypatch.setattr(
+        broker.os, "killpg", lambda pid, sig: events.append((pid, sig)), raising=False,
+    )
+
+    def refuse(_):
+        raise TimeoutError("identity-pinned member is still live")
+
+    monkeypatch.setattr(broker, "_linux_confirm_group", refuse)
+    for _ in range(2):
+        with pytest.raises(broker.CleanupError, match="unconfirmed live members"):
+            broker.retire(branch)
+    assert branch.signalled and not branch.reaped
+    assert events == [(123, 9)]
+
+
 def test_branch_is_registered_before_command_permission(monkeypatch):
     events = []
     state = broker.Broker(SimpleNamespace(getsockname=lambda: "private-socket"), None)
@@ -414,6 +457,19 @@ def test_failed_connector_surfaces_startup_stderr_after_confirmed_exit(monkeypat
     ],
 )
 def test_native_inner_cleanup_precedes_candidate_deletion(tmp_path, outcome):
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [sys.executable, "-I", "-B", str(Path(__file__).parent / "fixtures" / "nested_custody.py"),
+         str(root), str(tmp_path), outcome],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"outcome": outcome, "exited_before_cleanup": True}
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="native Linux pidfd exit proof")
+@pytest.mark.parametrize("outcome", ["held-zombie", "live-refusal"])
+def test_native_retirement_distinguishes_unreaped_exit_from_live_members(tmp_path, outcome):
     root = Path(__file__).resolve().parents[2]
     result = subprocess.run(
         [sys.executable, "-I", "-B", str(Path(__file__).parent / "fixtures" / "nested_custody.py"),

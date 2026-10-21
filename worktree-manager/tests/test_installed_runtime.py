@@ -121,7 +121,8 @@ def test_direct_base_python_cannot_overwrite_its_executing_manager(tmp_path, mon
     assert si._currently_running_from(slot)
 
 
-def test_build_uses_platform_install_and_canonical_policy(tmp_path, monkeypatch):
+@pytest.mark.parametrize("relative", [False, True])
+def test_build_uses_platform_install_and_canonical_policy(tmp_path, monkeypatch, relative):
     source = _source(tmp_path / "payload")
     scripts = source / "scripts"
     scripts.mkdir()
@@ -135,7 +136,9 @@ def test_build_uses_platform_install_and_canonical_policy(tmp_path, monkeypatch)
     calls = []
     monkeypatch.setattr(runtime, "_run", lambda argv, **kw: calls.append((argv, kw)))
 
-    runtime.build_runtime(source)
+    if relative:
+        monkeypatch.chdir(tmp_path)
+    runtime.build_runtime(Path("payload") if relative else source)
 
     assert calls[0][0] == [
         "selected-uv", "venv", "--python", sys.executable, str(source / runtime.RUNTIME_DIR),
@@ -766,6 +769,13 @@ def test_probe_checks_actual_environment_and_import(standalone_runtime):
     python.unlink()
     with pytest.raises(RuntimeError, match="interpreter is missing"):
         runtime.probe_runtime(standalone_runtime, "1.2.3")
+
+
+def test_probe_resolves_a_relative_slot_before_launching_its_environment(
+    standalone_runtime, monkeypatch,
+):
+    monkeypatch.chdir(standalone_runtime.parent)
+    runtime.probe_runtime(Path(standalone_runtime.name), "1.2.3")
 
 
 def test_probe_requires_the_actual_cli_version_not_only_a_success_exit(

@@ -20,6 +20,7 @@ ENDPOINT_ENV = "WORKTREE_MANAGER_ENGINE_BROKER"
 TOKEN_ENV = "WORKTREE_MANAGER_ENGINE_BRANCH"
 GROUP_ENV = "WORKTREE_MANAGER_ENGINE_OWNS_PROCESS_GROUP"
 CLEANUP_TIMEOUT = 5
+_linux_confirm_group = None
 _MAX_FRAME = 16 * 1024 * 1024
 _OWNER = """
 import json,os,signal,subprocess,sys,threading
@@ -116,18 +117,31 @@ class Branch:
     deadline: float | None
     receipt: bytes = b""
     reaped: bool = False
+    signalled: bool = False
 
 
 def retire(branch):
     # The broker alone owns this Popen. Never poll/wait before the one group
     # signal: the unreaped leader pins the group identity through that signal.
     if not branch.reaped:
-        try:
-            os.killpg(branch.process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        if not branch.signalled:
+            try:
+                os.killpg(branch.process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            branch.signalled = True
+        if _linux_confirm_group is not None:
+            try:
+                _linux_confirm_group(branch.process)
+            except (OSError, RuntimeError) as error:
+                raise CleanupError(
+                    "construction process group still has unconfirmed live members",
+                    process=branch.process,
+                ) from error
         branch.process.communicate(timeout=CLEANUP_TIMEOUT)
         branch.reaped = True
+    if _linux_confirm_group is not None:
+        return
     deadline = time.monotonic() + CLEANUP_TIMEOUT
     while True:
         try:
@@ -266,6 +280,7 @@ class Broker:
 
 
 def main():
+    global _linux_confirm_group
     if sys.argv[1] == "--connect":
         with socket.socket(fileno=int(sys.argv[2])) as channel:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
@@ -277,9 +292,14 @@ def main():
     with socket.socket(fileno=int(sys.argv[1])) as root:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
             try:
+                if sys.platform.startswith("linux"):
+                    sys.path.insert(0, sys.argv[3])
+                    from agent_procutil._caller_owned import _confirm_group
+
+                    _linux_confirm_group = _confirm_group
                 listener.bind(os.path.basename(sys.argv[2]))
                 listener.listen()
-            except OSError as error:
+            except (OSError, ImportError) as error:
                 send_frame(root, {"ready": False, "error": str(error)})
                 raise SystemExit(1) from error
             broker = Broker(listener, root, endpoint=sys.argv[2])
