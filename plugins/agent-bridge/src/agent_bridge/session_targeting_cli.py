@@ -102,6 +102,11 @@ def _send(args: argparse.Namespace) -> None:
     from .send_outcome import SendRefused
 
     core = _core()
+    if getattr(args, "native_invocation_file", None) is not None:
+        from .native_keyed_client import send, validate_options
+        validate_options(args)
+        send(args, core._get_client())
+        return
     if getattr(args, "new", False):
         print(
             "[FAIL] `agent-bridge send --new` has been removed. `send` always "
@@ -112,6 +117,10 @@ def _send(args: argparse.Namespace) -> None:
         )
         sys.exit(2)
 
+    if getattr(args, "receipt_only", False) and not getattr(args, "native_invocation_file", None):
+        raise SendRefused("refused_invalid", reason="native_invocation_required",
+                          retryable=False, target=args.target,
+                          error="--receipt-only requires --native-invocation-file")
     client = core._get_client()
     min_protocol = getattr(args, "min_daemon_protocol", None)
     if min_protocol and not client.daemon_supports(min_protocol):
@@ -900,6 +909,8 @@ def register_session_targeting_commands(sub: argparse._SubParsersAction) -> None
     send_p.add_argument("--expected-session-id", help="deliver only if the target still resolves to this exact live session id (checked again atomically when enqueuing)")
     send_p.add_argument("--min-daemon-protocol", type=int, default=None, metavar="N", help="send nothing (exit 3) unless the running daemon advertises HTTP protocol N or newer")
     send_p.add_argument("--expected-native-session-id", default=None, metavar="UUID", help="Admit an immediate prompt only to this exact running native conversation; never resume, recreate, queue, or hand off")
+    from .native_keyed_client import add_arguments as add_native_keyed_arguments
+    add_native_keyed_arguments(send_p)
     core._add_stream_args(send_p)
     send_p.set_defaults(func=_cmd_send)
 

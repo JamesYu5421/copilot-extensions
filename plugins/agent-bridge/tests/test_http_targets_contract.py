@@ -38,7 +38,7 @@ def _targets_vector(generation):
     )
 
 
-VECTOR = _targets_vector(44)
+VECTOR = _targets_vector(45)
 
 
 def _request(**state):
@@ -53,7 +53,7 @@ def _target():
 
 
 @pytest.mark.asyncio
-async def test_health_44_matches_independent_expected_vector(monkeypatch):
+async def test_health_45_matches_independent_expected_vector(monkeypatch):
     monkeypatch.setattr(
         health_route, "get_default_manager",
         lambda: SimpleNamespace(carrier_diagnostics=lambda: {}),
@@ -64,7 +64,7 @@ async def test_health_44_matches_independent_expected_vector(monkeypatch):
     assert {key: body[key] for key in VECTOR["health"]} == VECTOR["health"]
 
 
-@pytest.mark.parametrize("generation", [37, 38, 39, 40, 41, 42, 43, 44])
+@pytest.mark.parametrize("generation", [37, 38, 39, 40, 41, 42, 43, 44, 45])
 @pytest.mark.parametrize("address", ["url", "named"])
 def test_client_target_negotiation_precedes_request(generation, address):
     client = BridgeClient.__new__(BridgeClient)
@@ -233,12 +233,35 @@ def test_reattestations_retain_independent_historical_expectations(generation, r
     assert count == reattested
 
 
+def test_generation_45_reattestations_preserve_independent_previous_vectors():
+    registry = json.loads((CONTRACT / "registry.json").read_text(encoding="utf-8"))
+    contract = next(item for item in registry["contracts"] if item["id"] == "agent-bridge.http-wire")
+    count = 0
+    for registered in contract["fixtures"]:
+        if registered["generation"] != 45:
+            continue
+        current = json.loads((REPO / registered["path"]).read_text(encoding="utf-8"))
+        if "reattested_from" not in current:
+            continue
+        count += 1
+        previous_bytes = (REPO / current["reattested_from"]["path"]).read_bytes().replace(b"\r\n", b"\n")
+        assert hashlib.sha256(previous_bytes).hexdigest() == current["reattested_from"]["sha256"]
+        previous = json.loads(previous_bytes)
+        expected = _wire_generation(previous, 45)
+        actual = copy.deepcopy(current)
+        for data in (expected, actual):
+            data.pop("captured_from")
+            data.pop("reattested_from", None)
+        assert actual == expected
+    assert count > 0
+
+
 OWNED = json.loads(
-    (CONTRACT / "fixtures/http/current/owned-remote-generation-44.json").read_text(encoding="utf-8")
+    (CONTRACT / "fixtures/http/current/owned-remote-generation-45.json").read_text(encoding="utf-8")
 )
 
 
-@pytest.mark.parametrize("generation", [38, 39, 40, 41, 42, 43, 44])
+@pytest.mark.parametrize("generation", [38, 39, 40, 41, 42, 43, 44, 45])
 @pytest.mark.parametrize("address", ["remote-acp:example-agent", "https://example.com/acp"])
 def test_owned_remote_client_refuses_before_sending_to_older_daemon(generation, address):
     from agent_bridge import protocol

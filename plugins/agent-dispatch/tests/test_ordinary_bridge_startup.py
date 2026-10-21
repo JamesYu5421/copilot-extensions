@@ -24,6 +24,9 @@ def startup(tmp_path, monkeypatch):
     calls = []
 
     class Client:
+        def get(self, task_id):
+            return asdict(queue.get(task_id))
+
         def get_reservation(self, key):
             return asdict(queue.get_reservation(key))
 
@@ -37,16 +40,17 @@ def startup(tmp_path, monkeypatch):
     def run(argv, **kwargs):
         assert argv[1] == "--json"
         command = argv[2]
-        calls.append((command, argv, kwargs))
+        calls.append(("receipt" if "--receipt-only" in argv else command, argv, kwargs))
         if command == "create":
             assert kwargs.get("input") is None
             assert "--prompt-file" not in argv
-            assert "--charter" in argv and "reviewer" in argv
+            assert "--charter" in argv and snapshot.get("_expected_charter", "reviewer") in argv
             assert argv[3] == "example@local"
             assert argv[argv.index("--creation-key") + 1] == queue.get_reservation(snapshot["spawn_reservation_key"]).creation_key
             return subprocess.CompletedProcess(argv, 0, json.dumps({
                 "session_id": "bridge-a", "ready": True,
                 "status": "awaiting_first_prompt",
+                "creation": {"worktree": {"creation_nonce": "original-allocation"}},
                 "connection": {
                     "worktree_id": "worktree-a", "repo": "example",
                     "native_session_id": "native-a",
@@ -54,6 +58,15 @@ def startup(tmp_path, monkeypatch):
                 },
             }), "")
         if command == "send":
+            invocation = json.loads(kwargs["input"])
+            assert "--native-invocation-file" in argv
+            assert invocation["version"] == 1
+            assert invocation["binding"]["task_id"] == task.id
+            assert invocation["binding"]["admission_generation"] == 0
+            if "--receipt-only" in argv:
+                return subprocess.CompletedProcess(argv, 69, json.dumps({
+                    "outcome": "refused_unavailable", "reason": "native_receipt_missing",
+                }), "")
             assert argv[argv.index("--expected-native-session-id") + 1] == "native-a"
             saved = queue.latest_reservation(task.id)
             assert saved.state == "reserving"
@@ -61,12 +74,18 @@ def startup(tmp_path, monkeypatch):
             assert saved.worktree == "worktree-a"
             assert saved.agent_info["status"] == "awaiting_first_prompt"
             scope = snapshot.get("prompt")
-            expected = f"{scope}\n\nassigned task\n\n" if scope else "assigned task\n\n"
-            assert kwargs["input"].startswith(expected)
-            assert "--owner-session-id native-a" in kwargs["input"]
+            if snapshot.get("_canonical_seed"):
+                assert f"Task {task.id}" in invocation["prompt"]
+                assert "--repo example" in invocation["prompt"]
+            else:
+                expected = f"{scope}\n\nassigned task\n\n" if scope else "assigned task\n\n"
+                assert invocation["prompt"].startswith(expected)
+            assert "--owner-session-id native-a" in invocation["prompt"]
             return subprocess.CompletedProcess(argv, 0, json.dumps({
                 "session_id": "bridge-a", "outcome": "delivered",
-                "turn_index": 1, "native_session_id": "native-a",
+                "turn_index": 0, "native_session_id": "native-a", "version": 1,
+                "invocation_key": invocation["invocation_key"],
+                "queued": False, "admission": "accepted",
             }), "")
         if command == "status":
             if "--full" in argv:
@@ -107,7 +126,7 @@ def test_assigned_scope_precedes_generic_worker_seed(startup):
     ordinary_bridge.start(task, client=client, agent="local", project="example",
                           charter="reviewer", prompt="assigned task")
     assert calls[-1][0] == "send"
-    assert calls[-1][2]["input"].startswith(task["prompt"] + "\n\nassigned task")
+    assert json.loads(calls[-1][2]["input"])["prompt"].startswith(task["prompt"] + "\n\nassigned task")
 
 
 def test_invalid_assigned_scope_never_creates(startup):
@@ -150,7 +169,8 @@ def test_interrupted_send_retries_retained_handle_without_create(startup, monkey
     ordinary_bridge.start(task, client=client, agent="local", project="example",
                           charter="reviewer", prompt="assigned task")
     assert [call[0] for call in calls] == [
-        "create", "store", "store", "store", "status", "resume", "status", "store", "send",
+        "create", "store", "store", "receipt", "store",
+        "status", "resume", "status", "store", "send",
     ]
 
 
@@ -342,13 +362,7 @@ def test_ordinary_start_checks_native_identity_without_acquisition_receipt(start
 def test_reviewer_and_worker_use_identical_factory_path(startup, monkeypatch, charter):
     _, task, client, calls = startup
     from agent_dispatch.spawn_factories import make_headless_spawn, make_label_routed_spawn
-    original = ordinary_bridge.start
-
-    def start(snapshot, **kwargs):
-        assert kwargs["charter"] == charter
-        return original(snapshot, **{**kwargs, "charter": "reviewer", "prompt": "assigned task"})
-
-    monkeypatch.setattr(ordinary_bridge, "start", start)
+    task.update(_canonical_seed=True, _expected_charter=charter)
     selected = make_headless_spawn(agent="local", charter=charter)
     routed = make_label_routed_spawn(lambda _: (False, {}), overrides={"review": selected})
     snapshot = {**task, "_spawn_client": client, "labels": ["review"]}
@@ -365,30 +379,117 @@ def test_one_shot_uses_no_dispatch_allocation(startup, monkeypatch):
     monkeypatch.setattr(embody, "prepare_reusable_worktree",
                         lambda *a, **kw: pytest.fail("Dispatch must not allocate ACP worktrees"))
     args = argparse.Namespace(spawn_backend="bridge", spawn_agent="local", spawn_charter="reviewer", run_async=True)
-    original = ordinary_bridge.start
-
-    def start(snapshot, **kwargs):
-        assert "--worker " not in kwargs["prompt"]
-        assert "no owner argument" in kwargs["prompt"]
-        assert f"`agent-dispatch start {task['id']}`" in kwargs["prompt"]
-        return original(snapshot, **{**kwargs, "prompt": "assigned task"})
-
-    monkeypatch.setattr(ordinary_bridge, "start", start)
+    task["_canonical_seed"] = True
     result, _, handle = create_cli._do_spawn(args, {**task, "_spawn_client": client})
     assert result.returncode == 0 and handle["session"] == "local-body:bridge-a"
     assert [call[0] for call in calls] == ["create", "store", "store", "send"]
+    wire = json.loads(next(call[2]["input"] for call in calls if call[0] == "send"))
+    assert "--worker " not in wire["prompt"]
+    assert "no owner argument" in wire["prompt"]
+    assert f"`agent-dispatch start {task['id']}`" in wire["prompt"]
+
+
+@pytest.mark.parametrize("receipt_exists", [False, True])
+def test_actual_start_reads_g0_after_real_g1_claim_without_readiness_write(
+    startup, monkeypatch, receipt_exists,
+):
+    queue, task, client, calls = startup
+    first = ordinary_bridge.start(task, client=client, agent="local", project="example",
+                                  charter="reviewer", prompt="assigned task")
+    original = json.loads(next(call[2]["input"] for call in calls if call[0] == "send"))
+    claimed = queue.claim_one("worker", task_id=task["id"])
+    assert claimed.generation == 1
+    before = asdict(queue.get_reservation(task["spawn_reservation_key"]))
+    calls.clear()
+
+    def forbidden(*_a, **_kw):
+        pytest.fail("historical receipt read must not perform a readiness/allocation write")
+
+    monkeypatch.setattr(client, "record_created_agent", forbidden)
+    monkeypatch.setattr(client, "record_spawn_allocation", forbidden)
+
+    def receipt(argv, **kwargs):
+        assert "--receipt-only" in argv
+        calls.append(("receipt", argv, kwargs))
+        invocation = json.loads(kwargs["input"])
+        assert invocation == original
+        assert invocation["binding"]["admission_generation"] == 0
+        body = first["session_info"] if receipt_exists else {
+            "outcome": "refused_unavailable", "reason": "native_receipt_missing",
+        }
+        return subprocess.CompletedProcess(argv, 0 if receipt_exists else 69, json.dumps(body), "")
+
+    monkeypatch.setattr(ordinary_bridge.subprocess, "run", receipt)
+    snapshot = {**asdict(claimed), "spawn_reservation_key": task["spawn_reservation_key"]}
+    if receipt_exists:
+        recovered = ordinary_bridge.start(snapshot, client=client, agent="local", project="example",
+                                          charter="reviewer", prompt="assigned task")
+        assert recovered["session_info"] == first["session_info"]
+    else:
+        with pytest.raises(bridge.BridgeCarriedSessionBusy):
+            ordinary_bridge.start(snapshot, client=client, agent="local", project="example",
+                                  charter="reviewer", prompt="assigned task")
+    assert [call[0] for call in calls] == ["receipt"]
+    assert asdict(queue.get_reservation(task["spawn_reservation_key"])) == before
+    assert queue.get(task["id"]).generation == 1
+
+
+def test_real_one_shot_then_supervisor_retry_has_identical_frozen_seed(startup, monkeypatch):
+    import argparse
+    from agent_dispatch import create_cli
+    from agent_dispatch.spawn_factories import make_headless_spawn
+    queue, task, client, calls = startup
+    task["_canonical_seed"] = True
+    args = argparse.Namespace(spawn_backend="bridge", spawn_agent="local",
+                              spawn_charter="reviewer", run_async=True)
+    result, _, first = create_cli._do_spawn(args, {**task, "_spawn_client": client})
+    assert result.returncode == 0
+    first_wire = json.loads(next(call[2]["input"] for call in calls if call[0] == "send"))
+    queue.defer_spawn(task["spawn_reservation_key"])
+    retry, admitted = queue.reserve_spawn(task["id"], reserved_by="supervisor", driver="ordinary-bridge")
+    assert admitted and retry.key != task["spawn_reservation_key"]
+    calls.clear()
+
+    def receipt(argv, **kwargs):
+        assert "--receipt-only" in argv
+        calls.append(("receipt", argv, kwargs))
+        assert json.loads(kwargs["input"]) == first_wire
+        return subprocess.CompletedProcess(argv, 0, json.dumps(first["session_info"]), "")
+
+    monkeypatch.setattr(ordinary_bridge.subprocess, "run", receipt)
+    snapshot = {**asdict(queue.get(task["id"])), "spawn_reservation_key": retry.key,
+                "_spawn_client": client}
+    ok, second = make_headless_spawn(agent="local", charter="reviewer")(snapshot)
+    assert ok and second["session_info"] == first["session_info"]
+    assert f"dispatch-{task['spawn_reservation_key']}" in first_wire["prompt"]
+    assert f"dispatch-{retry.key}" not in first_wire["prompt"]
+    assert "--repo example" in first_wire["prompt"]
+    assert [call[0] for call in calls] == ["receipt"]
+
+
+@pytest.mark.parametrize("change", [{"agent": "different"}, {"charter": "different"}])
+def test_changed_requested_selection_refuses_before_receipt_or_send(startup, change):
+    _, task, client, calls = startup
+    ordinary_bridge.start(task, client=client, agent="local", project="example",
+                          charter="reviewer", prompt="assigned task")
+    calls.clear()
+    with pytest.raises(bridge.BridgeCarriedSessionBusy, match="selection changed"):
+        ordinary_bridge.start(task, client=client, project="example", prompt="assigned task",
+                              **({"agent": "local", "charter": "reviewer"} | change))
+    assert calls == []
 
 
 def test_authenticated_storage_task_info_and_native_start(startup):
     queue, task, client, _ = startup
-    ordinary_bridge.start(task, client=client, agent="local", project="example",
-                          charter="reviewer", prompt="assigned task")
+    handle = ordinary_bridge.start(task, client=client, agent="local", project="example",
+                                   charter="reviewer", prompt="assigned task")
     from fastapi.testclient import TestClient
     from agent_dispatch.coordinator import create_app
     api = TestClient(create_app(queue, token="synthetic-worker", enable_mcp=False))
     key = task["spawn_reservation_key"]
     facts = queue.get_reservation(key).agent_info
-    payload = {"task_generation": task["generation"], "agent_info": facts}
+    payload = {"task_generation": task["generation"], "agent_info": facts,
+               "startup_invocation": facts["startup_invocation"]}
     assert api.post(f"/spawn-reservations/{key}/created-agent", json=payload).status_code == 401
     scheme = "Bear" + "er "
     headers = {"Authorization": scheme + "synthetic-worker"}
@@ -399,10 +500,10 @@ def test_authenticated_storage_task_info_and_native_start(startup):
     assert shown["status"] == "queued"
     response = api.post(f"/spawn-reservations/{key}/spawned", headers=headers, json={
         "session_handle": "local-body:bridge-a", "worktree": "worktree-a",
-        "session_info": {"session_id": "bridge-a", "outcome": "delivered", "turn_index": 1},
+        "session_info": handle["session_info"],
     })
     assert response.status_code == 200
-    assert queue.get_reservation(key).agent_info["last_send"]["turn_index"] == 1
+    assert queue.get_reservation(key).agent_info["last_send"]["turn_index"] == 0
     queue.claim_one("dispatch-worker", task_id=task["id"])
     queue.start(task["id"], "dispatch-worker", owner_session_id="native-a")
     assert queue.get(task["id"]).owner_session_id == "native-a"
@@ -520,7 +621,7 @@ def test_retained_idle_agent_sends_without_invalid_strict_resume(startup, monkey
     monkeypatch.setattr(ordinary_bridge.subprocess, "run", idle)
     ordinary_bridge.start(task, client=client, agent="local", project="example",
                           charter="reviewer", prompt="assigned task")
-    assert [call[0] for call in calls] == ["store", "status", "store", "send"]
+    assert [call[0] for call in calls] == ["receipt", "store", "status", "store", "send"]
     assert queue.get_reservation(task["spawn_reservation_key"]).session_handle == "local-body:bridge-a"
 
 

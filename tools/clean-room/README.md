@@ -11,6 +11,14 @@ clean room. It isolates *everything* under test (no `~/.agent-*`, no
 `~/.local/bin`, no marketplace, a stock login-shell PATH) while reusing your
 Copilot **login** (auth is not what we're validating).
 
+Canonical Linux scenario containers use Docker's existing `--init` support.
+The long-lived `sleep infinity` command is not an orphan reaper: without an
+init process, exited orphan children can remain as PID-1-owned zombies and
+prevent native teardown from proving PID absence. The injected init forwards
+signals and reaps adopted children; it needs no package installation or image
+change. Native cleanup assertions and deadlines remain unchanged. This applies
+to the Linux starts in both host wrappers, not the Windows container arm.
+
 > **First time on this machine? → [`SETUP.md`](SETUP.md)** walks you from "no
 > Docker" to a green smoke-test (install Docker per OS → verify → build → auth →
 > run). This README is the reference for everything after that.
