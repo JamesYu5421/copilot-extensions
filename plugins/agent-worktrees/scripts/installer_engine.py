@@ -21,7 +21,7 @@ import tomllib
 import versioned_runtime as runtime
 import versioned_runtime_source as runtime_source
 from installer_dependency_policy import RetainedUVInstall, retain_uv_install
-from installer_engine_process import run_owned
+from installer_engine_process import ChildLaunchError, ChildTimeoutExpired, run_owned
 
 _GENERATED_DIRECTORIES = {
     ".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache",
@@ -163,11 +163,17 @@ def _procutil(inputs: FrozenInputs) -> ModuleType:
         data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
         if data["project"]["name"] == "agent-procutil":
             path = root / "src" / "agent_procutil" / "__init__.py"
-            spec = importlib.util.spec_from_file_location("_installer_procutil", path)
+            namespace = "_installer_procutil_" + hashlib.sha256(str(path).encode("utf-8")).hexdigest()
+            spec = importlib.util.spec_from_file_location(namespace, path)
             if spec is None or spec.loader is None:
                 raise ImportError(f"Cannot load frozen installer process ownership: {path}")
             module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
+            sys.modules[spec.name] = module
+            try:
+                spec.loader.exec_module(module)
+            except BaseException:
+                sys.modules.pop(spec.name, None)
+                raise
             return module
     raise ValueError("Runtime inputs do not declare the canonical agent-procutil dependency")
 
@@ -315,12 +321,12 @@ for name, expected in expected_origins.items():
              health_callable or "", "fresh" if require_frozen_origin else "reuse"],
             inputs=inputs, descriptor=descriptor, timeout=timeout,
         )
-    except subprocess.CalledProcessError as error:
+    except (subprocess.CalledProcessError, ChildLaunchError, ChildTimeoutExpired) as error:
         if require_frozen_origin:
             raise
         raise HealthRepairRequired(
             f"Published runtime {slot.name} failed isolated installed health; "
-            f"use distinct-generation repair.\n{error.stderr}"
+            f"use distinct-generation repair.\n{getattr(error, 'stderr', None) or error}"
         ) from error
 
 
