@@ -5076,7 +5076,36 @@ def _write_config(
     launch from the terminal dropdown). An *absent* key applies the **default
     column** (minimal per-agent + bare cross-machine), so the empty list must be
     written explicitly to suppress.
+
+    Re-registration refreshes the project marker and anchor while preserving
+    user-owned keys and other repository entries. Optional adoption settings
+    are only changed when requested; existing remote overrides are retained.
     """
+    if path.exists():
+        import yaml
+
+        existing = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if existing is None:
+            existing = {}
+        if not isinstance(existing, dict):
+            raise ValueError(f"Expected a YAML mapping in project config: {path}")
+        repos = existing.setdefault("repos", {})
+        if not isinstance(repos, dict):
+            raise ValueError(f"Expected a repos mapping in project config: {path}")
+        repo = repos.setdefault(project, {})
+        if not isinstance(repo, dict):
+            raise ValueError(f"Expected a repos.{project} mapping in project config: {path}")
+        existing["repo_name"] = project
+        repo["anchor"] = str(repo_dir)
+        repo.setdefault("remote", "origin")
+        if headless:
+            existing["headless"] = True
+        if no_terminal_profile:
+            existing["terminal_profiles"] = []
+        tracking._atomic_write(path, yaml.safe_dump(existing, sort_keys=False))
+        output.changed(f"Updated config (preserved existing settings): {path}")
+        return
+
     wt_root = f"{repo_dir}.worktrees"
 
     headless_line = "headless: true\n" if headless else ""
