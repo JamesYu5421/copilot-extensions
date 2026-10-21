@@ -74,6 +74,7 @@ def read_streams(directory, *, nonce, contexts, inventory, audit_control, genera
     import re
     from pathlib import Path
 
+    _auditor().seal(audit_control, nonce=nonce)
     for row in inventory.values():
         if hashlib.sha256(Path(row["installed"]).read_bytes()).hexdigest() != row["sha256"]:
             raise ValueError("installed source changed after tracing")
@@ -113,7 +114,7 @@ def read_streams(directory, *, nonce, contexts, inventory, audit_control, genera
             raise ValueError("generated source bytes/line identity changed")
         effective_inventory[identifier] = row
     coverage, preludes, producers, zero_hits = {}, [], [], 0
-    files = list(directory.iterdir())
+    files = sorted(directory.iterdir())
     if len(files) > 4096:
         raise ValueError("unexpected child stream count")
     for path in files:
@@ -168,7 +169,69 @@ def read_streams(directory, *, nonce, contexts, inventory, audit_control, genera
         },
         "prelude_seconds": preludes, "child_streams": len(files),
         "audited_producers": count, "zero_hit_producers": zero_hits, "audit_complete": True,
+        "control_sha256": control_digest(audit_control),
     }
+
+
+def control_digest(control):
+    import hashlib
+    from pathlib import Path
+
+    root = Path(control)
+    digest = hashlib.sha256()
+    maximum = 512 + 6 * (MAX_RECORDS + 1)
+    def include(path):
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("unsafe final child evidence file")
+        with path.open("rb") as source:
+            content = source.read(maximum + 1)
+        if len(content) > maximum:
+            raise ValueError("oversized final child evidence file")
+        name = path.relative_to(root).as_posix().encode("utf-8", "surrogatepass")
+        digest.update(len(name).to_bytes(4, "big") + name)
+        digest.update(len(content).to_bytes(8, "big") + content)
+    for name in ("run", "status", "sealed"):
+        include(root / name)
+    for name in ("audit", "hits", "manifests", "generated"):
+        directory = root / name
+        if directory.is_symlink():
+            raise ValueError("linked final child evidence directory")
+        digest.update(name.encode() + (b"\1" if directory.exists() else b"\0"))
+        if not directory.exists():
+            continue
+        if not directory.is_dir():
+            raise ValueError("invalid final child evidence directory")
+        paths = sorted(directory.iterdir())
+        if len(paths) > (4096 if name in {"audit", "hits"} else MAX_RECORDS):
+            raise ValueError("final child evidence file-count bound exceeded")
+        for path in paths:
+            include(path)
+    return digest.hexdigest()
+
+
+def verify_final(result, *, control, nonce, inventory, helpers):
+    """Driver output alone cannot attest to launches during its shutdown."""
+    import hashlib
+    from pathlib import Path
+
+    _auditor().check_seal(control, nonce=nonce)
+    if any(hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected
+           for path, expected in helpers.items()):
+        raise ValueError("child instrumentation source changed after driver exit")
+    contexts = {hashlib.sha256(node.encode()).hexdigest(): node for node in result["durations"]}
+    if len(contexts) != len(result["durations"]):
+        raise ValueError("final test-context digest collision")
+    final = read_streams(
+        Path(control) / "hits", nonce=nonce, contexts=contexts, inventory=inventory,
+        audit_control=control,
+    )
+    child_coverage = final.pop("coverage")
+    if final != result["children"]:
+        raise ValueError("child evidence changed after the sealed snapshot")
+    for file, lines in child_coverage.items():
+        for line, nodes in lines.items():
+            if not set(nodes) <= set(result["coverage"].get(file, {}).get(line, ())):
+                raise ValueError("final child coverage was omitted from the merged result")
 
 
 def merge_coverage(parent, child):
@@ -259,6 +322,7 @@ def end_collection():
     global _tracing
     if sys.gettrace() is not _parent_trace or threading.gettrace() is not _parent_thread_trace:
         _auditor().error("parent line tracer was replaced")
+    _auditor().seal(_control, nonce=_nonce)
     _tracing = False
 
 

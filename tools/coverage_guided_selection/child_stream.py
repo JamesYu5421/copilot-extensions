@@ -27,7 +27,8 @@ _expected_codes = {}
 _generator_codes = frozenset()
 _generated_receipts = []
 _generated_count = 0
-_generated_busy = False
+_generated_state = threading.local()
+_generated_lock = threading.RLock()
 _generated_active = False
 _thread_guard_active = False
 _start_thread_original = _thread.start_new_thread
@@ -124,8 +125,8 @@ def _install_generated_guard():
 
 
 def _generated_event(event, args):
-    global _generated_busy, _generated_count
-    if not _generated_active or _generated_busy or event not in {"compile", "exec"}:
+    global _generated_count
+    if not _generated_active or getattr(_generated_state, "busy", False) or event not in {"compile", "exec"}:
         return
     emitter = sys._getframe(0).f_back
     if emitter is None or emitter.f_code not in _generator_codes:
@@ -141,33 +142,40 @@ def _generated_event(event, args):
         content, filename = args
         if not isinstance(content, (bytes, str)) or len(content) > MAX_MANIFEST:
             _auditor().error("generated source exceeds verified bounds")
-        elif len(_generated_receipts) >= 512:
-            _auditor().error("generated source receipt bound exceeded")
         else:
-            _generated_receipts.append((content, filename, emitter.f_code))
+            with _generated_lock:
+                full = len(_generated_receipts) >= 512
+                if not full:
+                    _generated_receipts.append((content, filename, emitter.f_code))
+            if full:
+                _auditor().error("generated source receipt bound exceeded")
         return
     code = args[0]
-    for content, filename, origin in reversed(_generated_receipts):
+    with _generated_lock:
+        receipts = tuple(_generated_receipts)
+    for content, filename, origin in reversed(receipts):
         if filename != code.co_filename or origin is not emitter.f_code:
             continue
-        _generated_busy = True
+        _generated_state.busy = True
         try:
             reference = compile(content, filename, "exec", flags=code.co_flags,
                                 dont_inherit=True, optimize=sys.flags.optimize)
         finally:
-            _generated_busy = False
+            _generated_state.busy = False
         if reference != code:
             continue
         actual = tuple(_code_tree(code))
-        unregistered = [value for value in actual
-                        if _code_sources.get(id(value), (None,))[0] is not value]
-        if _generated_count + len(unregistered) > 4096:
+        with _generated_lock:
+            unregistered = [value for value in actual
+                            if _code_sources.get(id(value), (None,))[0] is not value]
+            full = _generated_count + len(unregistered) > 4096
+            if not full:
+                _generated_count += len(unregistered)
+                for value in unregistered:
+                    # Proven generated methods have no fixed repository line coordinates.
+                    _code_sources[id(value)] = (value, None)
+        if full:
             _auditor().error("verified generated code-object bound exceeded")
-            return
-        _generated_count += len(unregistered)
-        for value in unregistered:
-            # Proven generated methods have no fixed repository line coordinates.
-            _code_sources[id(value)] = (value, None)
         return
 
 
@@ -250,11 +258,13 @@ def _call(frame, event, arg):
 
 def _after_fork():
     global _fd, _failed, _lock, _seen, _profile_arming
+    global _generated_state, _generated_lock
     # Fork is explicitly refused by the audit contract. Never reuse its lock,
     # descriptor or sparse seen-set while the application finishes normally.
     if _fd is not None:
         os.close(_fd)
     _fd, _failed, _lock, _seen = None, True, threading.Lock(), set()
+    _generated_state, _generated_lock = threading.local(), threading.RLock()
     sys.settrace(None)
     threading.settrace(None)
     _profile_arming = True

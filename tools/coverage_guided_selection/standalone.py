@@ -351,7 +351,14 @@ def collect_standalone(
         verify_revision(REPO, measured_commit)
         if verified_source_mapping(REPO, installed, environment) != (mapping, hashes):
             raise ValueError("installed source changed during baseline collection")
-        return build_baseline(REPO, json.loads(result_path.read_text()), measured_commit, hashes)
+        result = json.loads(result_path.read_text())
+        child_stream_parent.verify_final(
+            result, control=coverage_options["child_stream_control"],
+            nonce=coverage_options["child_stream_nonce"],
+            inventory=coverage_options["child_stream_inventory"],
+            helpers=coverage_options["child_stream_helpers"],
+        )
+        return build_baseline(REPO, result, measured_commit, hashes)
     finally:
         try:
             if hook is not None:

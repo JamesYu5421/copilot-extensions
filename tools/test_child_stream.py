@@ -1,5 +1,6 @@
 """Strict evidence parsing for the lightweight standalone-child prototype."""
 import os
+import threading
 import time
 
 import pytest
@@ -168,7 +169,8 @@ def test_generated_identity_requires_proven_emitter_owner_and_executed_bytes(tmp
     emitter = SimpleNamespace(f_code=emitter_code, f_back=SimpleNamespace(f_code=owned, f_back=None))
     failures = []
     for key, value in (
-        ("_generated_active", True), ("_generated_busy", False), ("_generated_receipts", []),
+        ("_generated_active", True), ("_generated_state", threading.local()),
+        ("_generated_lock", threading.RLock()), ("_generated_receipts", []),
         ("_generated_count", 0), ("_generator_codes", frozenset([emitter_code])),
         ("_expected_codes", {os.path.normcase(owned.co_filename): frozenset([owned])}),
         ("_code_sources", {}), ("_sources", {}), ("_root", ""), ("_package", "fixture_package"),
@@ -234,6 +236,18 @@ def test_child_thread_profile_preserves_then_stops_only_prior_diagnostic_callbac
     runtime.stop_import_profile()
     runtime._thread_profile(None, "call", None)
     assert calls == ["process", "thread"]
+
+
+def test_generated_guard_recursion_state_is_thread_local(monkeypatch):
+    state = threading.local()
+    state.busy = True
+    monkeypatch.setattr(runtime, "_generated_state", state)
+    observed = []
+    thread = threading.Thread(target=lambda: observed.append(getattr(runtime._generated_state, "busy", False)))
+    thread.start()
+    thread.join(timeout=5)
+    assert not thread.is_alive() and observed == [False]
+    assert runtime._generated_state.busy
 
 
 def test_prelude_endpoint_follows_tracer_setup_and_duration_precedes_lines(evidence, monkeypatch):
@@ -331,6 +345,9 @@ def test_generated_audit_guard_preserves_native_first_main_execution(tmp_path):
     ("child", False, "", "cached-low-level"),
     ("child", False, "", "profile-removal"),
     ("child", False, "", "thread-profile-removal"),
+    ("parent", False, "", "concurrent-generation"),
+    ("child", False, "", "concurrent-generation"),
+    ("parent", False, "", "late-launch"),
 ])
 def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
     tmp_path, stale, location, optimization, thread_mode,
@@ -353,6 +370,9 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
         b"from dataclasses import dataclass\n"
         b"@dataclass\nclass Value:\n    result: int = 22\n"
         b"def value():\n    return Value().result\n"
+        b"def generate(label):\n"
+        b"    return dataclass(type(label, (), {'__module__': __name__, "
+        b"'__annotations__': {'result': int}, 'result': 22}))\n"
     )
     old = canonical.replace(b"22", b"11")
     source.write_bytes(old if stale else canonical)
@@ -388,6 +408,43 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
         consumer = (
             "from fixture_package.source import value\nobserved=value()\n"
             "import threading\nthread=threading.Thread(target=value);thread.start();thread.join()\n"
+        )
+    elif thread_mode == "concurrent-generation":
+        consumer = (
+            "import builtins,threading\nfrom fixture_package.source import generate\n"
+            "runtime=sys.modules['_cgs_child_stream']\n"
+            "entered=threading.Event();second_done=threading.Event()\n"
+            "classes={};errors=[]\noriginal_compile=builtins.compile\n"
+            "def compiling(*args,**kwargs):\n"
+            " if threading.current_thread().name=='generation-first' and not entered.is_set():\n"
+            "  entered.set()\n"
+            "  if not second_done.wait(5): raise RuntimeError('overlapping generation timed out')\n"
+            " return original_compile(*args,**kwargs)\n"
+            "def create(label):\n"
+            " try:\n"
+            "  model=generate(label)\n"
+            "  assert model().result==22\n"
+            "  classes[label]=model\n"
+            " except Exception as error: errors.append(error)\n"
+            " finally:\n"
+            "  if label=='second': second_done.set()\n"
+            "runtime.compile=compiling\n"
+            "first=threading.Thread(target=lambda:create('first'),name='generation-first')\n"
+            "second=threading.Thread(target=lambda:create('second'),name='generation-second')\n"
+            "first.start()\n"
+            "try:\n"
+            " assert entered.wait(3)\n"
+            " second.start();first.join(timeout=5);second.join(timeout=5)\n"
+            "finally:\n"
+            " second_done.set();first.join(timeout=5)\n"
+            " if second.ident is not None: second.join(timeout=5)\n"
+            " del runtime.compile\n"
+            "assert not first.is_alive() and not second.is_alive() and not errors,errors\n"
+            "assert set(classes)=={'first','second'}\n"
+            "for model in classes.values():\n"
+            " code=model.__init__.__code__\n"
+            " assert runtime._code_sources[id(code)][0] is code\n"
+            "observed=22\n"
         )
     elif thread_mode == "temporary-removal":
         hook = "profile" if location == "parent" else "trace"
@@ -428,6 +485,19 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
             "try:\n from fixture_package.source import value\n observed=value()\n"
             "finally: sys.settrace(original)\n"
         )
+    elif thread_mode == "late-launch":
+        late = (
+            f"import sys;sys.path[:0]=[{str(tmp_path)!r},{str(sandbox)!r}];"
+            "import _cgs_child_audit,_cgs_child_stream;"
+            f"_cgs_child_stream.start({options['child_stream_control']!r});"
+            "from fixture_package.source import value;"
+            f"open({str(tmp_path / 'late-application.txt')!r},'w').write(str(value()))"
+        )
+        consumer = (
+            "import atexit,subprocess\nfrom fixture_package.source import value\nobserved=value()\n"
+            f"atexit.register(lambda: subprocess.run([sys.executable,'-I','-c',{late!r}],"
+            f"check=True,timeout=20,**{flags!r}))\n"
+        )
     else:
         consumer = f"import runpy\nobserved=runpy.run_path({str(shadow)!r},run_name='__main__')['value']()\n"
     child_program = (
@@ -467,7 +537,17 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
                             timeout=40, **flags)
     assert json.loads(report.read_text())["summary"].get("passed") == 1, result.stdout + result.stderr
     assert hashlib.sha256(source.read_bytes()).hexdigest() == expected_hash
-    if stale or thread_mode != "normal":
+    if thread_mode == "late-launch":
+        assert result.returncode == 0 and output.exists(), result.stdout + result.stderr
+        assert (tmp_path / "late-application.txt").read_text() == "22"
+        with pytest.raises(ValueError, match="after collection seal"):
+            stream.verify_final(
+                json.loads(output.read_text()), control=options["child_stream_control"],
+                nonce=options["child_stream_nonce"], inventory=options["child_stream_inventory"],
+                helpers=options["child_stream_helpers"],
+            )
+        return
+    if stale or thread_mode not in {"normal", "concurrent-generation"}:
         assert result.returncode != 0 and not output.exists(), result.stdout + result.stderr
         errors = [json.loads(path.read_text()) for path in
                   (sandbox / "child-lines" / "audit").glob("*.error")]
@@ -482,7 +562,7 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
     else:
         assert result.returncode == 0, result.stdout + result.stderr
         data = json.loads(output.read_text())
-        assert data["coverage"]["fixture_package/source.py"]["6"]
+        assert data["coverage"]["fixture_package/source.py"]["8" if thread_mode == "concurrent-generation" else "6"]
 
 @pytest.mark.parametrize("corruption",["collision","foreign-path","wrong-hash","fake-canonical"])
 def test_generated_source_extension_identity_is_strict(evidence,corruption):
@@ -540,6 +620,7 @@ def evidence(tmp_path):
     audit.mkdir()
     (tmp_path / "status").write_bytes(b"R")
     nonce, context = "a" * 64, "b" * 64
+    (tmp_path / "run").write_text(nonce, encoding="ascii")
     manifests = tmp_path / "manifests"
     manifests.mkdir()
     stream.write_manifest(
@@ -571,6 +652,51 @@ def test_verified_records_merge_without_replacing_parent_evidence(evidence):
     assert merged["component/source.py"]["2"] == [
         "tests/test_other.py::test_other", "tests/test_source.py::test_f",
     ]
+
+
+def test_seal_is_identity_bound_and_late_launch_does_not_block_application(evidence, monkeypatch):
+    _, _, _, _, options = evidence
+    control = options["audit_control"]
+    child_audit.seal(control, nonce=options["nonce"])
+    child_audit.seal(control, nonce=options["nonce"])
+    token = next(iter(options["contexts"]))
+    monkeypatch.setattr(child_audit, "_control", str(control))
+    monkeypatch.setattr(child_audit, "_nonce", options["nonce"])
+    monkeypatch.setattr(child_audit, "_python", child_audit.key(os.sys.executable))
+    monkeypatch.setattr(child_audit, "_own_context", token)
+    monkeypatch.setattr(child_audit, "_failed", False)
+    environment = {
+        runtime.ENV: str(control / "manifests" / (token + ".manifest")),
+        child_audit.OWNER: str(os.getpid()),
+    }
+    child_audit._event("subprocess.Popen", (
+        os.sys.executable, [os.sys.executable, "-c", "pass"], None, environment,
+    ))
+    assert (control / "status").read_bytes() == b"E"
+    with pytest.raises(ValueError, match="after collection seal"):
+        child_audit.verify(control, nonce=options["nonce"], contexts=options["contexts"], producers=[])
+    (control / "sealed").write_text("wrong", encoding="ascii")
+    with pytest.raises(ValueError, match="seal identity"):
+        child_audit.check_seal(control, nonce=options["nonce"])
+
+
+@pytest.mark.parametrize("change", ["status", "stream", "missing-seal"])
+def test_final_control_changes_cannot_reuse_a_snapshot(evidence, change):
+    directory, path, _, _, options = evidence
+    final = stream.read_streams(directory, **options)
+    result = {"coverage": final.pop("coverage"), "children": final,
+              "durations": {node: 0.0 for node in options["contexts"].values()}}
+    control = options["audit_control"]
+    if change == "status":
+        (control / "status").write_bytes(b"E")
+    elif change == "stream":
+        path.write_bytes(path.read_bytes() + b"\0\1" + (1).to_bytes(4, "big"))
+    else:
+        (control / "sealed").unlink()
+    with pytest.raises(ValueError):
+        stream.verify_final(
+            result, control=control, nonce=options["nonce"], inventory=options["inventory"], helpers={},
+        )
 
 
 @pytest.mark.parametrize("corruption", [

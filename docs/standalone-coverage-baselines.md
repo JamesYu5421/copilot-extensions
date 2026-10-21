@@ -71,6 +71,9 @@ callback I/O on one thread must not hide another thread's real events. The
 generated-code guard preserves identity-matched source coordinates already
 registered by the earlier native dispatch instead of replacing them with an
 unmapped generated-method entry.
+Python generation recursion state is also thread-local. Receipt, counter and
+coordinate updates share short critical sections between the Python and native
+guards; reference compilation and file I/O stay outside those sections.
 The fast unit selector checks code-tree and cache identity without launching
 interpreters. In a prepared collector environment, set
 `CGS_RUN_STANDALONE_INTEGRATION=1` and run
@@ -128,6 +131,11 @@ read/append/exit interleaving cannot turn a partial prefix into complete evidenc
 Missing hooks/evidence, bootstrap errors swallowed by `.pth`,
 trace/write errors, duplicate records, unknown contexts or unmatched producers
 invalidate the entire collection. No success-shaped partial baseline is emitted.
+Collection is sealed before evidence snapshots. Later code launches still run
+normally but mark the collection invalid, including shutdown launches after the
+driver wrote its result. After driver exit the caller rechecks the seal, helper
+bytes, final audit/stream/control digest and merged child attribution before
+building a baseline; the driver's `audit_complete` field alone is not authority.
 Retained `CGS-ERROR/1` diagnostics bind the immutable manifest/context digest to the
 parent's exact pytest node. Ownership failures include the expected auditor and a
 bounded kernel PID lineage; image labels are allowlisted basenames, never full

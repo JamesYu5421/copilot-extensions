@@ -28,7 +28,8 @@ def test_python_generated_guard_preserves_actual_native_dispatch_mapping(tmp_pat
     owner = compile("owned=1\n", str(tmp_path / "owner.py"), "exec", dont_inherit=True)
     frame = SimpleNamespace(f_code=emitter, f_back=SimpleNamespace(f_code=owner, f_back=None))
     for key, value in (
-        ("_generated_active", True), ("_generated_busy", False), ("_generated_receipts", []),
+        ("_generated_active", True), ("_generated_state", threading.local()),
+        ("_generated_lock", threading.RLock()), ("_generated_receipts", []),
         ("_generated_count", 0), ("_generator_codes", frozenset([emitter])),
         ("_expected_codes", {os.path.normcase(owner.co_filename): frozenset([owner])}),
         ("_code_sources", {}), ("_sources", {}), ("_root", ""), ("_package", "fixture_package"),

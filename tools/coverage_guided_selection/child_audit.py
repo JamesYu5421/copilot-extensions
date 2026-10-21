@@ -22,6 +22,34 @@ def key(value):
     return os.path.normcase(os.path.abspath(os.fsdecode(value)))
 
 
+def check_seal(control, *, nonce):
+    path = os.path.join(control, "sealed")
+    if os.path.islink(path):
+        raise ValueError("linked collection seal")
+    try:
+        with open(path, "rb") as source:
+            content = source.read(65)
+    except FileNotFoundError as exc:
+        raise ValueError("missing collection seal") from exc
+    if content != nonce.encode("ascii"):
+        raise ValueError("collection seal identity changed")
+
+
+def seal(control, *, nonce):
+    path = os.path.join(control, "run")
+    if os.path.islink(path):
+        raise ValueError("linked collection run identity")
+    with open(path, "rb") as source:
+        content = source.read(65)
+    if content != nonce.encode("ascii"):
+        raise ValueError("collection run identity changed before sealing")
+    try:
+        with open(os.path.join(control, "sealed"), "xb") as output:
+            output.write(content)
+    except FileExistsError:
+        check_seal(control, nonce=nonce)
+
+
 def argv_bytes(arguments):
     return b"\0".join(os.fsencode(value) for value in arguments[1:])
 
@@ -239,6 +267,8 @@ def _event(event, arguments):
             error("site-disabled Python code execution context=" + context(environment))
             return
         token = context(environment)
+        if os.path.lexists(os.path.join(_control, "sealed")):
+            error("native child launch after collection seal")
         if _own_context and token != _own_context:
             error("instrumented process attempted to change its test context")
             return
@@ -253,6 +283,8 @@ def _event(event, arguments):
                 raise OSError("short audit intent write")
         finally:
             os.close(fd)
+        if os.path.lexists(os.path.join(_control, "sealed")):
+            error("native child launch after collection seal")
     except Exception as exc:
         error("native spawn audit failed: " + type(exc).__name__ + ": " + str(exc)[:256])
 
@@ -270,6 +302,8 @@ def install(control, python, nonce, *, child=False, token=None):
             error("native audit hook registration was refused")
             raise ValueError("native audit hook registration was refused")
         _installed = True
+    if child and os.path.lexists(os.path.join(_control, "sealed")):
+        error("native child started after collection seal")
 
 
 def _windows_parent(pid):
@@ -404,6 +438,7 @@ def verify(control, *, nonce, contexts, producers):
             except (OSError, ValueError, KeyError, TypeError):
                 reasons.append("malformed child failure diagnostic")
         raise ValueError("child bootstrap/tracing/audit failure: " + "; ".join(reasons))
+    seal(control, nonce=nonce)
     intents = defaultdict(list)
     paths = list((Path(control) / "audit").iterdir())
     if len(paths) > 4096:

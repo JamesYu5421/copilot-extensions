@@ -95,15 +95,19 @@ def native_source_event(event, args, origin, offset):
     """Diagnostic-only native emission context; this does not admit generated code."""
     if event == "compile":
         source, filename = args
-        if not isinstance(source, (bytes, str)) or len(compile_receipts) >= 512:
+        if not isinstance(source, (bytes, str)):
             return
         content = source.encode("utf-8", "surrogatepass") if isinstance(source, str) else source
         if len(content) > 65_536:
             return
-        compile_receipts.append((content, filename, origin, offset))
+        with stream._generated_lock:
+            if len(compile_receipts) < 512:
+                compile_receipts.append((content, filename, origin, offset))
         return
     code = args[0]
-    for content, filename, creator, creator_offset in reversed(compile_receipts):
+    with stream._generated_lock:
+        receipts = tuple(compile_receipts)
+    for content, filename, creator, creator_offset in reversed(receipts):
         if filename != code.co_filename or creator is not origin:
             continue
         try:
@@ -129,29 +133,34 @@ def native_source_event(event, args, origin, offset):
             digest = record["compile_source_sha256"]
             identifier = 1 + int(digest[:4], 16) % 65534
             reserved = {row["id"] for row in catalog["sources"].values()}
-            if identifier in reserved or (identifier in generated_ids and generated_ids[identifier] != digest):
-                auditor.error("actual generated-source identifier collision")
-                record["generated_refusal"] = "identifier collision"
-            elif len(generated_code_refs) + len(list(code_tree(code))) > 4096:
-                auditor.error("actual generated code-object bound exceeded")
-                record["generated_refusal"] = "code-object bound"
-            else:
-                target = control / "generated" / (digest + ".py")
-                try:
-                    with target.open("xb") as output:
-                        output.write(content)
-                except FileExistsError:
-                    if target.read_bytes() != content:
-                        auditor.error("actual generated source changed")
-                        record["generated_refusal"] = "source changed"
-                if "generated_refusal" not in record:
-                    generated_ids[identifier] = digest
-                    for actual_code in code_tree(code):
-                        generated_code_refs[id(actual_code)] = actual_code
-                        stream._code_sources[id(actual_code)] = (
-                            actual_code, (identifier, len(content.splitlines())),
-                        )
-                    record.update(generated_source_admitted=True, source_id=identifier)
+            target = control / "generated" / (digest + ".py")
+            try:
+                with target.open("xb") as output:
+                    output.write(content)
+            except FileExistsError:
+                if target.read_bytes() != content:
+                    auditor.error("actual generated source changed")
+                    record["generated_refusal"] = "source changed"
+            if "generated_refusal" not in record:
+                actual_codes = tuple(code_tree(code))
+                with stream._generated_lock:
+                    collision = identifier in reserved or (
+                        identifier in generated_ids and generated_ids[identifier] != digest
+                    )
+                    new_codes = [value for value in actual_codes if id(value) not in generated_code_refs]
+                    full = len(generated_code_refs) + len(new_codes) > 4096
+                    if not collision and not full:
+                        generated_ids[identifier] = digest
+                        for actual_code in actual_codes:
+                            generated_code_refs[id(actual_code)] = actual_code
+                            stream._code_sources[id(actual_code)] = (
+                                actual_code, (identifier, len(content.splitlines())),
+                            )
+                        record.update(generated_source_admitted=True, source_id=identifier)
+                if collision or full:
+                    auditor.error("actual generated-source identifier collision" if collision else
+                                  "actual generated code-object bound exceeded")
+                    record["generated_refusal"] = "identifier collision" if collision else "code-object bound"
         os.write(source_event_fd, (json.dumps(record) + "\n").encode("utf-8"))
         break
 

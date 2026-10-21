@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -180,9 +181,9 @@ class TestStandaloneCoverage:
         with pytest.raises(ValueError):
             standalone.build_baseline(repo, result, "abc", {})
 
-    @pytest.mark.parametrize("fail", [False, True])
+    @pytest.mark.parametrize("fail,late_change", [(False, False), (True, False), (False, True)])
     def test_collector_reuses_native_lease_containment_and_cleans_instrumentation(
-        self, tmp_path, monkeypatch, fail,
+        self, tmp_path, monkeypatch, fail, late_change,
     ):
         repo, environment, installed = self._sources(tmp_path)
         site = installed.parent
@@ -220,12 +221,37 @@ class TestStandaloneCoverage:
                 assert options["installed_source"] == str(installed)
                 if fail:
                     return 1
-                (sandbox / "result.json").write_text(json.dumps(self._result()))
+                parent = standalone.child_stream_parent
+                inventory = {int(key): value for key, value in options["child_stream_inventory"].items()}
+                control = Path(options["child_stream_control"])
+                result = self._result()
+                contexts = {
+                    hashlib.sha256(node.encode()).hexdigest(): node
+                    for node in result["durations"]
+                }
+                for token in contexts:
+                    parent.write_manifest(
+                        control / "manifests" / (token + ".manifest"),
+                        nonce=options["child_stream_nonce"], context=token,
+                        directory=control / "hits", inventory=inventory,
+                    )
+                children = parent.read_streams(
+                    control / "hits", nonce=options["child_stream_nonce"],
+                    contexts=contexts, inventory=inventory, audit_control=control,
+                )
+                children.pop("coverage")
+                result["children"] = children
+                (sandbox / "result.json").write_text(json.dumps(result))
+                if late_change:
+                    (control / "status").write_bytes(b"E")
             return 0
 
         monkeypatch.setattr(standalone, "run_contained", contained)
         if fail:
             with pytest.raises(standalone.BaselineCollectionError):
+                standalone.collect_standalone(measured_commit="abc")
+        elif late_change:
+            with pytest.raises(ValueError, match="audit failure"):
                 standalone.collect_standalone(measured_commit="abc")
         else:
             baseline = standalone.collect_standalone(measured_commit="abc")
