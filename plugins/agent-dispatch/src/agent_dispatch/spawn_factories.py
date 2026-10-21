@@ -659,8 +659,8 @@ def make_headless_spawn(
         if not callable(getattr(client, "get_reservation", None)):
             return False, {"error": "ordinary coordinator reservation read-back is unavailable"}
         from .ordinary_invocation import startup_seed
-        seed = startup_seed(task, client, route=route, all_repos=all_repos)
         try:
+            seed = startup_seed(task, client, route=route, all_repos=all_repos)
             if no_pair:
                 raise bridge.BridgeUnavailable("ordinary Bridge create cannot express the no-pair allocation override")
             handle = ordinary_bridge.start(

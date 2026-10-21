@@ -17,7 +17,12 @@ def startup_seed(task: dict, client, *, route: str = "", all_repos: bool = False
     if not callable(getattr(client, "get_reservation", None)):
         from .bridge import BridgeUnavailable
         raise BridgeUnavailable("ordinary coordinator reservation read-back is unavailable")
-    reservation = client.get_reservation(task["spawn_reservation_key"])
+    from .client import DispatchError
+    try:
+        reservation = client.get_reservation(task["spawn_reservation_key"])
+    except (DispatchError, TaskError) as exc:
+        from .bridge import BridgeCarriedSessionBusy
+        raise BridgeCarriedSessionBusy(f"ordinary startup seed reservation read failed: {exc}") from exc
     origin = reservation.get("allocation_reservation_key") or reservation["key"]
     return autopilot_worker_prompt(
         task["id"], worker_id=f"dispatch-{origin}", route=route,

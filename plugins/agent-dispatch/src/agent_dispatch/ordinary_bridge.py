@@ -312,11 +312,17 @@ def start(
             invocation = prepare(task, reservation, info, prompt, agent=agent, charter=charter)
         except (TaskError, DispatchError, TypeError) as exc:
             raise BridgeCarriedSessionBusy(f"ordinary invocation admission fence refused: {exc}") from exc
-        receipt = run(
-            ["--json", "send", session_id, "--expected-native-session-id", actual.native,
-             "--native-invocation-file", "-", "--receipt-only", "--no-wait"],
-            prompt_input=json.dumps(native_payload(invocation), ensure_ascii=False),
-        )
+        receipt_input = json.dumps(native_payload(invocation), ensure_ascii=False)
+        try:
+            receipt = run(
+                ["--json", "send", session_id, "--expected-native-session-id", actual.native,
+                 "--native-invocation-file", "-", "--receipt-only", "--no-wait"],
+                prompt_input=receipt_input,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            raise BridgeCarriedSessionBusy(
+                f"ordinary historical receipt transport failed; retry retained {session_id}: {exc}",
+            ) from exc
         response = _json_result(receipt)
         if receipt.returncode == 0:
             if (response.get("invocation_key") != invocation["invocation_key"]

@@ -42,6 +42,10 @@ original-lineage seed builder. Requested agent/charter selection is immutable
 coordinator intent; changing it conflicts before receipt lookup or send.
 Selection is not an ignored extra Bridge wire field.
 
+Coordinator errors reading the seed reservation use the existing deferred
+outcome in both callers, preserving the original diagnostic without allocating
+or sending. Missing metadata and prompt-rendering errors are not converted.
+
 Native metadata and prompt use the Bridge UTF-8 file/stdin codec. New storage
 fields are explicit in the created/resumed-agent API request: older receivers
 that reject or ignore them cannot pass required intent read-back. Unknown
@@ -58,7 +62,10 @@ receipt-only read of a historical g0 admission remains valid after an actual g1
 claim without changing task state or granting fresh permission. Missing original
 intent or receipt does not authorize a readiness write for a claimed task.
 Receipt lookup itself performs no allocation/readiness refresh, owner command,
-resume or fresh send. Both created and resumed storage compare persisted
+resume or fresh send. A receipt transport timeout or OS error defers with its
+original diagnostic; it is never treated as a missing receipt or permission to
+send. A later attempt reads the same historical invocation and native identity.
+Both created and resumed storage compare persisted
 immutable intent transactionally; only compatible mutable resumed SessionInfo
 can refresh without replacing or erasing it. Missing original
 intent in a legacy acquisition is an explicit reconciliation boundary, not
