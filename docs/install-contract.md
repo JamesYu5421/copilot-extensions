@@ -2724,7 +2724,8 @@ hash fragments by default. Artifact redirects to public PyPI download hosts
 are refused. Metadata reads are bounded to sixteen MiB, artifact reads to
 512 MiB, with thirty-second network timeouts; unavailable or malformed evidence
 fails explicitly. Offline operations and unsupported index arrangements
-(multiple/explicit indexes or credential/query-bearing index URLs) retain
+(multiple/explicit indexes, credential/query-bearing index URLs, configured
+keyring acquisition, or environment-provided UV index credentials) retain
 native UV behavior without correction. There is no package-wide age exception
 or public artifact-download fallback.
 
@@ -2736,6 +2737,8 @@ applies the same mirror evidence and cutoff policy, and still uses ordinary
 force a reinstall on each launch, construct a separately qualified runtime, or
 freeze a new dependency lock. Temporary evidence is regenerated for subsequent
 runs and removed after the child exits.
+Interactive project runs inherit the caller's console; non-interactive probes
+and project runs stay headless on Windows.
 
 `run_uv_install` owns admission and execution as one lifetime. UV consumes
 private retained source metadata, recursive requirements and configuration,

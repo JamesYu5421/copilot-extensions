@@ -1673,8 +1673,9 @@ function Invoke-ManagedMuxRegister {
         $registerArgs = @(
             'run',
             '--quiet',
-            '--project', $managerRoot,
-            '-m', 'worktree_manager',
+            '--no-project', '--no-config', '--no-env-file',
+            'python', '-I', "`"$managerRoot\run.py`"",
+            'python', '-m', 'worktree_manager',
             'mux-daemon', 'register',
             "--project=$($script:LaunchProject)",
             "--worktree-id=$([string]$plan.worktree_id)",

@@ -475,7 +475,7 @@ def _index_url(projection, balanced):
     if len(entries) != 1 or re.search(r"\bno_index:\s*true\b", body):
         return None
     entry, _ = balanced(body, body.index("{", entries[0].start()), "{", "}")
-    if re.search(r"\bexplicit:\s*true\b", entry):
+    if re.search(r"\bexplicit:\s*true\b|\bauthenticate:\s*Always\b", entry):
         return None
     given = re.search(r'\bgiven:\s*Some\(\s*("(?:[^"\\]|\\.)*")\s*,?\s*\)', entry)
     if given is None:
@@ -491,8 +491,18 @@ def _index_url(projection, balanced):
 
 def mirror_index_arguments(
     projection, requirements, cutoffs, destination, *, balanced, error_type, now, fetch=None,
+    environment=None,
 ):
     """Correct recent mirror dates only for verified, canonically seasoned pins."""
+    environment = {} if environment is None else environment
+    if (re.search(r"\bconnectivity:\s*Offline\b|\bkeyring_provider:\s*Subprocess\b", projection)
+            or environment.get("UV_OFFLINE", "").lower() in ("1", "true")
+            or environment.get("UV_KEYRING_PROVIDER", "disabled").lower() != "disabled"
+            or any(re.fullmatch(r"UV_INDEX(?:_[A-Z0-9_]+)?_(?:USERNAME|PASSWORD)", key)
+                   for key in environment)):
+        # UV owns credential acquisition; never replace its authenticated path
+        # with an anonymous metadata or artifact request.
+        return []
     fetch = fetch or _fetch
     pins = pinned_requirements(requirements)
     index = _index_url(projection, balanced) if pins else None

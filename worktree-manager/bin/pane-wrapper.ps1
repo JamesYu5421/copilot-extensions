@@ -300,8 +300,9 @@ if (
     try {
         $managerRoot = Split-Path -Parent $PSScriptRoot
         $removeArgs = @(
-            'run', '--quiet', '--project', $managerRoot,
-            '-m', 'worktree_manager', 'mux-daemon', 'remove',
+            'run', '--quiet', '--no-project', '--no-config', '--no-env-file',
+            'python', '-I', "`"$managerRoot\run.py`"",
+            'python', '-m', 'worktree_manager', 'mux-daemon', 'remove',
             "--project=$awProject", "--worktree-id=$awWt"
         )
         # `--mux-session`, when known (#3838 fix): lets the daemon-side

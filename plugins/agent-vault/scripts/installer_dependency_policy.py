@@ -572,7 +572,7 @@ _mirror = _configuration
 
 
 def _mirror_arguments(projection, arguments, projects, files, destination, cutoffs, now, environment):
-    if environment.get("UV_OFFLINE", "").lower() in ("1", "true"):
+    if "--offline" in arguments or environment.get("UV_OFFLINE", "").lower() in ("1", "true"):
         return []
     requirements = [value for option, value in _argument_pairs(arguments) if not option]
     for project in projects:
@@ -582,7 +582,7 @@ def _mirror_arguments(projection, arguments, projects, files, destination, cutof
         requirements.extend(re.sub(r"\s+(?:--hash=|#).*", "", line) for line in text.splitlines())
     return _mirror.mirror_index_arguments(
         projection, requirements, cutoffs, destination, balanced=_balanced,
-        error_type=DependencyPolicyError, now=now,
+        error_type=DependencyPolicyError, now=now, environment=environment,
     )
 
 
@@ -940,9 +940,10 @@ def run_uv_project(
             _mirror.mirror_index_arguments(
                 projection, requirements, cutoffs, root / "mirror-index",
                 balanced=_balanced, error_type=DependencyPolicyError, now=now,
+                environment=environment,
             )
         )
-        run_options.setdefault("creationflags", _HEADLESS)
+        run_options.setdefault("creationflags", 0 if sys.stdin.isatty() else _HEADLESS)
         return subprocess.run(
             [uv, "run", "--quiet", "--project", str(project), *cutoffs, *indexes, "--", *arguments],
             env=environment, cwd=cwd, **run_options,

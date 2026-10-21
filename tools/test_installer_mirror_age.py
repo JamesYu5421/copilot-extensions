@@ -269,3 +269,74 @@ def test_manager_runner_launches_fresh_project_without_resolving_it_first(tmp_pa
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == "round trip with spaces"
+
+
+@pytest.mark.parametrize("environment", [
+    {"UV_INDEX_FIXTURE_USERNAME": "fixture-user", "UV_INDEX_FIXTURE_PASSWORD": "fixture-secret"},
+    {"UV_INDEX_USERNAME": "fixture-user"},
+    {"UV_KEYRING_PROVIDER": "subprocess"},
+    {"UV_OFFLINE": "true"},
+])
+@pytest.mark.parametrize("mode", ["install", "project"])
+@pytest.mark.parametrize("interactive", [False, True])
+def test_mirror_preflight_retains_native_uv_authentication_and_offline(
+    tmp_path, monkeypatch, environment, mode, interactive,
+):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[project]\nname="fixture-project"\nversion="1.0"\n'
+        'dependencies=["fixture-mirror==1.0"]\n', encoding="utf-8",
+    )
+    projection = settings().replace(
+        "Index {\n", 'Index {\n name: Some("fixture"),\n'
+        'url: IndexUrl { given: Some("https://mirror.example/simple/"), },\n',
+    )
+    executed = []
+
+    def run(argv, **kwargs):
+        if "--show-settings" in argv:
+            if "pip" in argv:
+                return subprocess.CompletedProcess(argv, 0, projection, "")
+            body, _ = policy._balanced(
+                projection, projection.index("{", projection.index("settings: PipSettings")), "{", "}",
+            )
+            return subprocess.CompletedProcess(
+                argv, 0, "RunSettings {\n resolver: ResolverSettings {" + body + "}\n}", "",
+            )
+        executed.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0)
+
+    def fetch(url):
+        pytest.fail("authenticated or offline UV path must not issue anonymous preflight requests")
+
+    monkeypatch.setattr(policy.subprocess, "run", run)
+    monkeypatch.setattr(policy._mirror, "_fetch", fetch)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: interactive)
+    if mode == "project":
+        result = policy.run_uv_project(
+            "uv", project, ["python", "-c", "pass"], env=environment, cwd=tmp_path, now=NOW,
+        )
+    else:
+        result = policy.run_uv_install(
+            "uv", ["fixture-mirror==1.0"], env=environment, cwd=tmp_path, now=NOW,
+        )
+    assert result.returncode == 0
+    argv, options = executed[-1]
+    assert "--exclude-newer" in argv and "--index" not in argv
+    if mode == "project":
+        assert options["creationflags"] == (0 if interactive else policy._HEADLESS)
+    assert options["env"] == environment or all(
+        options["env"].get(key) == value for key, value in environment.items()
+    )
+
+
+def test_cli_offline_never_attempts_mirror_preflight(tmp_path, monkeypatch):
+    def mirror(*args, **kwargs):
+        pytest.fail("CLI offline must not perform network preflight")
+
+    monkeypatch.setattr(policy._mirror, "mirror_index_arguments", mirror)
+    assert policy._mirror_arguments(
+        settings(), ["--offline", "fixture-mirror==1.0"], (), (),
+        tmp_path / "index", [], NOW, {},
+    ) == []
