@@ -1396,6 +1396,98 @@ Explicit out-of-plugin targets use the same bounded runner and admission lease:
 `libs/payload-invocation/tests`, and `runtime-source` selects the source
 preparation/identity/native-consumer contracts in `libs/versioned-runtime/tests`.
 `--all` remains scoped to plugin suites.
+
+Manager's cold canonical-adopter acceptance has an explicit native lane:
+
+```text
+python tools/run-manager-runtime-acceptance.py --root .validation
+```
+
+It uses the existing process-tree containment supervisor and one 300-second
+group budget for fresh/legacy-repair fixture construction plus the assertions.
+Fixtures are constructed before pytest's unchanged 30-second item checks;
+no constructor, dependency policy, package health or failed-selection assertion
+is mocked. The assertions run through `run-plugin-tests.py` with explicit
+`tests/native/test_manager_runtime_install.py` selection. The ordinary Manager
+suite does not recurse into that prepared native lane. Report both ordinary
+orchestration/assembly units and this cold native acceptance before publishing
+a Manager installation change; neither is a substitute for the other.
+The runner's default file discovery honors the existing
+`[tool.pytest.ini_options].norecursedirs` declaration before passing explicit file
+groups to pytest. `--test-file` deliberately retains access to the prepared
+native lane; those tests still require their native driver's fixture data.
+The migration fixture requires Git history containing published pre-engine
+Manager `0.6.35-dev1` at `9c7a61518540787498c77a284f640c36bbe7d8e4`.
+It executes that release's controller against the new payload, witnesses the
+old launcher fail with an interpreter-only selection, then enters the new
+bootstrap and reuses the same registered command without `uv` on `PATH`.
+This is an isolated handoff proof, not a live-host or live registry-age probe;
+missing pinned history refuses the lane rather than substituting new code.
+The lane also constructs two same-package, distinct generations, imports both
+through their isolated installed interpreters, and exercises a real contained
+fixture mux cutover to the source-qualified target. Injected failures before and
+after the second selector replacement prove both selector states and runtime
+receipts survive, with no failed-update cutover. Fixture mux processes suppress
+production breakaway and are terminated/waited within the containing test.
+
+The archived normal-updater consumer has its own explicit Windows contract:
+
+```text
+python tools/run-manager-runtime-acceptance.py --root .validation --contract updater
+```
+
+It prepares the actual Worktrees `1.24.91-dev1` release and broken Manager
+`0.6.35-dev1`, then invokes the old payload's normal project `update` command
+without force or Manager-bypass flags. A staged-index snapshot is materialized
+through the release helpers into a private published-like Git artifact.
+Copilot delivery and credential transport are controlled fixture processes;
+Git checkout, canonical package construction, the fresh-interpreter handoff,
+registered Manager launch and the private Windows Terminal profile writer are
+real. The resulting profile must report `verified_current`.
+Archived-fixture preparation and normal-update consumption each retain a
+300-second containment boundary. A separate 300-second admission/concurrent-caller
+phase reuses those constructed fixtures: it checks healthy reuse without source
+parsing, unadopted no-op, failed source pin and denied credentials with prior
+selection preserved, repair of unexecutable legacy and completed canonical
+interpreters, and an in-flight old caller skipping installation followed by
+recovery on the next normal invocation.
+Pytest items retain their 30-second limit.
+This proves the updater migration contract, not release qualification or a
+live-host rollout.
+
+Retained mux shell callbacks have a separate, independently contained contract:
+
+```text
+python tools/run-manager-runtime-acceptance.py --root .validation --contract callbacks
+```
+
+This does not replace or split the original ten runtime checks. Each contract
+keeps the existing 300-second aggregate budget and 30-second pytest item limit.
+The callback contract cold-constructs a real package while recovering an
+unchanged selector whose old slot is missing, then executes the actual retained
+PowerShell/Bash registration and removal bodies with `uv` absent. It observes
+real registry updates/tombstones against a private live rendezvous and an owned
+fake engine, not command-string assertions. A distinct contract avoids adding
+another cold construction plus consumer subprocesses to the original group,
+whose measured native Windows execution is already close to its unchanged bound.
+That contract also removes only the selected marker from an otherwise healthy
+constructed installation: dry-run must plan repair, then apply must restore the
+selection using real installed health and unchanged origin/completion receipts.
+An unexpected constructor call fails the test rather than rebuilding silently.
+The same prepared installation is reused for empty and whitespace-only selector
+repair; it is not rebuilt for each state. `tests/test_manager_selector_states.py`
+uses real canonical file publication/recovery for both selector fields, including
+faults before/after the second replacement, exact blank-byte/absence rollback,
+held runtime/publication custody, and unchanged invalid-name/target refusal.
+`tests/test_companion_popup_runtime.py` separately executes the generated Ctrl+K
+popup command through the Windows command shell against a synthetic installed
+fixture CLI and real retention bootstrap (not a package-construction proof).
+It checks paths with spaces, exact Companion argv, the held lease, target prefix,
+root binding, stdin/stdout/stderr and exit status without opening a popup/TUI.
+Source and legacy entries execute through an owned `uv` stand-in. Since the
+PowerShell runtime resolver is shared, also run the real callback contract after
+changing it; the original ten-case cold contract need not repeat for popup text
+and equivalent resolver extraction alone.
 The payload suite's PowerShell contracts require a real `pwsh`; when it is absent
 from the isolation container, run that target through the host's contained runner
 rather than counting skipped PowerShell contracts as validation.

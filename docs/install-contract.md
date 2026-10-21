@@ -1782,6 +1782,31 @@ activation restoration failures after launch do not erase the usage evidence.
 fixable sources remain unresolved. `CE_UPDATE_AUTH=off` skips this preflight.
 There is no persistent configuration cleanup or cleanup-consent flag.
 
+### Recovery of an adopted standalone Manager
+
+The normal updater repairs an unusable, already-adopted Worktree Manager before
+profile integration. Admission requires one selected provider registration,
+its Manager root and an exact known Manager-owned launcher. A healthy registered
+command is reused without source acquisition; an unadopted host is not enrolled.
+Recovery snapshots the selection, registration, launcher and source evidence,
+then fetches only the Manager's own configured repository/ref, with its normal
+authentication admission. Missing canonical recovery support at that ref blocks
+the update; it never substitutes the updater's marketplace or a different branch.
+
+The new Worktrees installer runs this check under its constructed interpreter
+before settling publication, so an older running updater can hand off during
+self-upgrade. The new update caller also checks before local integration when
+the Worktrees runtime is already current. An old caller which skips installation
+after concurrent publication cannot acquire new in-memory code: the next normal
+invocation performs that check. No force flag or standalone bootstrap is needed.
+
+The Manager adapter constructs through the canonical engine, retains candidate
+and rollback custody, and runs completion/mux activation under the constructed
+Manager interpreter. It does not import application dependencies into the
+stdlib bootstrap interpreter or recursively run the full update flow. Adoption
+is reverified before publication; failed activation restores both selectors
+using canonical publication receipts.
+
 The Worktree Manager consumes the same report through its existing engine JSON
 process seam before its own Git fetch. Its engine environment preserves an
 overlay when present while still discarding parent Python runtime variables.
@@ -2048,19 +2073,15 @@ against a stub writer.
 > WATCHDOG whole-tree kill, MARKER/TOSS, NO-ORPHANS, BOUNDED) — via a
 > `COPILOT_PLUGIN_INSTALL_SMOKE` seam, without a heavy venv build.
 
-> **`worktree-manager` carries an independent analog, not this shared
-> helper.** It is deliberately **not** a Copilot plugin (see its own
-> [README](../worktree-manager/README.md)) and ships no `libs/` monorepo
-> ancestor to a machine that fetched it standalone via tarball, so its
-> `self_install.py` cannot depend on `versioned_runtime.py`. It reimplements
-> the same "marker published only after a verified-complete build" invariant
-> directly: a per-slot `.install-complete` file, invalidated before
-> mutation and published only after its three key entrypoint files are
-> confirmed present (a cheap secondary check, not an exhaustive scan of
-> every module the package imports), closing the identical corpse-slot
-> hazard (there, a Windows `PermissionError` from
-> `shutil.rmtree`/`shutil.copytree` hitting a slot still held open by
-> another process) for this one standalone installer.
+> **`worktree-manager` is a standalone canonical Python-engine adopter.**
+> It remains outside the marketplace/plugin installation-cell contract, but
+> ships byte-identical engine, seasoning and versioned-runtime helpers in its
+> own `scripts/` payload. Its adapter uses governed platform-runtime package
+> acquisition and isolated installed-origin health before canonical completion,
+> selector publication and mux cutover. Runtime slots are venvs; the materialized
+> source snapshot lives under `payload/`. Legacy payload-only selected slots
+> require a distinct constructed repair generation, never an in-place rebuild.
+> See its [README](../worktree-manager/README.md).
 
 ### Install-transaction lock — mutating runs never interleave, never run unlocked
 
@@ -2874,6 +2895,11 @@ source identity, and records the transaction's actual non-editable installation
 origins, not a second snapshot's paths. `freeze_inputs()` remains an explicit
 source-copy utility for packaging fixtures, not the construction path.
 The bootstrap requires Python 3.11 or newer.
+The POSIX guardian observes its direct child without reaping it until the
+owned process group is settled. Python 3.11/3.12 on macOS lack `os.waitid`;
+there it uses the existing `ps` process-state dependency to observe zombie
+state without releasing the child's PID/PGID. It does not raise the declared
+Python floor or use a reaping `Popen.poll()` fallback.
 Worktrees' Windows pre-lifecycle admission independently requires Python 3.10+,
 the declared minimum for its payload and shared human-output helper, before
 reserving ownership or staging the installer. A working but older `py -3`
@@ -2899,6 +2925,16 @@ context. Exact reuse never obtains exclusive construction ownership or invokes
 venv/package writers, even when construction tools are absent. Unfinished
 builders recheck under the canonical OS lease; completed content drift or
 invalid evidence refuses instead of rewriting a published slot.
+
+Reused installed-health failures request distinct-generation repair when the
+probe exits unsuccessfully, cannot create its child, or reaches its deadline
+after every owned writer has settled. Process creation is distinguished by
+`agent_procutil.SyncProcessLaunchError`; the installer propagates a separate
+settled-child timeout type. Missing-file launch errors also remain
+`FileNotFoundError` instances, preserving missing authentication-tool detection.
+Ownership, Job admission and cleanup failures are
+not repair licenses. Fresh construction still fails its health gate rather
+than reporting an unhealthy candidate ready.
 
 For a materialized source deployment, the Python lifecycle validates
 `runtime-source.json`, publishes the canonical source snapshot and selects its
