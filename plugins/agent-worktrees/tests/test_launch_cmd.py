@@ -1878,7 +1878,7 @@ def test_cmd_launch_uses_relocated_worktree_manager_launcher_when_available(
     )
 
     def fake_run(argv, **kwargs):
-        python = slot / ".venv" / ("Scripts" if os.name == "nt" else "bin") / (
+        python = slot / ".runtime" / ("Scripts" if os.name == "nt" else "bin") / (
             "python.exe" if os.name == "nt" else "python"
         )
         assert argv == [str(python), "-I", "-B", "-X", "utf8", "-m", "worktree_manager", "--version"]

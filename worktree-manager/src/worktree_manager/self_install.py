@@ -477,16 +477,9 @@ def needs_install(version: str, root: Path | None = None) -> bool:
 
 
 def _deploy_binstubs() -> list[Path]:
-    lb = local_bin()
-    lb.mkdir(parents=True, exist_ok=True)
-    written: list[Path] = []
-    for name, body in _expected_binstub_contents().items():
-        p = lb / name
-        p.write_text(body, encoding="utf-8", newline="")
-        if os.name != "nt":
-            p.chmod(0o755)
-        written.append(p)
-    return written
+    from .self_install_recovery import deploy_binstubs
+
+    return deploy_binstubs()
 
 
 def _write_marker(root: Path, version: str) -> None:

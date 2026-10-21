@@ -268,7 +268,7 @@ def test_companion_keybind_fragment_builds_the_popup_command():
     assert "function Invoke-AwMuxCompanionBind" in so
     assert "bind-key -T root C-k display-popup" in so
     assert "uv run" not in so
-    assert r".venv\Scripts\python.exe" in so
+    assert r".runtime\Scripts\python.exe" in so
     assert "-m worktree_manager companion" in so
     assert "source-file -t $Session" in so
     # The corruption finding: no mouse-click directive ships (yet) in any

@@ -132,8 +132,8 @@ if [ -f "$WM_ROOT/current-version" ]; then
     _ver="$(cat "$WM_ROOT/current-version" 2>/dev/null)"
     if [ -n "$_ver" ] && [ -d "$WM_ROOT/versions/$_ver" ]; then
         pass "versioned install published: current-version=$_ver + versions/$_ver slot"
-        if [ -x "$WM_ROOT/versions/$_ver/.venv/bin/python" ] &&
-           grep -qx 'platform-runtime-v1' "$WM_ROOT/versions/$_ver/.install-complete"; then
+        if [ -x "$WM_ROOT/versions/$_ver/.runtime/bin/python" ] &&
+           grep -qx 'platform-runtime-v2' "$WM_ROOT/versions/$_ver/.install-complete"; then
             pass "selected slot contains a qualified platform-local runtime"
         else
             fail "selected slot is source-only or lacks runtime-qualified completion"

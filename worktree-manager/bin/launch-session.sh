@@ -1319,8 +1319,8 @@ print(str(leg.get('state', '')) if isinstance(leg, dict) and leg.get('provider')
             local wm_root wm_python
             wm_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P 2>/dev/null || true)"
             [[ -n "$wm_root" ]] || return 0
-            wm_python="$wm_root/.venv/bin/python"
-            [[ -x "$wm_python" ]] || wm_python="$wm_root/.venv/Scripts/python.exe"
+            wm_python="$wm_root/.runtime/bin/python"
+            [[ -x "$wm_python" ]] || wm_python="$wm_root/.runtime/Scripts/python.exe"
             if [[ ! -x "$wm_python" ]]; then
                 setup_log WARN "Manager installed interpreter is missing: $wm_python"
                 return 0

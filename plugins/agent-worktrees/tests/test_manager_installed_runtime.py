@@ -17,7 +17,7 @@ from agent_worktrees import manager_launch_cli as launch
 def manager_runtime(tmp_path, monkeypatch):
     root = tmp_path / "manager root"
     slot = root / "versions" / "1.2.3"
-    environment = slot / ".venv"
+    environment = slot / ".runtime"
     venv.EnvBuilder(with_pip=False, symlinks=False).create(environment)
     site = (
         environment / "Lib" / "site-packages" if os.name == "nt" else
@@ -61,13 +61,33 @@ def test_engine_probes_selected_manager_without_uv_or_environment_mutation(manag
     assert not (slot / "pyproject.toml").exists(), "probe cannot depend on a project manifest"
 
 
+def test_legacy_installed_manager_remains_usable_without_uv(manager_runtime):
+    slot, _ = manager_runtime
+    (slot / ".runtime").rename(slot / ".venv")
+    (slot / ".install-complete").write_bytes(b"")
+    before = _snapshot(slot)
+    assert launch._usable_worktree_manager_launcher_dir() == slot / "bin"
+    assert _snapshot(slot) == before
+
+
+def test_qualified_probe_never_uses_a_legacy_environment(manager_runtime, capsys):
+    slot, _ = manager_runtime
+    (slot / ".runtime").rename(slot / ".venv")
+    (slot / ".install-complete").write_text("platform-runtime-v2\n", encoding="utf-8")
+    before = _snapshot(slot)
+    assert launch._usable_worktree_manager_launcher_dir() is None
+    captured = capsys.readouterr()
+    assert "versioned runtime could not be started" in captured.err + captured.out
+    assert _snapshot(slot) == before
+
+
 @pytest.mark.parametrize("failure", ["missing-interpreter", "broken-cli", "invalid-version"])
 def test_installed_manager_probe_keeps_actionable_failure_diagnostics(
     manager_runtime, failure, capsys,
 ):
     slot, main = manager_runtime
     if failure == "missing-interpreter":
-        python = slot / ".venv" / ("Scripts" if os.name == "nt" else "bin") / (
+        python = slot / ".runtime" / ("Scripts" if os.name == "nt" else "bin") / (
             "python.exe" if os.name == "nt" else "python"
         )
         python.unlink()

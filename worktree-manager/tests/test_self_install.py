@@ -192,7 +192,7 @@ def test_partial_launcher_deployment_restores_prior_artifacts(tmp_path, monkeypa
     original_write = Path.write_text
 
     def refuse_second(path, *args, **kwargs):
-        if path == lb / second:
+        if path.parent == lb and path.name.startswith(f".{second}.publish."):
             assert (lb / first).read_bytes() != b"retained launcher\r\n"
             raise PermissionError("second launcher publication refused")
         return original_write(path, *args, **kwargs)
@@ -207,7 +207,9 @@ def test_partial_launcher_deployment_restores_prior_artifacts(tmp_path, monkeypa
 
 
 @pytest.mark.parametrize("failure", [PermissionError, KeyboardInterrupt])
-def test_metadata_repair_holds_lease_and_restores_a_truncated_launcher(tmp_path, monkeypatch, failure):
+def test_metadata_repair_holds_lease_and_retains_launchers_after_partial_write(
+    tmp_path, monkeypatch, failure,
+):
     pd = _fake_payload(tmp_path, "1.2.3")
     root = tmp_path / "root"
     lb = _patch_local_bin(monkeypatch, tmp_path)
@@ -228,8 +230,9 @@ def test_metadata_repair_holds_lease_and_restores_a_truncated_launcher(tmp_path,
     original_write = Path.write_text
 
     def refuse(path, *args, **kwargs):
-        if path == stub:
+        if path.parent == lb and path.name.startswith(f".{stub.name}.publish."):
             assert held["value"], "launcher repair escaped construction ownership"
+            assert stub.read_bytes() == b"retained stale launcher\r\n"
             original_write(path, "partial launcher", encoding="utf-8")
             raise failure("launcher truncated before write failure")
         return original_write(path, *args, **kwargs)
@@ -730,7 +733,7 @@ def test_self_install_refuses_to_overwrite_the_currently_running_slot(tmp_path, 
     monkeypatch.setattr(si, "_slot_is_complete", lambda slot: False)
 
     slot = version_slot("1.2.3", root)
-    fake_exe = slot / ".venv" / "Scripts" / "python.exe"
+    fake_exe = slot / ".runtime" / "Scripts" / "python.exe"
     fake_exe.parent.mkdir(parents=True, exist_ok=True)
     fake_exe.write_text("not a real interpreter")
     monkeypatch.setattr(si.sys, "executable", str(fake_exe))

@@ -331,7 +331,7 @@ requested command's nonzero exit code.
 
 ### Slot completeness and recovery
 
-Each `versions/<version>/` slot contains its own `.venv`, with the Manager
+Each `versions/<version>/` slot contains its own `.runtime`, with the Manager
 and materialized first-party libraries installed non-editably. Construction
 uses platform-local `uv pip install` through the canonical dependency policy:
 configured indexes, authentication, TLS and stronger cutoffs remain in force,
@@ -340,12 +340,20 @@ Linux-only D-Bus packages merely to start the Manager.
 
 The installer constructs a sibling candidate, checks its actual installed
 module/version and CLI, then repeats health at the final runtime path before
-writing the `platform-runtime-v1` `.install-complete` marker. Failed construction
+writing the `platform-runtime-v2` `.install-complete` marker. Failed construction
 or final-path health, including cancellation, restores the prior slot without
 selecting the candidate. If selector publication fails after launcher deployment,
 the installer restores the previous launcher bytes and permissions (or removes
 newly created launchers), preserving source-only legacy installations as well.
 The existing cutover lease and live-slot protections remain in place.
+Qualified `.runtime` environments are separate from UV's legacy `.venv`: an
+old dispatcher already loaded before publication may still synchronize the
+newly selected project's `.venv`, but cannot rewrite the qualified runtime.
+New launchers retain UV compatibility only for an explicitly source-only
+legacy slot with a zero-byte completion marker and intact source manifest.
+Missing or broken qualified environments never fall back to project resolution.
+Launcher files are published through complete temporary files and atomic
+replacement; rollback retains their prior bytes and permissions.
 Source-only legacy completion markers are not runtime readiness; a no-op also
 requires actual installed health. Stale binstubs or provider metadata are
 repaired without rebuilding a healthy environment.
@@ -365,6 +373,9 @@ headless and preserve argument boundaries.
 The Worktrees engine's selected-Manager launcher probe likewise calls the
 installed interpreter directly, preserving that environment while checking
 its version before pane-wrapper selection.
+For a zero-byte legacy completion marker it probes the legacy `.venv`
+interpreter directly, still without UV; it never substitutes that environment
+for a missing qualified `.runtime`.
 First-touch bootstrap uses a temporary qualified runner to enter this
 same self-install contract before importing runtime-dependent CLI modules;
 it removes that runner before launching the installed environment. A healthy

@@ -2057,13 +2057,20 @@ against a stub writer.
 > directly: a per-slot `.install-complete` file qualifies a complete
 > platform-local, non-editable environment only after actual installed import,
 > version and CLI health, including a final-path probe after relocation.
+> Its qualified environment lives in the slot's `.runtime`, not UV's legacy
+> `.venv`, so an already-loaded old dispatcher reading a newly selected slot
+> cannot synchronize over the qualified install. The `platform-runtime-v2`
+> completion format identifies this isolated layout.
 > Source/pointer checks precede construction; a failed build or final-path
 > probe retains/restores the prior slot before active selection.
 > Its standalone `scripts/` carries byte-identical canonical installer
 > dependency policy/configuration helpers, maintained by
 > `tools/sync-versioned-runtime.py`; it does not reimplement seasoning or
-> import an installed plugin. Generated launchers use the selected environment,
-> never a universal project solve at invocation time. See its
+> import an installed plugin. Generated launchers use the selected qualified
+> environment without a project solve. Only a source-only legacy slot with a
+> zero-byte completion marker retains the old UV contract during migration;
+> a broken qualified environment never retries through UV. Launcher publication
+> atomically replaces complete files while retaining rollback preimages. See its
 > [runtime recovery contract](../worktree-manager/README.md#slot-completeness-and-recovery).
 
 ### Install-transaction lock — mutating runs never interleave, never run unlocked

@@ -47,7 +47,7 @@ def test_source_policy_does_not_come_from_a_foreign_manager_venv(tmp_path, monke
 
 def test_wheel_resolves_its_own_payload_only(tmp_path, monkeypatch):
     slot = _source(tmp_path / "installed")
-    environment = slot / ".venv"
+    environment = slot / runtime.RUNTIME_DIR
     environment.mkdir()
     (environment / "pyvenv.cfg").write_text("# fixture", encoding="utf-8")
     module = environment / "Lib" / "site-packages" / "worktree_manager" / "installed_runtime.py"
@@ -65,11 +65,11 @@ def test_wheel_keeps_the_manager_owned_launch_asset(tmp_path, monkeypatch):
     from worktree_manager import relocated_launch
 
     slot = _source(tmp_path / "installed")
-    package = slot / ".venv" / "Lib" / "site-packages" / "worktree_manager"
-    (slot / ".venv").mkdir()
-    (slot / ".venv" / "pyvenv.cfg").write_text("# fixture", encoding="utf-8")
+    package = slot / runtime.RUNTIME_DIR / "Lib" / "site-packages" / "worktree_manager"
+    (slot / runtime.RUNTIME_DIR).mkdir()
+    (slot / runtime.RUNTIME_DIR / "pyvenv.cfg").write_text("# fixture", encoding="utf-8")
     monkeypatch.setattr(runtime, "__file__", str(package / "installed_runtime.py"))
-    monkeypatch.setattr(runtime.sys, "prefix", str(slot / ".venv"))
+    monkeypatch.setattr(runtime.sys, "prefix", str(slot / runtime.RUNTIME_DIR))
     monkeypatch.setattr(relocated_launch, "__file__", str(package / "relocated_launch.py"))
     expected = slot / "bin" / (
         "launch-session.ps1" if os.name == "nt" else "launch-session.sh"
@@ -83,7 +83,7 @@ def test_wheel_keeps_the_manager_owned_launch_asset(tmp_path, monkeypatch):
 
 def test_direct_base_python_cannot_overwrite_its_executing_manager(tmp_path, monkeypatch):
     slot = tmp_path / "slot"
-    monkeypatch.setattr(si, "__file__", str(slot / ".venv" / "site-packages" / "self_install.py"))
+    monkeypatch.setattr(si, "__file__", str(slot / runtime.RUNTIME_DIR / "site-packages" / "self_install.py"))
     monkeypatch.setattr(si.sys, "executable", str(tmp_path / "base-python"))
     assert si._currently_running_from(slot)
 
@@ -105,7 +105,7 @@ def test_build_uses_platform_install_and_canonical_policy(tmp_path, monkeypatch)
     runtime.build_runtime(source)
 
     assert calls[0][0] == [
-        "selected-uv", "venv", "--python", sys.executable, str(source / ".venv"),
+        "selected-uv", "venv", "--python", sys.executable, str(source / runtime.RUNTIME_DIR),
     ]
     command, options = calls[1]
     assert command[:6] == [
@@ -153,7 +153,9 @@ def test_posix_constructor_uses_existing_containment_and_retains_stderr(tmp_path
         options["stderr"].write(b"literal failure detail")
         return subprocess.CompletedProcess(argv, 7, "captured stdout", None)
 
-    monkeypatch.setattr(runtime, "os", SimpleNamespace(name="posix", environ={"CONTROLLED": "yes"}))
+    monkeypatch.setattr(runtime, "os", SimpleNamespace(name="posix", environ={
+        "CONTROLLED": "yes", "PYTHONHOME": "foreign", "UV_INTERNAL__PYTHONHOME": "foreign-uv",
+    }))
     monkeypatch.setattr(engine_process, "run", run)
     result = runtime._owned_runner(["fixture"], cwd=tmp_path, timeout=9)
     assert (result.returncode, result.stdout, result.stderr) == (
@@ -306,7 +308,7 @@ def test_legacy_source_only_completion_is_not_runtime_readiness(tmp_path):
 @pytest.fixture
 def standalone_runtime(tmp_path):
     slot = _source(tmp_path / "installed root" / "versions" / "1.2.3")
-    environment = slot / ".venv"
+    environment = slot / runtime.RUNTIME_DIR
     venv.EnvBuilder(with_pip=False, symlinks=False).create(environment)
     site = (
         environment / "Lib" / "site-packages" if os.name == "nt"
@@ -388,7 +390,7 @@ def test_native_generated_launcher_without_uv_or_source(standalone_runtime, tmp_
 
 
 def _record_internal_calls(slot, tmp_path):
-    environment = slot / ".venv"
+    environment = slot / runtime.RUNTIME_DIR
     main = next(environment.rglob("worktree_manager/__main__.py"))
     original = main.read_text(encoding="utf-8")
     main.write_text(
@@ -422,8 +424,134 @@ def test_internal_callers_cannot_resolve_or_sync_the_installed_project():
 def _environment_snapshot(slot):
     return {
         str(path.relative_to(slot)): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in (slot / ".venv").rglob("*") if path.is_file()
+        for path in (slot / runtime.RUNTIME_DIR).rglob("*") if path.is_file()
     }
+
+
+def _legacy_uv_environment(tmp_path, root):
+    binary = tmp_path / "legacy tools"
+    binary.mkdir()
+    driver = tmp_path / "legacy_uv.py"
+    receipt = tmp_path / "legacy-uv.json"
+    driver.write_text(
+        "import json,os,runpy,sys\nfrom pathlib import Path\n"
+        "args=sys.argv[1:]\n"
+        "assert args[:3]==['run','--quiet','--project'],args\n"
+        "assert args[4:]==['-m','worktree_manager','--version'],args\n"
+        "slot=Path(args[3]).resolve()\n"
+        "Path(os.environ['MANAGER_TEST_UV_RECEIPT']).write_text(json.dumps({'slot':str(slot)}))\n"
+        "sys.path.insert(0,str(slot/'src'))\n"
+        "sys.argv=['worktree_manager','--version']\n"
+        "runpy.run_module('worktree_manager',run_name='__main__')\n",
+        encoding="utf-8",
+    )
+    (binary / "uv.cmd").write_bytes(
+        b'@echo off\r\n"%MANAGER_TEST_PYTHON%" -I -B -X utf8 "%MANAGER_TEST_UV_DRIVER%" %*\r\n'
+        b"exit /b %errorlevel%\r\n"
+    )
+    script = binary / "uv"
+    script.write_text(
+        '#!/usr/bin/env bash\nexec "$MANAGER_TEST_PYTHON" -I -B -X utf8 "$MANAGER_TEST_UV_DRIVER" "$@"\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    paths = [str(binary)]
+    if os.name == "nt":
+        paths.append(str(Path(os.environ["SystemRoot"]) / "System32"))
+        bash = _shell_executable("bash")
+        if bash:
+            paths.extend((str(Path(bash).parent), str(Path(bash).parent.parent / "usr" / "bin")))
+    else:
+        paths.append(os.defpath)
+    return dict(
+        os.environ, WORKTREE_MANAGER_ROOT=str(root), PATH=os.pathsep.join(paths),
+        MANAGER_TEST_PYTHON=sys.executable, MANAGER_TEST_UV_DRIVER=str(driver),
+        MANAGER_TEST_UV_RECEIPT=str(receipt), MSYS2_ARG_CONV_EXCL="*",
+    ), receipt
+
+
+@pytest.mark.parametrize("shell", ["cmd", "powershell", "pwsh", "bash"] if os.name == "nt" else ["bash"])
+def test_successful_legacy_migration_keeps_concurrent_callers_usable(
+    standalone_runtime, tmp_path, monkeypatch, shell, _no_visible_windows,
+):
+    from worktree_manager.self_install_recovery import publish_install_artifacts
+
+    executable = _shell_executable(shell)
+    if not executable:
+        pytest.skip(f"native {shell} is unavailable")
+    slot = standalone_runtime
+    root = slot.parent.parent
+    old = _source(root / "versions" / "0.9.0", "0.9.0")
+    (old / si._SLOT_COMPLETE_MARKER).write_bytes(b"")
+    (old / "src" / "worktree_manager" / "__main__.py").write_text(
+        "from . import __version__\nprint('worktree-manager '+__version__)\n", encoding="utf-8",
+    )
+    si._write_marker(root, "0.9.0")
+    shutil.rmtree(slot / "src")
+    monkeypatch.setattr(si, "local_bin", lambda: tmp_path / "bin")
+    env, receipt = _legacy_uv_environment(tmp_path, root)
+    before = _environment_snapshot(slot)
+    publish = si._write_marker
+    observations = []
+
+    def paused_selection(selected_root, version):
+        assert si.current_version(root) == "0.9.0"
+        assert not (old / ".venv").exists()
+        for _ in range(2):
+            result = subprocess.run(
+                _launcher_command(shell, executable, si.local_bin(), ["--version"]),
+                env=env, cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert result.stdout.strip() == "worktree-manager 0.9.0"
+            assert Path(json.loads(receipt.read_text())["slot"]) == old.resolve()
+            assert _environment_snapshot(slot) == before
+            observations.append(result.stdout)
+        publish(selected_root, version)
+
+    monkeypatch.setattr(si, "_write_marker", paused_selection)
+    lease, _ = si._acquire_install_cutover_lease(root)
+    try:
+        publish_install_artifacts(root, "1.2.3")
+    finally:
+        lease.release()
+    assert len(observations) == 2
+    env["PATH"] = ""
+    for _ in range(2):
+        result = subprocess.run(
+            _launcher_command(shell, executable, si.local_bin(), ["--version"]),
+            env=env, cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.stdout.strip() == "worktree-manager 1.2.3"
+        assert _environment_snapshot(slot) == before
+
+
+@pytest.mark.parametrize("shell", ["cmd", "powershell", "pwsh", "bash"] if os.name == "nt" else ["bash"])
+def test_broken_qualified_runtime_cannot_fall_back_to_legacy_project_resolution(
+    standalone_runtime, tmp_path, monkeypatch, shell,
+):
+    executable = _shell_executable(shell)
+    if not executable:
+        pytest.skip(f"native {shell} is unavailable")
+    slot = standalone_runtime
+    root = slot.parent.parent
+    si._mark_slot_complete(slot)
+    si._write_marker(root, "1.2.3")
+    runtime.runtime_python(slot).unlink()
+    monkeypatch.setattr(si, "local_bin", lambda: tmp_path / "bin")
+    si._deploy_binstubs()
+    env, receipt = _legacy_uv_environment(tmp_path, root)
+    result = subprocess.run(
+        _launcher_command(shell, executable, si.local_bin(), ["--version"]),
+        env=env, cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", timeout=10,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    assert result.returncode != 0
+    assert "runtime is missing" in result.stderr
+    assert not receipt.exists(), "qualified-slot failure must never retry with UV"
 
 
 def _check_internal_calls(command, env, slot, receipt, action, tmp_path):
@@ -442,8 +570,8 @@ def _check_internal_calls(command, env, slot, receipt, action, tmp_path):
             time.sleep(.01)
         assert receipt.exists(), result.stdout + result.stderr
         record = json.loads(receipt.read_text(encoding="utf-8"))
-        assert Path(record["prefix"]).resolve() == (slot / ".venv").resolve()
-        assert Path(record["module"]).resolve().is_relative_to((slot / ".venv").resolve())
+        assert Path(record["prefix"]).resolve() == (slot / runtime.RUNTIME_DIR).resolve()
+        assert Path(record["module"]).resolve().is_relative_to((slot / runtime.RUNTIME_DIR).resolve())
         if action == "companion":
             assert record["args"] == ["companion"]
         else:
@@ -611,8 +739,8 @@ def test_probe_requires_the_actual_cli_version_not_only_a_success_exit(
     slot = standalone_runtime
     outputs = iter((
         json.dumps({
-            "version": "1.2.3", "prefix": str(slot / ".venv"),
-            "module": str(slot / ".venv" / "worktree_manager" / "__init__.py"),
+            "version": "1.2.3", "prefix": str(slot / runtime.RUNTIME_DIR),
+            "module": str(slot / runtime.RUNTIME_DIR / "worktree_manager" / "__init__.py"),
         }),
         "unexpected version output",
     ))
@@ -672,6 +800,7 @@ def _no_visible_windows(monkeypatch):
 
     baseline_windows, baseline_foreground = windows()
     roots, owned, visible, focused = set(), set(), set(), set()
+    focus_details = set()
     stop = threading.Event()
     real_popen = subprocess.Popen
 
@@ -701,6 +830,11 @@ def _no_visible_windows(monkeypatch):
                 in {"windowsterminal.exe", "openconsole.exe", "conhost.exe"}
             ):
                 focused.add(foreground)
+                focus_details.add((
+                    foreground, table.get(foreground, ("", 0))[0],
+                    foreground in owned, foreground in baseline_windows.values(),
+                    baseline_foreground,
+                ))
             stop.wait(.01)
 
     with ThreadPoolExecutor(max_workers=1) as executor:
@@ -712,7 +846,11 @@ def _no_visible_windows(monkeypatch):
             monitor.result(timeout=3)
     assert roots and owned
     assert not visible, "a Manager invocation surfaced a visible window"
-    assert not focused, "a Manager invocation stole focus"
+    assert not focused, (
+        "foreground changed during Manager observation "
+        "(pid, image, owned, preexisting-window, original-foreground): "
+        + repr(sorted(focus_details))
+    )
 
 
 @pytest.mark.skipif(

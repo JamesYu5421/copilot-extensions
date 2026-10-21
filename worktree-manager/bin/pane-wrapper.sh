@@ -147,8 +147,8 @@ if command -v agent-worktrees >/dev/null 2>&1; then
 fi
 if [[ -n "$AW_PROJECT" && -n "$AW_WT" ]]; then
     WM_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P 2>/dev/null || true)"
-    WM_PYTHON="$WM_ROOT/.venv/bin/python"
-    [[ -x "$WM_PYTHON" ]] || WM_PYTHON="$WM_ROOT/.venv/Scripts/python.exe"
+    WM_PYTHON="$WM_ROOT/.runtime/bin/python"
+    [[ -x "$WM_PYTHON" ]] || WM_PYTHON="$WM_ROOT/.runtime/Scripts/python.exe"
     if [[ -n "$WM_ROOT" && -x "$WM_PYTHON" ]]; then
         # Derive the real mux session's own stable identity (Copilot review
         # finding on PR #3906): the display session name alone is NOT

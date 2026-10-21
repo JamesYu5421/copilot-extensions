@@ -1660,7 +1660,7 @@ function Invoke-ManagedMuxRegister {
     ) { return }
     try {
         $managerRoot = Split-Path -Parent $PSScriptRoot
-        $managerPython = Join-Path $managerRoot '.venv\Scripts\python.exe'
+        $managerPython = Join-Path $managerRoot '.runtime\Scripts\python.exe'
         if (-not (Test-Path -LiteralPath $managerPython)) {
             throw "Manager installed interpreter is missing: $managerPython"
         }

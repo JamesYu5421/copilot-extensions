@@ -37,7 +37,7 @@ def run(argv: list[str], **kwargs) -> subprocess.CompletedProcess:
     text = kwargs.get("text", False)
     with tempfile.TemporaryFile() as output:
         owner = subprocess.Popen(
-            [sys.executable, "-c", _OWNER, json.dumps(argv), str(output.fileno())],
+            [sys.executable, "-I", "-B", "-X", "utf8", "-c", _OWNER, json.dumps(argv), str(output.fileno())],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             start_new_session=True, pass_fds=(output.fileno(),), **kwargs,
         )

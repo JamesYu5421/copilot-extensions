@@ -3,11 +3,33 @@
 from __future__ import annotations
 
 import logging
+import os
 import stat
 import uuid
 from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+
+def deploy_binstubs() -> list[Path]:
+    """Replace each complete launcher atomically; callers own the install lease."""
+    from . import self_install as si
+
+    directory = si.local_bin()
+    directory.mkdir(parents=True, exist_ok=True)
+    written = []
+    for name, body in si._expected_binstub_contents().items():
+        path = directory / name
+        temporary = directory / f".{name}.publish.{uuid.uuid4().hex}"
+        try:
+            temporary.write_text(body, encoding="utf-8", newline="")
+            if os.name != "nt":
+                temporary.chmod(0o755)
+            si._replace_with_retry(temporary, path)
+            written.append(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return written
 
 
 def publish_install_artifacts(root: Path, version: str, *, select: bool = True) -> list[Path]:

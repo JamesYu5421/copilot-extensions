@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
-from .installed_runtime import build_runtime, probe_runtime
+from .installed_runtime import RUNTIME_DIR, build_runtime, probe_runtime
 
 
 def _materialize_payload_pointers(payload_dir: Path, slot: Path) -> None:
@@ -203,7 +203,9 @@ def _copy_payload_unsafe(payload_dir: Path, slot: Path) -> None:
     if staging.exists():
         shutil.rmtree(staging, ignore_errors=True)
     try:
-        ignore = shutil.ignore_patterns(".git", ".venv", ".install-complete", "__pycache__", "*.pyc")
+        ignore = shutil.ignore_patterns(
+            ".git", ".venv", RUNTIME_DIR, ".install-complete", "__pycache__", "*.pyc",
+        )
         # symlinks=True: a payload staged by self_update's tarball fetch may
         # carry a preserved (not dereferenced -- see _fetch_via_tarball's own
         # symlinks=True) symlink; copying it here with the default

@@ -219,7 +219,13 @@ def _usable_worktree_manager_launcher_dir() -> Path | None:
     )
     if slot is None:
         return None
-    python = slot / ".venv" / ("Scripts" if os.name == "nt" else "bin") / (
+    completion = slot / ".install-complete"
+    try:
+        legacy = completion.is_file() and completion.stat().st_size == 0
+    except OSError as exc:
+        output.warn(f"Ignoring an unusable Worktree Manager install at {slot}: {exc}")
+        return None
+    python = slot / (".venv" if legacy else ".runtime") / ("Scripts" if os.name == "nt" else "bin") / (
         "python.exe" if os.name == "nt" else "python"
     )
     version, proc = _core_helper(

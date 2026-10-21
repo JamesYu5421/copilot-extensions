@@ -1,7 +1,8 @@
 # Phase 7 - Platform-local installed runtime
 
 - **Parent:** [Worktree Manager control plane](README.md#phase-7a---platform-local-installed-runtime-7305)
-- **Status:** Active; proposal reviewed and merged in #7339.
+- **Status:** Active; original proposal reviewed and merged in #7339;
+  operator-approved runtime-isolation revision pending review in #7420.
 - **Coordination:** [#7305](https://github.com/ThomasMichon/copilot-extensions/issues/7305)
 - **Participant / PR owner:** Platform runtime implementer (`spry-workbench`).
 
@@ -13,6 +14,15 @@ local-update flow. Preserve the configured package feed and seven-day dependency
 policy. Other update-flow and sibling-runtime repairs retain their current
 owners. No deployed-file patch, package-source substitution, seasoning waiver,
 arbitrary service restart or fleet rollout is authorized.
+
+**Subsequent operator authorization:** revise the qualified environment layout
+and continue through the same implementation PR. Keep the qualified non-editable
+runtime separate from the legacy UV-managed `.venv`: already-loaded old launch
+code can read the newly published selector and synchronize that legacy path.
+Atomic dispatcher publication alone cannot protect the qualified environment
+from that in-flight reader. This authorization changes neither deployment
+authority nor the retained feed, dependency policy, sibling ownership or
+published-consumer gates.
 
 The implementation sequence and validation matrix below are
 **agent-recommended** realizations of that approved boundary, not additional
@@ -67,6 +77,11 @@ implementation; public-file absence is not proof of unpublished custody.
       semantics. Do not overwrite a healthy active or currently executing
       environment to repair metadata. Construct a new candidate before selection;
       failed construction leaves the prior marker, slot and live sessions usable.
+- [x] Isolate qualified environments in the slot's `.runtime`, reserving `.venv`
+      for legacy UV readers. Align qualification markers, payload-root discovery,
+      completeness/copy exclusions, generated launchers, internal adapters and
+      the Worktrees consumer. A broken qualified runtime must never fall back to
+      UV. Preserve only the explicitly identified source-only legacy contract.
 - [x] Validate with the candidate's own interpreter: actual module import,
       expected version and bounded CLI health. Account for environment relocation:
       probe at its final runtime path before publishing the active marker, and
@@ -113,6 +128,13 @@ implementation; public-file absence is not proof of unpublished custody.
 
 ## Validation plan
 
+- [x] Prove an actual old UV caller started before publication can read the new
+      selector afterward without changing any qualified `.runtime` byte or
+      installed identity. Permit its legacy `.venv` synchronization in the
+      disposable fixture; then run the new dispatchers without UV.
+- [ ] Repeat layout-affected native bootstrap and policy-negative contracts.
+      Native dispatcher, internal-adapter and engine checks are complete;
+      earlier same-`.venv` bootstrap evidence does not qualify the revised layout.
 - [x] Focused unit/contracts: actual platform dependency markers and non-editable
       first-party installs; supported dependency-policy invocation and rejected
       admission; missing interpreter, failed install/import/version/CLI health;
@@ -150,6 +172,36 @@ implementation; public-file absence is not proof of unpublished custody.
       under #7305 until it is executed or explicitly transferred.
 
 ## Journal
+
+- **2026-10-20** - Implemented the approved `.runtime` / `platform-runtime-v2`
+  isolation boundary and aligned qualification, payload ownership/copy exclusion,
+  generated launchers, internal adapters and the Worktrees engine. The engine
+  preserves direct-interpreter compatibility for zero-byte legacy completion
+  markers; neither it nor the dispatchers substitutes UV for a broken qualified
+  environment. New format-rejection and source-environment-copy tests cover the
+  distinction.
+  An actual offline UV caller starts before selector publication, waits before
+  reading it, then installs the newly selected project editably in `.venv`.
+  The qualified `.runtime` remains byte-identical, passes installed identity and
+  CLI health, and supports two no-UV cycles through all four native Windows
+  dispatchers. The contained Manager selection passes **231 tests**, with eight
+  explicit platform skips; the Worktrees consumer selection passes **81**.
+  The final format/old-reader selection passes **6**. Initial desktop-observer
+  runs were inconclusive because focus changed to a pre-existing terminal;
+  enriched diagnostics retained the same strict failure assertion, and the
+  operator-confirmed untouched-desktop run passed with no visible windows or
+  focus changes. Fresh bootstrap/policy-negative proof of this layout, native
+  Linux, review, release and published-consumer gates remain open.
+
+- **2026-10-20** - The operator approved revising the environment layout on
+  implementation PR #7420 after the old in-flight UV-reader gap was identified.
+  Updated this plan before implementation: the qualified non-editable runtime
+  will use `.runtime`, distinct from UV's legacy `.venv`. Current pre-revision
+  tests pass 245 cases with eight explicit platform skips, but do not prove the
+  new isolation boundary. The new old-reader and layout-affected consumer gates
+  above remain unchecked. Review, native Linux, release and authorized local
+  update qualification remain open; no deployed files or running services were
+  changed by this decision.
 
 - **2026-10-20** - Addressed the additional nested-POSIX-constructor finding
   locally. Foreground commands already inside the declared Manager-owned

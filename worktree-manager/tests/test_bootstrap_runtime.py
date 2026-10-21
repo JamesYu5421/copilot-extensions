@@ -117,7 +117,7 @@ def test_bootstrap_current_install_skips_construction_and_propagates_launch_exit
     not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"),
     reason="native Linux identity-pinned nested constructor custody",
 )
-@pytest.mark.parametrize("outcome", ["timeout", "interrupt", "escaped-control"])
+@pytest.mark.parametrize("outcome", ["timeout", "interrupt", "foreign-home", "escaped-control"])
 def test_nested_constructor_stops_before_bootstrap_runner_cleanup(
     bootstrap, tmp_path, monkeypatch, outcome,
 ):
@@ -146,6 +146,9 @@ def test_nested_constructor_stops_before_bootstrap_runner_cleanup(
     monkeypatch.setattr(module, "_copy_payload", lambda _source, slot: slot.mkdir(parents=True))
     monkeypatch.setattr(engine_process, "contained_test_mode", lambda: False)
     monkeypatch.delenv(engine_process.OWNED_GROUP_ENV, raising=False)
+    if outcome == "foreign-home":
+        monkeypatch.setenv("PYTHONHOME", str(tmp_path / "foreign-home"))
+        monkeypatch.setenv("UV_INTERNAL__PYTHONHOME", str(tmp_path / "foreign-uv-home"))
     monkeypatch.setattr(
         module, "_owned_runner",
         lambda _argv, *, cwd, timeout: installed_runtime._owned_runner(

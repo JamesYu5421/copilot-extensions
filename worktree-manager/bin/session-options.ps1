@@ -114,7 +114,7 @@ function Set-AwPsmuxServerPriority {
 # directive that delivers the Mux Companion (visions/mux-companion
 # §mux-bind-keybind-relay): Ctrl+K opens the popup.
 #
-# `<ManagerRoot>/.venv/Scripts/python.exe -m worktree_manager companion`
+# `<ManagerRoot>/.runtime/Scripts/python.exe -m worktree_manager companion`
 # mirrors launch-session.ps1's own Invoke-ManagedMuxRegister invocation
 # pattern -- resolves the Companion from its own installed environment, no
 # separately-published `worktree-manager` binstub needed. `display-popup -E`
@@ -136,7 +136,7 @@ function Set-AwPsmuxServerPriority {
 # (mux-bind-relay effort, Step 1).
 function Get-AwMuxCompanionKeybindFragment {
     param([Parameter(Mandatory)][string]$ManagerRoot)
-    $managerPython = Join-Path $ManagerRoot '.venv\Scripts\python.exe'
+    $managerPython = Join-Path $ManagerRoot '.runtime\Scripts\python.exe'
     $popupCmd = "\`"$managerPython\`" -I -B -X utf8 -m worktree_manager companion"
     "bind-key -T root C-k display-popup -E -w 80% -h 80% `"$popupCmd`""
 }

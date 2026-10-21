@@ -10,7 +10,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-RUNTIME_FORMAT = "platform-runtime-v1"
+RUNTIME_DIR = ".runtime"
+RUNTIME_FORMAT = "platform-runtime-v2"
 _CHILD = (
     "import os,subprocess,sys;os.chdir(sys.argv[1]);"
     "raise SystemExit(subprocess.run(sys.argv[2:],"
@@ -26,7 +27,7 @@ def payload_root() -> Path:
         return source
     for environment in module.parents:
         if (
-            environment.name == ".venv"
+            environment.name == RUNTIME_DIR
             and (environment / "pyvenv.cfg").is_file()
             and (environment.parent / "pyproject.toml").is_file()
         ):
@@ -35,7 +36,7 @@ def payload_root() -> Path:
 
 
 def runtime_python(slot: Path) -> Path:
-    return slot / ".venv" / ("Scripts" if os.name == "nt" else "bin") / (
+    return slot / RUNTIME_DIR / ("Scripts" if os.name == "nt" else "bin") / (
         "python.exe" if os.name == "nt" else "python"
     )
 
@@ -64,8 +65,11 @@ def _owned_runner(
         # Reuse the Manager's retained POSIX owner and contained-test suppression.
         # A file drains stderr without blocking its completion-receipt channel.
         with tempfile.TemporaryFile() as errors:
+            env = dict(os.environ)
+            env.pop("PYTHONHOME", None)
+            env.pop("UV_INTERNAL__PYTHONHOME", None)
             result = run(
-                argv, cwd=cwd, env=dict(os.environ), stdout=subprocess.PIPE, stderr=errors,
+                argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=errors,
                 text=True, encoding="utf-8", timeout=timeout,
             )
             errors.seek(0)
@@ -97,7 +101,7 @@ def build_runtime(slot: Path) -> None:
     if not policy.is_file() or not policy.with_name("installer_dependency_config.py").is_file():
         raise RuntimeError("Cannot construct the Manager runtime: dependency policy is missing")
     _run(
-        [uv, "venv", "--python", sys.executable, str(slot / ".venv")],
+        [uv, "venv", "--python", sys.executable, str(slot / RUNTIME_DIR)],
         cwd=slot, timeout=120,
     )
     libraries = sorted(
@@ -132,8 +136,8 @@ def probe_runtime(slot: Path, version: str) -> None:
         observed = json.loads(result.stdout)
         valid = (
             observed["version"] == version
-            and Path(observed["prefix"]).resolve() == (slot / ".venv").resolve()
-            and Path(observed["module"]).resolve().is_relative_to((slot / ".venv").resolve())
+            and Path(observed["prefix"]).resolve() == (slot / RUNTIME_DIR).resolve()
+            and Path(observed["module"]).resolve().is_relative_to((slot / RUNTIME_DIR).resolve())
         )
     except (ValueError, KeyError, TypeError) as exc:
         raise RuntimeError("Manager runtime health returned invalid identity JSON") from exc
@@ -159,7 +163,15 @@ def sh_binstub() -> str:
         '  echo "Manager version marker is empty; re-run the supported bootstrap to repair it." >&2\n'
         '  exit 1\n'
         'fi\n'
-        f'python="$root/versions/$ver/.venv/{interpreter}"\n'
+        'slot="$root/versions/$ver"\n'
+        'if [ -f "$slot/.install-complete" ] && [ ! -s "$slot/.install-complete" ]; then\n'
+        '  if [ -f "$slot/pyproject.toml" ] && [ -f "$slot/src/worktree_manager/__init__.py" ]; then\n'
+        '    exec uv run --quiet --project "$slot" -m worktree_manager "$@"\n'
+        '  fi\n'
+        '  echo "Manager legacy payload is incomplete; re-run the supported bootstrap to repair it." >&2\n'
+        '  exit 1\n'
+        'fi\n'
+        f'python="$slot/{RUNTIME_DIR}/{interpreter}"\n'
         'if [ ! -x "$python" ]; then\n'
         '  echo "Manager runtime is missing; re-run the supported bootstrap to repair it." >&2\n'
         '  exit 1\n'
@@ -180,13 +192,25 @@ def cmd_binstub() -> str:
         '  echo Manager version marker is missing or empty; re-run the supported bootstrap to repair it. 1>&2\r\n'
         '  exit /b 1\r\n'
         ')\r\n'
-        'set "PYTHON=%WORKTREE_MANAGER_ROOT%\\versions\\%VER%\\.venv\\Scripts\\python.exe"\r\n'
+        'set "SLOT=%WORKTREE_MANAGER_ROOT%\\versions\\%VER%"\r\n'
+        'if exist "%SLOT%\\.install-complete" (\r\n'
+        '  for %%F in ("%SLOT%\\.install-complete") do if %%~zF EQU 0 goto legacy\r\n'
+        ')\r\n'
+        f'set "PYTHON=%SLOT%\\{RUNTIME_DIR}\\Scripts\\python.exe"\r\n'
         'if not exist "%PYTHON%" (\r\n'
         '  echo Manager runtime is missing; re-run the supported bootstrap to repair it. 1>&2\r\n'
         '  exit /b 1\r\n'
         ')\r\n'
         '"%PYTHON%" -I -B -X utf8 -m worktree_manager %*\r\n'
         "exit /b %errorlevel%\r\n"
+        ":legacy\r\n"
+        'if not exist "%SLOT%\\pyproject.toml" goto missing_legacy\r\n'
+        'if not exist "%SLOT%\\src\\worktree_manager\\__init__.py" goto missing_legacy\r\n'
+        'uv run --quiet --project "%SLOT%" -m worktree_manager %*\r\n'
+        "exit /b %errorlevel%\r\n"
+        ":missing_legacy\r\n"
+        "echo Manager legacy payload is incomplete; re-run the supported bootstrap to repair it. 1>&2\r\n"
+        "exit /b 1\r\n"
     )
 
 
@@ -203,7 +227,17 @@ def ps1_binstub() -> str:
         "  exit 1\n"
         "}\n"
         '$slot = Join-Path (Join-Path $root "versions") $ver\n'
-        '$python = Join-Path $slot ".venv\\Scripts\\python.exe"\n'
+        '$completion = Join-Path $slot ".install-complete"\n'
+        "if ((Test-Path -LiteralPath $completion -PathType Leaf) -and (Get-Item -LiteralPath $completion).Length -eq 0) {\n"
+        '  if ((Test-Path -LiteralPath (Join-Path $slot "pyproject.toml") -PathType Leaf) -and '
+        '(Test-Path -LiteralPath (Join-Path $slot "src\\worktree_manager\\__init__.py") -PathType Leaf)) {\n'
+        "    & uv run --quiet --project $slot -m worktree_manager @args\n"
+        "    exit $LASTEXITCODE\n"
+        "  }\n"
+        "  [Console]::Error.WriteLine('Manager legacy payload is incomplete; re-run the supported bootstrap to repair it.')\n"
+        "  exit 1\n"
+        "}\n"
+        f'$python = Join-Path $slot "{RUNTIME_DIR}\\Scripts\\python.exe"\n'
         "if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {\n"
         "  [Console]::Error.WriteLine('Manager runtime is missing; re-run the supported bootstrap to repair it.')\n"
         "  exit 1\n"

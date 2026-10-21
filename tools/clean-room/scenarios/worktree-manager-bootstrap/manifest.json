@@ -12,7 +12,7 @@
     "CR_UV_INDEX": "(opt-in uv-index fixture; REQUIRED on a governed box whose public PyPI is TLS-blocked -- the bootstrap's payload `uv pip install` uses it)"
   },
   "expected_artifacts": [
-    "~/.worktree-manager/versions/<ver>/.venv + runtime-qualified completion + current-version",
+    "~/.worktree-manager/versions/<ver>/.runtime + runtime-qualified completion + current-version",
     "~/.local/bin/worktree-manager (binstub)",
     "uv provisioned into ~/.local/bin (was absent on the pristine image)"
   ],

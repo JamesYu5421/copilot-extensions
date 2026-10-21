@@ -31,6 +31,7 @@ def test_group_owner_is_not_reaped_before_descendant_sweep(monkeypatch, outcome)
     owner.communicate = lambda **kwargs: events.append(("reap", kwargs["timeout"]))
 
     def spawn(argv, **kwargs):
+        assert argv[:6] == [sys.executable, "-I", "-B", "-X", "utf8", "-c"]
         events.append(("spawn", kwargs))
         os.write(int(argv[-1]), b'{"action":"exec"}')
         return owner
