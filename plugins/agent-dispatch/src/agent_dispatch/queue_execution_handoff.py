@@ -34,9 +34,7 @@ def _scope_key(scope: ExecutionScope) -> str:
     return json.dumps(asdict(scope), sort_keys=True, separators=(",", ":"))
 
 
-def closed_execution(
-    conn: sqlite3.Connection, task_id: str
-) -> sqlite3.Row | None:
+def closed_execution(conn: sqlite3.Connection, task_id: str) -> sqlite3.Row | None:
     """Read under the caller's admission transaction."""
     return conn.execute(
         "SELECT c.* FROM execution_admission_closures c"
@@ -56,6 +54,30 @@ def require_execution_admission(conn: sqlite3.Connection, task_id: str) -> None:
 
 
 class QueueExecutionHandoffMixin:
+    @staticmethod
+    def _require_execution_scope(conn: sqlite3.Connection, scope: ExecutionScope) -> None:
+        identity = conn.execute(
+            "SELECT identity FROM workspace_queue_identity WHERE singleton = 1"
+        ).fetchone()
+        if identity is None or identity["identity"] != scope.coordinator:
+            raise TaskError("execution scope belongs to another coordinator")
+
+    def _require_execution_producer(
+        self,
+        conn: sqlite3.Connection,
+        scope: ExecutionScope,
+        source: str,
+        expected_producer_generation: int,
+    ) -> None:
+        if type(expected_producer_generation) is not int or expected_producer_generation < 1:
+            raise TaskError("expected producer generation must be positive")
+        repo, _ = self._validate_producer_scope(scope.repository, source)
+        if repo != scope.repository:
+            raise TaskError("execution scope repository must be canonical")
+        producer = self._producer_scope_row(conn, repo=repo, source=source)
+        if producer is None or producer["current_generation"] != expected_producer_generation:
+            raise TaskError("execution closure requires the current managed producer")
+
     @staticmethod
     def _migrate_execution_handoff(conn: sqlite3.Connection) -> None:
         conn.execute(
@@ -87,7 +109,9 @@ class QueueExecutionHandoffMixin:
         if not isinstance(request, EffectRevocation):
             raise TaskError("execution closure requires a qualified revocation")
         if (request.retiring_mode, request.destination_mode, request.generation) != (
-            "automatic", "manual", 1
+            "automatic",
+            "manual",
+            1,
         ):
             raise TaskError("only initial admission closure is implemented; no handback")
         if type(expected_producer_generation) is not int or expected_producer_generation < 1:
@@ -99,11 +123,7 @@ class QueueExecutionHandoffMixin:
         encoded = json.dumps(asdict(request), sort_keys=True, separators=(",", ":"))
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            identity = conn.execute(
-                "SELECT identity FROM workspace_queue_identity WHERE singleton = 1"
-            ).fetchone()
-            if identity is None or identity["identity"] != request.scope.coordinator:
-                raise TaskError("execution scope belongs to another coordinator")
+            self._require_execution_scope(conn, request.scope)
             row = conn.execute(
                 "SELECT * FROM execution_admission_closures"
                 " WHERE (repo = ? AND source = ?) OR scope_key = ?",
@@ -121,23 +141,28 @@ class QueueExecutionHandoffMixin:
                     request, source, row["producer_generation"], row["created_at"], True
                 )
             else:
-                producer = self._producer_scope_row(conn, repo=repo, source=source)
-                if (
-                    producer is None
-                    or producer["current_generation"] != expected_producer_generation
-                ):
-                    raise TaskError("execution closure requires the current managed producer")
+                self._require_execution_producer(
+                    conn, request.scope, source, expected_producer_generation
+                )
+                from .queue_execution_custody import require_custody_scope
+
+                require_custody_scope(conn, key, repo, source)
                 ts = self._now(now)
                 conn.execute(
                     "INSERT INTO execution_admission_closures"
                     " (scope_key, repo, source, operation_id, request,"
                     " producer_generation, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (key, repo, source, request.operation_id, encoded,
-                     expected_producer_generation, ts),
+                    (
+                        key,
+                        repo,
+                        source,
+                        request.operation_id,
+                        encoded,
+                        expected_producer_generation,
+                        ts,
+                    ),
                 )
-                result = ExecutionClosure(
-                    request, source, expected_producer_generation, ts, False
-                )
+                result = ExecutionClosure(request, source, expected_producer_generation, ts, False)
             conn.commit()
         return result
 
@@ -158,20 +183,29 @@ class QueueExecutionHandoffMixin:
             params = (closure["repo"], closure["source"])
             tasks = conn.execute(
                 "SELECT id, status, owner, owner_session_id, generation, wake_status"
-                " FROM tasks WHERE repo = ? AND source = ? ORDER BY id", params
+                " FROM tasks WHERE repo = ? AND source = ? ORDER BY id",
+                params,
             ).fetchall()
             reservations = conn.execute(
                 "SELECT r.* FROM spawn_reservations r JOIN tasks t ON t.id = r.task_id"
-                " WHERE t.repo = ? AND t.source = ? ORDER BY r.task_id, r.attempt", params
+                " WHERE t.repo = ? AND t.source = ? ORDER BY r.task_id, r.attempt",
+                params,
             ).fetchall()
             wakes = conn.execute(
                 "SELECT w.* FROM wake_outbox w JOIN tasks t ON t.id = w.task_id"
-                " WHERE t.repo = ? AND t.source = ? ORDER BY w.task_id, w.wake_seq", params
+                " WHERE t.repo = ? AND t.source = ? ORDER BY w.task_id, w.wake_seq",
+                params,
             ).fetchall()
             run_waiter_wakes = conn.execute(
                 "SELECT w.* FROM run_waiter_wakes w JOIN tasks t ON t.id = w.task_id"
                 " WHERE t.repo = ? AND t.source = ?"
-                " ORDER BY w.task_id, w.waiter_generation, w.id", params
+                " ORDER BY w.task_id, w.waiter_generation, w.id",
+                params,
+            ).fetchall()
+            sends = conn.execute(
+                "SELECT * FROM execution_send_custody"
+                " WHERE scope_key = ? ORDER BY created_at, send_id",
+                (key,),
             ).fetchall()
             conn.commit()
         return {
@@ -185,6 +219,7 @@ class QueueExecutionHandoffMixin:
             "reservations": [dict(row) for row in reservations],
             "wakes": [dict(row) for row in wakes],
             "run_waiter_wakes": [dict(row) for row in run_waiter_wakes],
+            "sends": [dict(row) for row in sends],
             "blockers": [
                 "runtime enrollment and final launch barrier not implemented",
                 "legacy execution associations not qualified",
