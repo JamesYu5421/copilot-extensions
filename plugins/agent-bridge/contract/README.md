@@ -46,7 +46,48 @@ When a wire contract does change:
    python tools/run-plugin-tests.py agent-bridge --guards
    ```
 
-HTTP generation 44 adds the Bridge-owned startup plugin-readiness requirement,
+HTTP generation 45 adds distinct ordinary native keyed-admission and
+receipt-only endpoints. Immutable binding facts and an admission receipt are
+inserted atomically with the turn using the existing unique delivery key.
+Identical running or settled replay returns that receipt without another SDK
+submission; an admitted-but-not-submitted crash is not proof of execution and
+is never automatically resubmitted. Intentional unkeyed follow-up turns remain
+unchanged. The new CLI transports the complete invocation through UTF-8
+stdin/file input and refuses an older receiver without legacy fallback.
+
+The independently authored `ordinary-native-admission-generation-45.json`
+vectors run through the typed public ASGI routes and actual turn journal with
+a mock SDK, covering both running and settled replay and changed-prompt
+refusal. Linked source re-attestations preserve the frozen previous vectors
+apart from the advertised protocol version; explicit prior fixture/hash links
+are checked by tests. Provenance names a real local source checkpoint, not an
+invented future publication commit. This is source evidence, not a deployed
+daemon, qualified native session or task-verification claim.
+
+The client and CLI keyed-send vectors reference that shared new-operation
+evidence explicitly; they are not independent captures or legacy re-attestations.
+Prompt admission also retains linked native-bound and managed-drain predecessor
+families. Workspace creation has its own real parser/client-builder,
+complete-receipt and floor-refusal vectors, not a copied prompt-admission body.
+`provider-creation-refresh-generation-45.json` preserves its consumer's named
+predecessor alias. The validator checks these families and shapes in addition
+to source/fixture hashes.
+
+Independent expected inputs live in `inputs/http45/`. After committing matching
+source, use the Bridge development interpreter with `agent-procutil` available:
+
+```text
+python tools/capture_bridge_http45.py --source-commit <full-source-commit> --write
+python tools/capture_bridge_http45.py --source-commit <full-source-commit>
+```
+
+This owned capture verifies source bytes, runs the bounded model-free operation
+probes through the existing contained runner, then writes only the corrected
+current families and registry. The no-write command verifies reproducibility.
+Historical vectors and capability floors are preserved. Execute it only in an
+admitted test environment; a passing source replay is not host qualification.
+
+HTTP generation 44 added the Bridge-owned startup plugin-readiness requirement,
 after generation 41's direct remote ACP targets and generation 42's attention
 boundaries, followed by generation 43's managed remote ACP ownership.
 All historical generations and their capability floors remain

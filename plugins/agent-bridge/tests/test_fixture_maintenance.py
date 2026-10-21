@@ -46,7 +46,8 @@ def test_flow_update_leaves_golden_corpus_unchanged(tmp_path):
             destination = snapshot / deferred["reference_path"]
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(REPO / deferred["reference_path"], destination)
-    for name in ("check-agent-bridge-contracts.py", "agent_bridge_contract_git.py"):
+    for name in ("check-agent-bridge-contracts.py", "agent_bridge_contract_git.py",
+                 "bridge_http45_evidence.py"):
         destination = snapshot / "tools" / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO / "tools" / name, destination)

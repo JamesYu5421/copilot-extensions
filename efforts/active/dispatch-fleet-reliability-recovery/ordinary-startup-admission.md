@@ -1,9 +1,11 @@
 # Ordinary native-startup keyed admission
 
-**Status: PROPOSED.** This is the bounded Phase 7 amendment to the
-[canonical effort](README.md#phase-7---ordinary-native-startup-keyed-admission-proposed),
+**Status: Reviewed contract; local implementation awaits final qualification.**
+This is the bounded Phase 7 amendment to the
+[canonical effort](README.md#phase-7---ordinary-native-startup-keyed-admission),
 coordinated through #7486 under umbrella #6466. Runtime implementation requires
-normal public plan review and merge first. Rollout requires separate authority.
+normal public plan review and merge first; #7522 cleared that gate.
+Rollout requires separate authority.
 
 ## Intent and scope
 

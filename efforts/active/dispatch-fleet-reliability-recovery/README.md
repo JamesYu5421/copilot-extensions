@@ -204,19 +204,21 @@ This is a proposal, not an implementation or rollout authorization.
 - [x] Leave task transfer (#6189), PR-ground-truth reconciliation (#2798),
   broader account-aware operations, and unrelated recovery owners unchanged.
 
-### Phase 7 - Ordinary native-startup keyed admission (PROPOSED)
+### Phase 7 - Ordinary native-startup keyed admission
 
-- [ ] Review and merge the [bounded contract](ordinary-startup-admission.md)
+- [x] Review and merge the [bounded contract](ordinary-startup-admission.md)
   before runtime implementation; preserve every existing owner above.
-- [ ] Persist a stable invocation and exact fully rendered prompt with ready-agent
+- [x] Persist a stable invocation and exact fully rendered prompt with ready-agent
   intent before first send; retain original allocation lineage across attempts.
-- [ ] Reuse the existing unique turn-delivery key and atomically persist immutable
+- [x] Reuse the existing unique turn-delivery key and atomically persist immutable
   binding facts and the admission receipt with the turn, without a new ledger or
   delivery state machine.
-- [ ] Separate historical receipt reads from fresh permission: a queued g0
+- [x] Separate historical receipt reads from fresh permission: a queued g0
   admission remains historical truth after a legitimate g1 claim.
-- [ ] Add capability-gated keyed native send without unkeyed fallback; retain
+- [x] Add capability-gated keyed native send without unkeyed fallback; retain
   existing creation and protocol-floor preflight, not a new CREATE route.
+  These implementation checks describe the local candidate, not publication,
+  release, adoption or permission to activate an adopter.
 - [ ] Preserve the exact one-turn counterexample assertion, unkeyed follow-ups,
   source/native safeguards and bounded supervision; qualify the reviewed fix
   through the sibling validation matrix.
@@ -279,6 +281,43 @@ named-resource resolution so an older peer cannot silently accept but ignore a
 requested contract.
 
 ## Journal
+
+### 2026-10-21 - Phase 7 local review corrections
+
+- The local candidate now reads historical g0 admission after a real g1 claim
+  without readiness/allocation writes or fresh sends. One-shot and supervisor
+  entry points share the canonical original-lineage, lane-aware seed.
+  Created/resumed storage retains immutable intent transactionally, and
+  changed requested agent/charter selection conflicts before any delivery.
+- The focused Dispatch caller/intent portfolio passes 140 cases with one
+  native concurrency case deliberately outside this in-process batch.
+  The original preamble, finite two-poll settled-response-loss case and Unicode
+  real-stdio case pass together: three cases, no skips, one inbound prompt each.
+  Their identities remain compatibility-only and native-source unqualified;
+  queued task state is not task completion or verification.
+- Corrected semantic HTTP-45 families and the owned current-authority recapture
+  pass 218 focused Bridge cases. The registry audit passes with 456 fixtures;
+  historical HTTP vectors and capability floors remain unchanged. Shared new
+  operation evidence is explicit, not relabeled independent runtime capture.
+- The inspected offline UV-loop fixture now uses existing bounded process-tree
+  and pipe ownership with its original 30-second limit. Its exact six-library
+  order includes worktree identity. Both local and canonical-source cases pass
+  in separate targeted runs; earlier timeout and stale-five-library failures
+  are retained, not waived. No production installer/deadline changes were made.
+- Broader portfolio approval, independent OS-isolated qualification, final
+  code review, normal publication, containing release and authorized rollout
+  remain separate and outstanding. No adopter activation is claimed.
+
+### 2026-10-21 - Phase 7 proposal reviewed
+
+- Plan-only PR #7522 merged to `dev`; the ordinary startup admission contract
+  cleared normal review and required checks. This closes only the plan-review
+  gate, not implementation, validation, release or adoption.
+- The local test-only passing control and honest settled-response-loss
+  counterexample remain the starting evidence for #7486. Preserve the exact
+  one-turn assertion and original owner boundaries during the authorized
+  implementation slice; no creation-intent recovery or native-guard repair is
+  included.
 
 ### 2026-10-16 - Bounded complete-suite CI sharding
 
