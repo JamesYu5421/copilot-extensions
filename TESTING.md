@@ -176,6 +176,14 @@ added for this periodic/manual benchmark.
 
 ## The turn-key runner
 
+The dependency-free worktree identity codec has the explicit
+`worktree-identity` target, backed by `libs/worktree-identity/tests`. Run it
+through `tools/run_tests_in_devcontainer.py worktree-identity` with the same
+bounded supervisor used for plugin suites. Worktrees' compatibility and
+consumer tests remain in its own target; repository packaging contracts live
+in `tools/test_worktree_identity_packaging.py`. These periodic/source checks
+do not enroll new tests in the unit-only promotion packet.
+
 The local runner measures each plugin from dependency preparation through final
 sandbox removal. Its aggregate timeout cannot turn a slow cleanup into a pass.
 After containment verifies that a group's processes are gone, one cleanup worker
@@ -1145,12 +1153,116 @@ and exceed Windows' relative-path limit.
 
 `agent-chat-service` resolves to `services/chat` through that same canonical
 preparation and environment-admission path. Its dependency-free conversation
-core has a bounded native Windows/Linux CI lane selected before runner
-allocation. The required PR aggregate refuses missing admission or a selected
-but skipped core job. Portable SQLite contracts and one real wheel/fresh-target
-installation probe run within the existing contained standalone harness; no
-listener, credentials, model, plugin activation or managed service deployment
-is exercised or claimed.
+core and optional client role have an **on-demand contained standalone
+portfolio**, not required native Windows/Linux CI lanes. Current source CI
+executes the admitted [unit-only packet](#unit-only-promotion-packet); its green
+required aggregate does not qualify this standalone portfolio or either native
+client platform. The existing periodic integration portfolio does not currently
+enroll `services/chat`.
+
+Portable SQLite, real CLI/provider/loopback HTTP contracts,
+process-crash reader-lock recovery and source-independent core/client wheel
+installation run within the existing contained standalone harness. A fresh
+default-core environment proves the helper is absent; the separate offline
+client-role environment installs its declared canonical helper and uses the
+actual console after all fixture source trees are removed. Temporary listeners
+and credentials are synthetic fixtures, not production authentication, model
+wake, plugin activation or managed service deployment.
+Auxiliary parser/offline dispatch checks run in-process, without replacing the
+real provider/HTTP operations. Actual CLI round trips, installed-console death,
+source-independent artifacts and worker-shadow cases retain their real process
+boundaries. Capacity setup seeds existing valid records; the actual final
+admission, overflow refusal and uncertain-request recovery still use the normal
+client and its durable writer at the unchanged 128-record boundary.
+
+The shared role fixture builds four independent wheels and installs three
+separate fresh environments with bounded parallel builders. Its source copies
+exclude test trees unrelated to wheel construction; package inputs, offline
+dependency resolution and source-removal assertions remain real. The healthy
+installed console/catalog exchange uses a fixed-route stdio provider forwarding
+to the fixture HTTP service. Installed credential/isolated-HTTP, caller death,
+worker shadow, uncertain replies, deadlines and raw capture bounds retain their
+own actual process cases. Exact CLI argument forwarding is checked cheaply
+against the client API rather than repeating those same full-stack operations
+for every parser variant. Preserve the real installed join before the
+console-death fault; cold startup is not part of its five-second read barrier.
+
+Finite artifact/CLI fixture commands use the published caller-owned process
+API with their unchanged 20/30-second bounds and separate raw capture limits.
+Its API has no CWD/environment parameters, so the artifact fixture's finite
+child adapter sets its own CWD and removes `PYTHONPATH`, explicitly forwards
+stdin/stdout/stderr, and waits for the actual target. It does not change the
+test process's global CWD/environment or implement another cleanup authority.
+The canonical helper owns the entire bounded tree; the explicit console-death
+test still performs its fault and pinned observations before external cleanup.
+
+Chat qualification requires **both lanes on the same immutable candidate**:
+
+```text
+python tools/run-standalone-tests.py services/chat --prepare --chat-suite acceptance --timeout 120
+python tools/run-standalone-tests.py services/chat --chat-suite full --timeout 600
+```
+
+Chat defaults to the acceptance lane and its 120-second allowance; `full`
+defaults to 600 seconds. Other consumers keep their existing 600-second
+defaults. Neither lane substitutes for the other. The acceptance packet runs
+the real source-removed installed client, native caller/provider/descendant
+death, protocol, authentication, durable data/progress, deadlines and raw
+capture contracts. The complete lane additionally runs all host and
+source-removed service lifecycle cases, with no test removed or marked skipped
+by this partition. Existing platform-specific skips still require positive
+qualification on their owning platform.
+
+`services/chat/tests/qualification.py` lists every test family and its lane.
+Every collected parameter node must map to exactly one family with its retained
+parameter count; new, missing or duplicate families/nodes and lost parameter
+cases fail qualification instead of silently disappearing.
+Each lane reports the same complete membership digest, collected/selected
+counts and a parameter-level JSON map, atomically persisted when collection
+finishes rather than waiting for the terminal summary. Supply
+`--chat-membership-report <new-file>` to retain that map, including the actual
+runner and test-process exit codes, after sandbox cleanup. A killed test
+process retains its collected map. A failure before completed collection
+exports explicit unavailable membership rather than fabricated empty nodes;
+reporting never replaces an original nonzero containment result. Missing
+membership after a zero exit refuses qualification. Its parent directory must already
+exist and an existing report is never overwritten. The
+acceptance collection explicitly deselects full-only families, while `full`
+executes their union. Direct pytest/partial diagnostics without the runner's
+explicit qualification environment remain unqualified and unpartitioned.
+Filters and collection/setup-only modes are rejected for either lane.
+The runner validates membership even without external report retention:
+an early zero exit such as pytest help/version is not qualification.
+Fixture-listing modes are also refused. At session completion, actual
+passed-call reports and the explicitly allowed native-platform skip must
+exactly cover the selected nodes, without duplicates, unexpected skips,
+xfails or failing phases. The map records pending/complete/incomplete
+execution separately from collection. A zero exit with collection alone
+refuses qualification, even if a map exists.
+
+The native caller-death case reuses the process utility's test-only birth-pinned
+Windows handle/Linux pidfd observer. It observes the actual installed provider,
+its sleeping descendant and the console ancestry alive, then requires them all
+to exit before outer observer cleanup and before the existing held-read
+watchdog. The test dependency does not enter the core/client runtime wheels.
+
+The [per-test assessment](efforts/active/agent-chat-graduation/test-portfolio.csv)
+and [measured comparison](efforts/active/agent-chat-graduation/README.md#journal)
+separate the full222-case snapshot from explicit42/221-case candidates measured
+under120s. Later230/236-case measurements and a65-pass/one-skip changed-path
+packet are recorded separately in that journal; none is a current full120s
+acceptance claim. Those historical results do not retroactively pass either
+new lane. The split does not change required CI, per-operation bounds or
+containment. Use pytest's built-in JUnit call-duration reporting plus
+`--durations=0 --durations-min=0` to retain every case and fixture cost; quote
+Windows output paths inside `PYTEST_ADDOPTS` so its argument parser preserves
+backslashes. Shared artifact setup must not be charged solely to its first user.
+Record the exercised platform and artifact separately. The retained client
+candidate consumes the published caller-death API with separate raw capture
+budgets. Source release alone does not update a resolved installation.
+Qualify fresh installed consumers on both Windows and native Linux;
+portable-core or unsupported-mode
+control results are not positive native Linux client qualification.
 
 The index-service smoke lane includes offline container-context and explicit
 fleet-image profile contracts; neither needs Docker, a model or enrollment.
