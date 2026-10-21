@@ -84,6 +84,10 @@ dataclass construction, temporary thread-hook removal and low-level threads. The
 application must still pass with the code it actually imported; stale caches
 must prevent the collector from producing a baseline.
 Source/build/test inputs must be clean at the named `HEAD`.
+Native bootstrap uses verified raw-source module namespaces and `os.path`/file
+operations rather than importing `importlib.util` and `pathlib` for metadata.
+This avoids unnecessary first-launch imports; source verification and reference
+compilation still execute in every child before the same prelude endpoint.
 
 The `collection` record includes native platform, Python version, source/test-input
 hashes, collector hashes, complete test-universe digest, test markers and pytest summary. It

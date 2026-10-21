@@ -15,11 +15,12 @@ def phase(name):
 
 phase("native-entry-first")
 import hashlib
-import importlib.util
+phase("native-entry-hashlib-ready")
 import json
+phase("native-entry-json-ready")
 import marshal
-from pathlib import Path
 import sys
+from types import ModuleType
 
 phase("native-entry-imports-ready")
 
@@ -35,14 +36,15 @@ with open("/proc/self/status") as status_file:
 require(os.getuid() == 1000 and int(posture["CapEff"], 16) == int(posture["CapBnd"], 16) == 0,
         "native entry worker identity or capabilities differ")
 require(posture["NoNewPrivs"] == "1", "native entry requires no-new-privileges")
-require(Path("/sys/fs/cgroup/cpu.max").read_text().strip() == "200000 100000",
-        "native entry CPU limit differs")
-require(Path("/sys/fs/cgroup/memory.max").read_text().strip() == "6442450944",
-        "native entry memory limit differs")
-require(Path("/sys/fs/cgroup/pids.max").read_text().strip() == "256",
-        "native entry process limit differs")
-control = Path(os.environ["CGS_NATIVE_CONTROL"])
-with (control / "catalog.json").open() as file:
+for path, expected, message in (
+    ("/sys/fs/cgroup/cpu.max", "200000 100000", "native entry CPU limit differs"),
+    ("/sys/fs/cgroup/memory.max", "6442450944", "native entry memory limit differs"),
+    ("/sys/fs/cgroup/pids.max", "256", "native entry process limit differs"),
+):
+    with open(path) as file:
+        require(file.read().strip() == expected, message)
+control = os.environ["CGS_NATIVE_CONTROL"]
+with open(os.path.join(control, "catalog.json")) as file:
     catalog = json.load(file)
 for name in ("_cgs_child_audit", "_cgs_child_stream"):
     path = catalog["helpers"][name]["path"]
@@ -50,8 +52,9 @@ for name in ("_cgs_child_audit", "_cgs_child_stream"):
         content = file.read()
     require(hashlib.sha256(content).hexdigest() == catalog["helpers"][name]["sha256"],
             "native entry helper source identity differs")
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
+    module = ModuleType(name)
+    module.__dict__.update(__file__=path, __package__="", __spec__=None,
+                           __loader__=None, __cached__=None)
     sys.modules[name] = module
     exec(compile(content, path, "exec", dont_inherit=True), module.__dict__, module.__dict__)
     phase("native-entry-helper-" + name)
@@ -65,7 +68,7 @@ os.environ["_CGS_CHILD_AUDITOR"] = str(os.getppid())
 compile_receipts = []
 generated_code_refs = {}
 generated_ids = {}
-source_events = control / "compile" / ("source-events-" + str(os.getpid()) + ".jsonl")
+source_events = os.path.join(control, "compile", "source-events-" + str(os.getpid()) + ".jsonl")
 source_event_fd = os.open(source_events, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 
 
@@ -75,7 +78,7 @@ def code_digest(code):
 
 def origin_identity(code, offset):
     result = {"code_sha256": code_digest(code), "code_name": code.co_name,
-              "instruction_offset": offset, "file": Path(code.co_filename).name,
+              "instruction_offset": offset, "file": os.path.basename(code.co_filename),
               "source_bound": False}
     try:
         with open(code.co_filename, "rb") as source:
@@ -133,12 +136,14 @@ def native_source_event(event, args, origin, offset):
             digest = record["compile_source_sha256"]
             identifier = 1 + int(digest[:4], 16) % 65534
             reserved = {row["id"] for row in catalog["sources"].values()}
-            target = control / "generated" / (digest + ".py")
+            target = os.path.join(control, "generated", digest + ".py")
             try:
-                with target.open("xb") as output:
+                with open(target, "xb") as output:
                     output.write(content)
             except FileExistsError:
-                if target.read_bytes() != content:
+                with open(target, "rb") as existing:
+                    same = existing.read() == content
+                if not same:
                     auditor.error("actual generated source changed")
                     record["generated_refusal"] = "source changed"
             if "generated_refusal" not in record:
@@ -200,7 +205,7 @@ def report_prelude(control, *, start_ns, end_ns, end_cpu_ns, duration_us):
         "start_cpu_ns": int(os.environ["_CGS_PRELUDE_CPU_NS"]),
         "duration_us": duration_us, "phases": _phases,
     }
-    with (Path(control) / "compile" / f"prelude-phases-{os.getpid()}.json").open("x") as output:
+    with open(os.path.join(control, "compile", f"prelude-phases-{os.getpid()}.json"), "x") as output:
         json.dump(report, output, sort_keys=True)
 
 
@@ -213,7 +218,7 @@ def scoped_call(frame, event, arg):
     if isinstance(name, str) and (name == "fleet_manager" or name.startswith("fleet_manager.")):
         if id(frame.f_code) not in stream._code_sources and frame.f_code.co_filename not in stream._sources:
             auditor.error("SDK frame lacks actual verified source identity: " +
-                          Path(frame.f_code.co_filename).name + "::" + frame.f_code.co_name)
+                          os.path.basename(frame.f_code.co_filename) + "::" + frame.f_code.co_name)
             return None
     return original_call(frame, event, arg)
 

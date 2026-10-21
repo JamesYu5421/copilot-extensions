@@ -5,7 +5,7 @@ import hashlib
 import os
 from pathlib import Path
 import struct
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 import zipfile
 
 import pytest
@@ -59,6 +59,48 @@ def test_native_scoped_entry_preserves_nonstring_module_globals():
     exec(compile(ast.Module(body=[function], type_ignores=[]), "<native-entry-scope>", "exec"), namespace)
     frame = SimpleNamespace(f_globals={"__name__": 71})
     assert namespace["scoped_call"](frame, "call", None) is marker
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_native_loader_verifies_raw_source_and_preserves_module_namespace(tmp_path, changed):
+    import ast
+
+    entry = Path(build.__file__).with_name("native_observer_entry.py")
+    tree = ast.parse(entry.read_text())
+    for node in ast.walk(tree):
+        imports = ([name.name for name in node.names] if isinstance(node, ast.Import) else
+                   [node.module or ""] if isinstance(node, ast.ImportFrom) else [])
+        assert not any(name.startswith(("importlib", "pathlib")) for name in imports)
+    assert not any(isinstance(node, ast.Name) and node.id == "Path" for node in ast.walk(tree))
+    helpers = {}
+    for name in ("_cgs_child_audit", "_cgs_child_stream"):
+        path = tmp_path / (name + ".py")
+        content = b"marker=1\ndef value():\n    return marker\n"
+        path.write_bytes(content)
+        helpers[name] = {"path": str(path), "sha256": hashlib.sha256(content).hexdigest()}
+    if changed:
+        helpers["_cgs_child_audit"]["sha256"] = "0" * 64
+    nodes = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "require"
+        or isinstance(node, ast.For) and isinstance(node.target, ast.Name) and node.target.id == "name"
+    ]
+    namespace = {
+        "hashlib": hashlib, "ModuleType": ModuleType, "catalog": {"helpers": helpers},
+        "sys": SimpleNamespace(modules={}), "phase": lambda name: None,
+    }
+    compiled = compile(ast.Module(body=nodes, type_ignores=[]), str(entry), "exec")
+    if changed:
+        with pytest.raises(RuntimeError, match="helper source identity differs"):
+            exec(compiled, namespace)
+        assert not namespace["sys"].modules
+    else:
+        exec(compiled, namespace)
+        for name, module in namespace["sys"].modules.items():
+            assert module.__file__ == helpers[name]["path"] and module.__package__ == ""
+            assert module.__spec__ is module.__loader__ is module.__cached__ is None
+            module.marker = 3
+            assert module.value() == 3 and module.value.__globals__ is module.__dict__
 
 
 def wheel(tmp_path, monkeypatch, entries=None):
