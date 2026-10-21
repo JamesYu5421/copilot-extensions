@@ -31,8 +31,9 @@ read-only `snapshot-validate` provenance actions plus read-only `status` and
 never publish a `runtime-root` file; existing advisory files are left untouched.
 Command discovery uses attributable catalogs or explicit lifecycle launchers,
 not a status-query side effect. The Python `resolve_payload_source(...)` API
-reuses installed-declaration and directory-catalog provenance resolution without
-reading installation policy, activation, receipts, or the cell tree. It returns
+reuses installed-declaration, directory-catalog and selected legacy-snapshot
+provenance resolution without reading installation policy, activation, cell
+receipts or the cell tree. It returns
 normalized source, fingerprint, marketplace identity, plugin identity, payload
 root, and locator only; it does not prove runtime ownership, readiness, or select
 an installation. An ambient installation-context pointer is deliberately outside
@@ -42,6 +43,19 @@ callers may supply a source descriptor. `resolve_context(...)` composes the same
 source resolver with its existing receipt and cell-ownership checks; those checks
 remain mandatory when selecting or managing a cell. Catalog integration is a
 separate consumer change, not implied by this API's presence.
+
+Selected legacy snapshots may retain `snapshot-provenance.json` with schema
+`copilot-extensions.legacy-snapshot-source`, version 1 and a `resolution` captured
+from the canonical read-only `resolve` operation at publication. All three
+adapters require an ordinary sidecar under the selected `snapshots/<id>`, matching
+ordinary `payload-dir` and `stamped-version` markers, the payload's plugin name,
+and a re-normalized source whose record, fingerprint and marketplace id agree.
+The original publisher and declaration need not remain available. Captured cell
+paths are documentary, not context receipts or management authority. This
+evidence preserves source identity only: the live installation/environment owner,
+mode, deployment policy and lifecycle custody still govern every mutation.
+Namespaced snapshots retain their existing separate provenance contract.
+
 `stamp` creates or
 updates only `namespace.json` and `install.json`. `activation-cas` explicitly
 publishes only `installation-activation.json` after pinning the caller-observed
@@ -64,11 +78,17 @@ selected snapshot to their exact payload root and version. Every mutation
 requires an explicit `--context` / `-Context`; it never adopts an ambient
 `COPILOT_EXTENSIONS_CONTEXT` as authorization.
 
-JSON inputs use one strict language on every entry point: UTF-8 without BOM,
+Installation-context protocol JSON inputs use one strict language on every entry point: UTF-8 without BOM,
 case-sensitive and non-duplicated object names, escaped control characters, and
 string types for identity, path, payload-version, locator, and manifest fields.
 Filesystem plugin ids are portable across both platforms, including rejection
 of Windows device basenames.
+
+The Python `read_deployment_manifest` compatibility reader also accepts the
+single UTF-8 BOM emitted by existing PowerShell 5.1 deployment writers.
+Lifecycle manifest reads use that reader without changing protocol receipts or
+`read_json`'s strict language. Duplicate keys, invalid UTF-8 and malformed JSON
+still refuse; digest evidence continues to describe the original file bytes.
 
 ## CLI
 
