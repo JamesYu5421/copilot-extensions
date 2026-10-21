@@ -32,6 +32,8 @@ param(
     [Alias('install-dir')]
     [string]$InstallDir,
 
+    [string]$BootstrapPython,
+
     # Preview mode for the 'uninstall' action: print what WOULD be removed
     # without touching the scheduled task or binstubs.
     [switch]$DryRun
@@ -45,6 +47,126 @@ if ($env:COPILOT_EXTENSIONS_HUMAN_UTF8 -eq '1') {
         throw 'Required installer human-output initializer is unavailable.'
     }
     . (Join-Path $PSScriptRoot 'installer-human-output.ps1')
+}
+
+# Staging itself writes installation state, so publication admission precedes it.
+if ($Action -in @('install', 'update', 'stamp', 'provision')) {
+    . (Join-Path $PSScriptRoot 'versioned_runtime_native.ps1')
+    $publicationRoot = [IO.Path]::GetFullPath($(if ($InstallDir) {
+        $InstallDir
+    } else { Join-Path $env:USERPROFILE '.agent-logger' }))
+    if ($InstallDir) {
+        $InstallDir = $publicationRoot
+        $PSBoundParameters['InstallDir'] = $InstallDir
+    }
+    $publicationPayload = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
+    $publicationSource = $publicationPayload
+    if ($env:COPILOT_EXTENSIONS_COMMAND_LIFECYCLE -and $env:COPILOT_PLUGIN_STAGED_FROM -and
+        (($PSScriptRoot -replace '\\', '/') -notmatch '/\.copilot/installed-plugins/')) {
+        $publicationSource = $env:COPILOT_PLUGIN_STAGED_FROM
+    }
+    $publicationPython = $null
+    $publicationCandidates = @()
+    if ($BootstrapPython) {
+        if (-not [IO.Path]::IsPathRooted($BootstrapPython) -or
+            -not [IO.File]::Exists($BootstrapPython)) {
+            throw 'BootstrapPython must be an existing absolute executable.'
+        }
+        $publicationCandidates += @{ Path = $BootstrapPython; Prefix = @() }
+    } else {
+        $launcher = Get-Command py -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($launcher) { $publicationCandidates += @{ Path = $launcher.Source; Prefix = @('-3') } }
+        foreach ($name in @('python3', 'python')) {
+            foreach ($candidate in @(Get-Command $name -All -CommandType Application -ErrorAction SilentlyContinue)) {
+                if ($candidate.Source -notmatch '[\\/]WindowsApps[\\/]') {
+                    $publicationCandidates += @{ Path = $candidate.Source; Prefix = @() }
+                }
+            }
+        }
+    }
+    foreach ($candidate in $publicationCandidates) {
+        $probe = Invoke-Hidden -FilePath $candidate.Path -ArgList (@($candidate.Prefix) + @(
+            '-I', '-B', '-c',
+            'import json,sys; assert sys.version_info >= (3,10); print(json.dumps(sys.executable))'
+        ))
+        if ($LASTEXITCODE -ne 0) { continue }
+        try { $resolved = $probe | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+        if ($resolved -is [string] -and [IO.Path]::IsPathRooted($resolved) -and
+            [IO.File]::Exists($resolved)) {
+            $publicationPython = $resolved
+            break
+        }
+    }
+    if ($BootstrapPython -and -not $publicationPython) {
+        throw 'BootstrapPython must be a working Python 3.10+ executable.'
+    }
+    if ($publicationPython -and -not $env:COPILOT_EXTENSIONS_CONTEXT) {
+        $publicationArgs = @(
+            '-I', '-B', '-X', 'utf8', (Join-Path $PSScriptRoot 'command_binding.py'),
+            '--payload-root', $publicationPayload, '--plugin-id', 'agent-logger',
+            '--legacy-root', $publicationRoot, '--source-payload-root', $publicationSource
+        )
+        if ($env:COPILOT_EXTENSIONS_COMMAND_LIFECYCLE) {
+            $check = Invoke-Hidden -FilePath $publicationPython -ArgList (
+                $publicationArgs + @('--check-lifecycle', '--lifecycle-operation', 'publish')
+            )
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        } else {
+            Remove-Item Env:COPILOT_PLUGIN_STAGED_FROM -ErrorAction SilentlyContinue
+            $forward = @()
+            foreach ($key in $PSBoundParameters.Keys) {
+                $value = $PSBoundParameters[$key]
+                if ($value -is [System.Management.Automation.SwitchParameter]) {
+                    if ($value.IsPresent) { $forward += "-$key" }
+                } else { $forward += @("-$key", [string]$value) }
+            }
+            if ($Action -eq 'stamp') { $publicationArgs += '--deferred-runtime' }
+            $result = Invoke-Hidden -FilePath $publicationPython -ArgList (
+                $publicationArgs + @('--run-lifecycle', '--', (Get-Process -Id $PID).Path,
+                    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath) + $forward
+            )
+            $publicationCode = $LASTEXITCODE
+            if ($result) { [Console]::Out.Write($result) }
+            exit $publicationCode
+        }
+    } elseif ($env:COPILOT_EXTENSIONS_COMMAND_LIFECYCLE) {
+        throw 'Runtime publication refused: lifecycle custody requires an existing Python 3.10+ executable.'
+    }
+    if (-not $publicationPython -or $env:COPILOT_EXTENSIONS_CONTEXT) {
+        $publicationHelper = Join-Path $PSScriptRoot 'installation-context\installation-context.ps1'
+        if (-not [IO.File]::Exists($publicationHelper)) {
+            throw 'Runtime publication refused: installation helper is unavailable.'
+        }
+        $publicationOldRoot = $env:COPILOT_PLUGIN_ROOT
+        $publicationRelocated = $env:COPILOT_PLUGIN_INSTALL_STAGED -and
+            $env:COPILOT_PLUGIN_STAGED_FROM -and
+            $publicationOldRoot -ceq $env:COPILOT_PLUGIN_STAGED_FROM -and
+            (($PSScriptRoot -replace '\\', '/') -notmatch '/\.copilot/installed-plugins/')
+        try {
+            if ($publicationRelocated) { Remove-Item Env:COPILOT_PLUGIN_ROOT -ErrorAction SilentlyContinue }
+            $publicationJson = @(& $publicationHelper -Action probe-plugin-publication `
+                -PayloadRoot $publicationPayload -PluginId agent-logger -LegacyRoot $publicationRoot)
+            $publicationCode = $LASTEXITCODE
+        } finally {
+            if ($publicationRelocated) { $env:COPILOT_PLUGIN_ROOT = $publicationOldRoot }
+        }
+        try {
+            $publication = ($publicationJson -join "`n") | ConvertFrom-Json -ErrorAction Stop
+        } catch {
+            throw 'Runtime publication refused: installation helper returned an invalid decision.'
+        }
+        $publicationActualRoot = if ($env:COPILOT_EXTENSIONS_CONTEXT) {
+            [string]$publication.runtimeRoot
+        } else { [string]$publication.legacy.root }
+        if ($publicationCode -ne 0 -or
+            $publication.deployment.allowPluginPublication -isnot [bool] -or
+            -not $publication.deployment.allowPluginPublication -or
+            $publicationActualRoot -cne $publicationRoot) {
+            throw ("Runtime publication refused: " + ($publicationJson -join ' ') +
+                ' Use explicit installation management to install or repair this runtime.')
+        }
+    }
 }
 
 # === install-contract:v4 self-stage -- keep byte-identical across plugins ===

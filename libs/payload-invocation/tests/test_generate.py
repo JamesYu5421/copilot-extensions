@@ -160,6 +160,33 @@ def test_binding_human_assets_do_not_require_worktrees_source(tmp_path, monkeypa
         ).read_text(encoding="utf-8")
 
 
+def test_installer_lifecycle_does_not_change_command_catalog(tmp_path: Path) -> None:
+    manifest = _required_context_multi_manifest(tmp_path)
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    before = generator.expected_files(manifest)
+    primitive = manifest.parent / "scripts/installation-context/installation_context.py"
+    primitive.parent.mkdir()
+    primitive.write_text("# fixture\n", encoding="utf-8")
+    data["installerLifecycle"] = True
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+    after = generator.expected_files(manifest)
+    assert all(after[path] == value for path, value in before.items())
+    for name in ("command_binding.py", "command_lifecycle.py"):
+        path = manifest.parent / "scripts" / name
+        assert after[path] == (SCRIPT.parent / name).read_text(encoding="utf-8")
+    assert len(after) == len(before) + 5
+
+
+@pytest.mark.parametrize("value", [1, "true", [], {}])
+def test_installer_lifecycle_requires_boolean(tmp_path: Path, value: object) -> None:
+    manifest = _required_context_manifest(tmp_path)
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["installerLifecycle"] = value
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="installerLifecycle must be a boolean"):
+        generator.load_manifest(manifest)
+
+
 def _write_runtime_completion(slot: Path, version: str) -> None:
     (slot / ".install-complete.json").write_text(
         json.dumps(

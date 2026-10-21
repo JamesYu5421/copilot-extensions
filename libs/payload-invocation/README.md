@@ -60,6 +60,16 @@ the real Worktrees CLI retain the complete copied runtime and staged dependencie
 
 ### Source-qualified command binding
 
+`installerLifecycle: true` packages the existing command-binding/lifecycle
+helpers for a required-context installer's admission without changing command
+catalogs or enabling their additive binding field. The installer must invoke
+that admission before staging and authenticate a borrowed ticket on reentry;
+packaging alone does not enforce it. Logger is the first installer-only adopter.
+Its real managed-first-stamp regression and standalone/custody checks run in the
+ordinary suite. The full policy/action/root matrix is an explicit T3 portfolio:
+`python tools/run-plugin-tests.py payload-invocation --test-file
+tests/test_adopter_publication.py --allow-explicit-tiers`.
+
 `catalogBinding: true` opts a required-context runtime into the additive
 `binding` field of the existing version-1 session catalog. Agent Worktrees is
 the first adopter. Other manifests retain byte-identical catalogs. The optional

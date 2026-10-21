@@ -66,6 +66,17 @@ session-to-log pipeline out of any single bespoke service:
 
 ## Source-qualified runtimes
 
+Native `stamp`, `provision`, `install` and `update` admit publication before
+creating or reclaiming staging directories. An available bootstrap Python uses
+the [shared source-qualified lifecycle](../../libs/payload-invocation/README.md#source-qualified-command-binding),
+including live management-purpose custody and revalidation by the staged child.
+PowerShell accepts `-BootstrapPython` to select an existing absolute interpreter.
+Absent Python, the canonical native deployment probe preserves default
+standalone stamping and refuses managed or invalid policy without installing an
+interpreter. No environment boolean or staged-origin hint grants management
+permission. Scoped installations check their own addressed root; command
+catalogs and non-publication actions retain their existing contracts.
+
 Both native installers accept a canonically prepared `runtime-source.json`
 payload. They pin its full identity before the installation lock and revalidate
 it before construction, completion and activation. Source generations are

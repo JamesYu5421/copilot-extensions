@@ -178,6 +178,15 @@ policy remains blocking, and teardown cannot become publication.
 This slice does not wire Manager source selection or installation-cell installer
 admission. Their actual mutation gates remain required.
 
+Logger's direct native publication actions now enter that same legacy lifecycle
+before staging when an existing bootstrap Python is available. Its installer-only
+packaging opt-in does not change catalogs. A staged child authenticates the
+inherited live ticket, including its immutable publication purpose; a forged
+ticket cannot admit managed stamping. The canonical native probe retains
+Python-free default standalone stamping without installing an interpreter.
+This qualifies the direct installer, not the bootstrap hook's separate
+observability/reaping boundary or the remaining adopter and cell paths.
+
 ## Cell installer and retained-backend admission
 
 Worktrees' native cell installers now consult the canonical deployment decision

@@ -251,6 +251,14 @@ def load_manifest(path: Path) -> dict[str, object]:
     catalog_binding = data.get("catalogBinding", False)
     if not isinstance(catalog_binding, bool):
         raise ValueError(f"{path}: catalogBinding must be a boolean")
+    installer_lifecycle = data.get("installerLifecycle", False)
+    if not isinstance(installer_lifecycle, bool):
+        raise ValueError(f"{path}: installerLifecycle must be a boolean")
+    if installer_lifecycle and (
+        installation_context != "required"
+        or not (path.parent / "scripts/installation-context/installation_context.py").is_file()
+    ):
+        raise ValueError(f"{path}: installerLifecycle requires a vendored installation primitive")
     binding_module = data.get("catalogBindingModule", "")
     if (
         not isinstance(binding_module, str)
@@ -283,6 +291,7 @@ def load_manifest(path: Path) -> dict[str, object]:
     data["payloadDispatcher"] = normalized_dispatcher
     data["catalogGate"] = catalog_gate
     data["catalogBinding"] = catalog_binding
+    data["installerLifecycle"] = installer_lifecycle
     data["catalogBindingModule"] = binding_module
     data["plugin"] = plugin
     data["commands"] = commands
@@ -672,7 +681,7 @@ def expected_files(manifest: Path) -> dict[Path, str]:
             (TEMPLATES / template).read_text(encoding="utf-8"),
             data,
         )
-    if data["catalogBinding"]:
+    if data["catalogBinding"] or data["installerLifecycle"]:
         binding_source = (TEMPLATES.parent / "command_binding.py").read_text(encoding="utf-8")
         binding_paths = [manifest.parent / "scripts" / "command_binding.py"]
         if data["catalogBindingModule"]:
