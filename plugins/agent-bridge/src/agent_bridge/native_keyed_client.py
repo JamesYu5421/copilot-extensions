@@ -25,14 +25,27 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
                         help="Read the existing native invocation receipt; never admit on a miss")
 
 
-def send(args: argparse.Namespace, client: BridgeClient) -> None:
-    if any(getattr(args, field, None) for field in (
-        "prompt", "prompt_file", "force", "expected_session_id", "idempotency_key",
-        "plugin_context_stdin", "steer", "interrupt",
-    )):
+def validate_options(args: argparse.Namespace) -> None:
+    if (
+        any(getattr(args, field, None) is not None for field in (
+            "prompt", "prompt_file", "expected_session_id", "idempotency_key",
+            "sender", "reply_to",
+        ))
+        or any(getattr(args, field, False) for field in (
+            "force", "plugin_context_stdin", "steer", "interrupt", "queue",
+            "notify", "status_check", "wait_reply", "full_history", "new",
+        ))
+        or getattr(args, "kind", None) not in (None, "prompt")
+        or getattr(args, "delivery", None) not in (None, "steer")
+        or getattr(args, "reply_timeout", None) not in (None, 120.0)
+    ):
         raise SendRefused("refused_invalid", reason="mixed_native_invocation",
                           retryable=False, target=args.target,
                           error="keyed native invocation cannot mix alternate prompt/delivery options")
+
+
+def send(args: argparse.Namespace, client: BridgeClient) -> None:
+    validate_options(args)
     path = args.native_invocation_file
     try:
         if path == "-":
@@ -45,7 +58,7 @@ def send(args: argparse.Namespace, client: BridgeClient) -> None:
                           retryable=False, target=args.target,
                           error="invalid UTF-8 native invocation request") from exc
     expected = getattr(args, "expected_native_session_id", None)
-    if expected != request.expected_native_session_id or getattr(args, "queue", False):
+    if expected != request.expected_native_session_id:
         raise SendRefused("refused_conflict", reason="invocation_mismatch",
                           retryable=False, target=args.target,
                           error="keyed native invocation flags differ from its immutable request")

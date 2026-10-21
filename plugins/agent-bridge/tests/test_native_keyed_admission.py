@@ -1,8 +1,10 @@
 """Pure turn-journal contracts; mock SDK, not native-host qualification."""
 
 import asyncio
+import hashlib
 import io
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -19,6 +21,102 @@ from agent_bridge.native_keyed_client import send
 from agent_bridge.routes.sessions import router
 from agent_bridge.send_outcome import SendRefused
 from test_native_bound_prompt import prepare
+
+
+def _keyed_cli_vector():
+    proposed = os.environ.get("BRIDGE_HTTP45_PROPOSED_KEYED")
+    path = Path(proposed) if proposed else (
+        Path(__file__).resolve().parents[1] / "contract/inputs/http45/native-keyed-admission.json"
+    )
+    raw = path.read_bytes()
+    if proposed:
+        assert hashlib.sha256(raw).hexdigest() == os.environ["BRIDGE_HTTP45_PROPOSED_SHA256"]
+    return json.loads(raw)
+
+
+@pytest.mark.parametrize("options", [
+    ["--interrupt"], ["--delivery", "interrupt"], ["--queue"], ["--delivery", "queue"],
+    ["--notify"], ["--kind", "notify"], ["--status-check"], ["--kind", "status-check"],
+    ["--steer"], ["--sender", "synthetic"], ["--from", "synthetic"],
+    ["--reply-to", "live:synthetic:fixture:wt-a"], ["--wait-reply"],
+    ["--reply-timeout", "1"], ["--full-history"], ["--new"],
+    ["alternate prompt"], ["--prompt-file", "alternate.json"], ["--force"],
+    ["--expected-session-id", "other"], ["--idempotency-key", "other"],
+    ["--plugin-context-stdin"], [""], ["--prompt-file", ""],
+])
+@pytest.mark.parametrize("source", ["file", "stdin"])
+def test_real_parser_mixed_keyed_options_refuse_before_input_or_client(
+    monkeypatch, tmp_path, capsys, options, source,
+):
+    from agent_bridge import __main__ as core
+    vector = _keyed_cli_vector()
+    missing = tmp_path / "nonexistent-invocation.json"
+    assert not missing.exists()
+    args = core.build_parser().parse_args([
+        "--json", "send", "bridge-a", "--native-invocation-file",
+        "-" if source == "stdin" else str(missing),
+        "--expected-native-session-id", "native-a", *options,
+    ])
+    client = MagicMock()
+    get_client = MagicMock(return_value=client)
+    monkeypatch.setattr(core, "_get_client", get_client)
+    reads = []
+
+    def forbidden_read(*_args, **_kwargs):
+        reads.append(source)
+        pytest.fail("mixed keyed options must refuse before input decoding")
+
+    monkeypatch.setattr(Path, "read_text", forbidden_read)
+    monkeypatch.setattr("sys.stdin", SimpleNamespace(buffer=SimpleNamespace(read=forbidden_read)))
+    with pytest.raises(SystemExit) as refused:
+        args.func(args)
+    assert refused.value.code == 2
+    assert json.loads(capsys.readouterr().out) == vector["cli_mixed_option_refusal"]
+    assert reads == []
+    get_client.assert_not_called()
+    client._request.assert_not_called()
+
+
+@pytest.mark.parametrize("receipt_only", [False, True])
+@pytest.mark.parametrize("output_options", [
+    [],
+    ["--no-wait", "--no-color", "--caller", "fixture-output", "--expand", "tools",
+     "--kind", "prompt", "--delivery", "steer", "--reply-timeout", "120"],
+])
+def test_real_parser_default_keyed_send_and_receipt_preserve_wire(
+    monkeypatch, tmp_path, capsys, receipt_only, output_options,
+):
+    from agent_bridge import __main__ as core
+    vector = _keyed_cli_vector()
+    file = tmp_path / "invocation.json"
+    file.write_text(json.dumps(vector["request"], ensure_ascii=False), encoding="utf-8")
+    calls = []
+
+    class Client:
+        _connect_grace = 0
+        _base = "http://testserver"
+
+        def _request(self, method, path, body=None, **_kwargs):
+            calls.append((method, path, body))
+            if path == "/health":
+                return vector["response"]
+            assert body == vector["request"]
+            return vector["admission_response"]
+
+    monkeypatch.setattr(core, "_get_client", lambda: Client())
+    args = core.build_parser().parse_args([
+        "--json", "send", "bridge-a", "--native-invocation-file", str(file),
+        "--expected-native-session-id", "native-a",
+        *(["--receipt-only"] if receipt_only else []), *output_options,
+    ])
+    args.func(args)
+    assert json.loads(capsys.readouterr().out) == {
+        **vector["admission_response"], "outcome": "delivered",
+    }
+    endpoint = "/api/v1/sessions/bridge-a/turns/native-bound/keyed"
+    assert [call[1] for call in calls] == [
+        "/health", endpoint + ("/receipt" if receipt_only else ""),
+    ]
 
 
 @pytest.fixture

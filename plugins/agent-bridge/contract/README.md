@@ -55,6 +55,14 @@ is never automatically resubmitted. Intentional unkeyed follow-up turns remain
 unchanged. The new CLI transports the complete invocation through UTF-8
 stdin/file input and refuses an older receiver without legacy fallback.
 
+Keyed sends and receipt reads reject alternate payload, envelope, notification,
+queue/interrupt, reply-wait and history options before client preflight or
+stdin/file decoding, using `mixed_native_invocation`. Canonical parser defaults
+(`prompt` kind, `steer` delivery), receipt-only/no-wait and output/feed-format
+flags remain accepted; they do not replace the frozen invocation or start a
+different delivery mode. Real-parser refusal probes require zero input reads
+and zero requests and replay the independently expected CLI refusal vector.
+
 The independently authored `ordinary-native-admission-generation-45.json`
 vectors run through the typed public ASGI routes and actual turn journal with
 a mock SDK, covering both running and settled replay and changed-prompt

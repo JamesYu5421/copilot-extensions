@@ -102,6 +102,11 @@ def _send(args: argparse.Namespace) -> None:
     from .send_outcome import SendRefused
 
     core = _core()
+    if getattr(args, "native_invocation_file", None):
+        from .native_keyed_client import send, validate_options
+        validate_options(args)
+        send(args, core._get_client())
+        return
     if getattr(args, "new", False):
         print(
             "[FAIL] `agent-bridge send --new` has been removed. `send` always "
@@ -117,10 +122,6 @@ def _send(args: argparse.Namespace) -> None:
                           retryable=False, target=args.target,
                           error="--receipt-only requires --native-invocation-file")
     client = core._get_client()
-    if getattr(args, "native_invocation_file", None):
-        from .native_keyed_client import send
-        send(args, client)
-        return
     min_protocol = getattr(args, "min_daemon_protocol", None)
     if min_protocol and not client.daemon_supports(min_protocol):
         if getattr(args, "plugin_context_stdin", False):

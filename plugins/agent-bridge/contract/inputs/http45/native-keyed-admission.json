@@ -41,6 +41,13 @@
       "code": "native_receipt_missing"
     }
   },
+  "cli_mixed_option_refusal": {
+    "outcome": "refused_invalid",
+    "target": "bridge-a",
+    "retryable": false,
+    "reason": "mixed_native_invocation",
+    "error": "keyed native invocation cannot mix alternate prompt/delivery options"
+  },
   "scope": "Independently authored synthetic HTTP vectors, replayed through ASGI and the real turn journal with a mock SDK. Admission is not execution or native-source qualification.",
   "evidence_family": "ordinary-native-keyed-admission-v1"
 }
