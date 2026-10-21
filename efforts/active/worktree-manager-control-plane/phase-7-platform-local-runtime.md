@@ -132,7 +132,7 @@ implementation; public-file absence is not proof of unpublished custody.
       selector afterward without changing any qualified `.runtime` byte or
       installed identity. Permit its legacy `.venv` synchronization in the
       disposable fixture; then run the new dispatchers without UV.
-- [ ] Repeat layout-affected native bootstrap and policy-negative contracts.
+- [x] Repeat layout-affected native bootstrap and policy-negative contracts.
       Native dispatcher, internal-adapter and engine checks are complete;
       earlier same-`.venv` bootstrap evidence does not qualify the revised layout.
 - [x] Focused unit/contracts: actual platform dependency markers and non-editable
@@ -172,6 +172,27 @@ implementation; public-file absence is not proof of unpublished custody.
       under #7305 until it is executed or explicitly transferred.
 
 ## Journal
+
+- **2026-10-20** - Qualified the revised layout against committed candidate
+  `b56efeb8623055c263c3f8e2e14cf90886a1767c`. Native PowerShell 5.1 and 7
+  each fetched a complete, clean candidate checkout, constructed a fresh
+  standalone `.runtime`, published `platform-runtime-v2`, and reused it on a
+  warm invocation without rewriting completion. After removing the fetched
+  source from its original path and removing UV from PATH, installed identity,
+  owning payload/assets, CLI health and the generated launcher still passed;
+  Linux-only D-Bus was absent from both Windows environments.
+  An actual candidate with a direct remote dependency lacking release-age
+  evidence was refused by the canonical policy on each run. The prior selector,
+  every qualified environment byte and CLI remained intact; no rejected slot
+  or staging directory remained. Both disposable roots were cleaned only after
+  contained teardown. The production selector was byte-unchanged throughout.
+  Existing Git/UV prerequisites were used; this is not pristine prerequisite
+  provisioning, Linux/macOS qualification or published rollout. Lint,
+  module-size, headless-launch, canonical-policy-copy and install-contract
+  checks pass. Documentation impact: aligned the Manager recovery contract,
+  standalone install-contract analog and clean-room scenario with the isolated
+  layout and explicit legacy compatibility. Native Linux, review, release and
+  authorized published-consumer gates remain open.
 
 - **2026-10-20** - Implemented the approved `.runtime` / `platform-runtime-v2`
   isolation boundary and aligned qualification, payload ownership/copy exclusion,
