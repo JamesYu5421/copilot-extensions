@@ -821,7 +821,9 @@ async def test_native_dispatch_lost_allocation_response_retains_execution_owner(
 
     rig.resolver.resolve_async = resolve
     checkout = Path(recorded.worktree_path)
-    atomic_json(checkout / ".github" / "copilot" / "settings.json", {
+    settings = checkout / ".github" / "copilot" / "settings.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    atomic_json(settings, {
         "extraKnownMarketplaces": {}, "enabledPlugins": {},
     })
     monkeypatch.setenv("COPILOT_PATH", sys.executable)
