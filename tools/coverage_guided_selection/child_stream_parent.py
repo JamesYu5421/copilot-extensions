@@ -280,7 +280,9 @@ def configure_parent(control, python, nonce, inventory, helpers):
 def _profile(frame, event, arg):
     if event == "call":
         _runtime._frame_source(frame)
-    elif event == "c_call" and arg is _runtime._start_thread_original:
+    elif event == "c_call" and (
+        arg is _runtime._start_thread_original or arg is _runtime._start_thread_alias_original
+    ):
         if frame.f_code not in (_runtime._thread_start_code, _runtime._start_thread.__code__):
             _auditor().error("unsupported low-level thread coverage lifecycle")
 

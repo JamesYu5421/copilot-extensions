@@ -32,6 +32,7 @@ _generated_lock = threading.RLock()
 _generated_active = False
 _thread_guard_active = False
 _start_thread_original = _thread.start_new_thread
+_start_thread_alias_original = _thread.start_new
 _thread_start_code = threading.Thread.start.__code__
 _profile_arming = False
 _profile_owner = None
@@ -192,7 +193,7 @@ def _install_thread_guard():
 
 
 def _thread_profile(frame, event, arg):
-    if event == "c_call" and arg is _start_thread_original:
+    if event == "c_call" and (arg is _start_thread_original or arg is _start_thread_alias_original):
         if frame.f_code not in (_thread_start_code, _start_thread.__code__):
             _auditor().error("unsupported low-level thread coverage lifecycle")
     if _prior_profile is not None or _prior_thread_profile is not None:

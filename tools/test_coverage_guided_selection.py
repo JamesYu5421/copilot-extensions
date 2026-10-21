@@ -71,6 +71,7 @@ from tools.test_child_stream import (  # noqa: E402,F401
     test_generated_identity_requires_proven_emitter_owner_and_executed_bytes,
     test_generated_audit_guard_preserves_native_first_main_execution,
     test_low_level_thread_refusal_preserves_call_and_catches_cached_parent_alias,
+    test_cached_native_thread_starters_refuse_untraced_workers,
     test_child_thread_profile_preserves_then_stops_only_prior_diagnostic_callbacks,
     test_generated_guard_recursion_state_is_thread_local,
     test_real_timestamp_valid_bytecode_is_bound_to_executed_source,
@@ -141,7 +142,10 @@ from tools.test_observer_lifecycle import (  # noqa: E402,F401
     test_missing_exit_refusal_is_not_zero_source_or_abrupt_exit_acceptance,
 )
 from tools.test_observer_native_concurrency import (  # noqa: E402,F401
+    native_callbacks,
     test_python_generated_guard_preserves_actual_native_dispatch_mapping,
+    test_identical_generated_callbacks_publish_only_complete_files,
+    test_generated_publication_keeps_mismatched_existing_bytes,
 )
 
 

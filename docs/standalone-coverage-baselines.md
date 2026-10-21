@@ -51,7 +51,9 @@ hook invalidates collection even if restored.
 Direct low-level thread starts are an unsupported lifecycle: they still run
 normally, but invalidate collection instead of silently omitting their execution.
 The child also observes C-call starts through a monitored process/thread
-profile hook, covering native starter aliases captured before activation.
+profile hook. Both `_thread.start_new_thread` and the distinct
+`_thread.start_new` original identities are retained before patching and checked
+in the parent and child guards, including aliases captured before activation.
 Removing either profile hook invalidates collection even if later restored.
 Prior callable diagnostic profiles are chained, and import-profile reporting
 stops only that diagnostic callback rather than removing the coverage guard.

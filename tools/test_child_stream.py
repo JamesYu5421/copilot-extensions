@@ -201,7 +201,8 @@ def test_generated_identity_requires_proven_emitter_owner_and_executed_bytes(tmp
     assert id(other) not in runtime._code_sources
 
 
-def test_low_level_thread_refusal_preserves_call_and_catches_cached_parent_alias(monkeypatch):
+@pytest.mark.parametrize("starter_name", ["_start_thread_original", "_start_thread_alias_original"])
+def test_low_level_thread_refusal_preserves_call_and_catches_cached_parent_alias(monkeypatch, starter_name):
     from types import SimpleNamespace
 
     failures, calls = [], []
@@ -212,15 +213,51 @@ def test_low_level_thread_refusal_preserves_call_and_catches_cached_parent_alias
     assert runtime._start_thread("target", ()) == 42
     assert calls == [("target", ())]
     assert failures == ["unsupported low-level thread coverage lifecycle"]
+    starter = getattr(runtime, starter_name)
     frame = SimpleNamespace(f_code=compile("pass", "<caller>", "exec"))
-    stream._profile(frame, "c_call", runtime._start_thread_original)
+    stream._profile(frame, "c_call", starter)
     assert len(failures) == 2
-    runtime._thread_profile(frame, "c_call", runtime._start_thread_original)
+    runtime._thread_profile(frame, "c_call", starter)
     assert len(failures) == 3
     frame.f_code = runtime._thread_start_code
-    stream._profile(frame, "c_call", runtime._start_thread_original)
-    runtime._thread_profile(frame, "c_call", runtime._start_thread_original)
+    stream._profile(frame, "c_call", starter)
+    runtime._thread_profile(frame, "c_call", starter)
     assert len(failures) == 3
+
+
+@pytest.mark.parametrize("profile", ["parent", "child"])
+@pytest.mark.parametrize("starter_name", ["_start_thread_original", "_start_thread_alias_original"])
+def test_cached_native_thread_starters_refuse_untraced_workers(monkeypatch, profile, starter_name):
+    import sys
+    from types import SimpleNamespace
+
+    failures, observed = [], []
+    done = threading.Event()
+    monkeypatch.setattr(runtime, "_auditor", lambda: SimpleNamespace(error=failures.append))
+    monkeypatch.setattr(stream, "_auditor", lambda: SimpleNamespace(error=failures.append))
+    monkeypatch.setattr(runtime, "_frame_source", lambda frame: None)
+    monkeypatch.setattr(runtime, "_prior_profile", None)
+    monkeypatch.setattr(runtime, "_prior_thread_profile", None)
+    starter = getattr(runtime, starter_name)
+    assert type(starter) is type(os.getpid)
+    def worker():
+        try:
+            observed.append((sys.gettrace(), sys.getprofile()))
+        finally:
+            done.set()
+    previous = sys.getprofile()
+    try:
+        sys.setprofile(stream._profile if profile == "parent" else runtime._thread_profile)
+        identity = starter(worker, ())
+        finished = done.wait(5)
+    finally:
+        sys.setprofile(previous)
+    deadline = time.monotonic() + 5
+    while identity in sys._current_frames() and time.monotonic() < deadline:
+        time.sleep(0.001)
+    assert finished and identity not in sys._current_frames()
+    assert observed == [(None, None)]
+    assert failures == ["unsupported low-level thread coverage lifecycle"]
 
 
 def test_child_thread_profile_preserves_then_stops_only_prior_diagnostic_callbacks(monkeypatch):
@@ -342,7 +379,10 @@ def test_generated_audit_guard_preserves_native_first_main_execution(tmp_path):
     ("parent", False, "", "trace-removal"),
     ("parent", False, "", "shadow-script"),
     ("child", False, "", "shadow-script"),
+    ("parent", False, "", "cached-low-level"),
+    ("parent", False, "", "cached-low-level-alias"),
     ("child", False, "", "cached-low-level"),
+    ("child", False, "", "cached-low-level-alias"),
     ("child", False, "", "profile-removal"),
     ("child", False, "", "thread-profile-removal"),
     ("parent", False, "", "concurrent-generation"),
@@ -403,7 +443,12 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
     }
     _, options = standalone.coverage_files(sandbox, mapping)
     driver = sandbox / "driver.py"
-    driver.write_text(standalone._DRIVER_SCRIPT, encoding="utf-8")
+    native_starter = "start_new" if thread_mode == "cached-low-level-alias" else "start_new_thread"
+    capture = (
+        f"import _thread\n_thread._cgs_test_cached_start=_thread.{native_starter}\n"
+        if location == "parent" and thread_mode in {"cached-low-level", "cached-low-level-alias"} else ""
+    )
+    driver.write_text(capture + standalone._DRIVER_SCRIPT, encoding="utf-8")
     if thread_mode == "normal":
         consumer = (
             "from fixture_package.source import value\nobserved=value()\n"
@@ -458,8 +503,11 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
             f"finally: threading.set{hook}(original)\n"
             "observed=values[0]\n"
         )
-    elif thread_mode in {"low-level", "cached-low-level", "profile-removal", "thread-profile-removal"}:
-        starter = "_thread.start_new_thread" if thread_mode == "low-level" else "pre_captured_start"
+    elif thread_mode in {
+        "low-level", "cached-low-level", "cached-low-level-alias", "profile-removal", "thread-profile-removal",
+    }:
+        starter = ("_thread.start_new_thread" if thread_mode == "low-level" else
+                   "_thread._cgs_test_cached_start" if location == "parent" else "pre_captured_start")
         consumer = (
             "import _thread,importlib\nvalues=[]\ngate=_thread.allocate_lock();gate.acquire()\n"
             "def consume():\n"
@@ -501,7 +549,7 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
     else:
         consumer = f"import runpy\nobserved=runpy.run_path({str(shadow)!r},run_name='__main__')['value']()\n"
     child_program = (
-        "import sys,_thread,threading;pre_captured_start=_thread.start_new_thread;"
+        f"import sys,_thread,threading;pre_captured_start=_thread.{native_starter};"
         f"sys.path[:0]=[{str(tmp_path)!r},{str(sandbox)!r}];"
         "import _cgs_child_audit,_cgs_child_stream;"
         f"_cgs_child_stream.start({options['child_stream_control']!r});"
@@ -554,7 +602,9 @@ def test_real_timestamp_valid_bytecode_is_bound_to_executed_source(
         reason = ("executed code differs" if thread_mode == "normal" else
                   "guard was replaced" if thread_mode == "temporary-removal" and location == "parent" else
                   "tracer was replaced" if thread_mode == "temporary-removal" else
-                  "unsupported low-level thread" if thread_mode in {"low-level", "cached-low-level"} else
+                  "unsupported low-level thread" if thread_mode in {
+                      "low-level", "cached-low-level", "cached-low-level-alias",
+                  } else
                   "thread-start profile guard was replaced" if thread_mode in {"profile-removal", "thread-profile-removal"} else
                   "parent line tracer was replaced" if thread_mode == "trace-removal" else
                   "owned package executed outside")
