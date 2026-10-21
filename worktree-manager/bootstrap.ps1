@@ -83,10 +83,13 @@ if ($HaveGit) {
     New-Item -ItemType Directory -Force -Path $Staging | Out-Null
     if (Test-Path (Join-Path $Staging '.git')) {
         git -C $Staging fetch --depth 1 $Repo $Ref | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "git fetch of $Repo@$Ref failed (exit $LASTEXITCODE)." }
         git -C $Staging checkout -q FETCH_HEAD
+        if ($LASTEXITCODE -ne 0) { throw "git checkout of $Repo@$Ref failed (exit $LASTEXITCODE)." }
     } else {
         if (Test-Path $Staging) { Remove-Item -Recurse -Force $Staging }
         git clone --depth 1 --branch $Ref $Repo $Staging | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "git clone of $Repo@$Ref failed (exit $LASTEXITCODE)." }
     }
     $PayloadParent = $Staging
 } else {
@@ -104,6 +107,7 @@ if ($HaveGit) {
     if (Test-Path $Extract) { Remove-Item -Recurse -Force $Extract }
     New-Item -ItemType Directory -Force -Path $Extract | Out-Null
     tar -xzf $Tar -C $Extract   # bsdtar ships with Windows 10 1803+
+    if ($LASTEXITCODE -ne 0) { throw "Extracting the payload tarball failed (exit $LASTEXITCODE)." }
     $PayloadParent = (Get-ChildItem $Extract -Directory | Select-Object -First 1).FullName
     Remove-Item $Tar -Force
 }
@@ -112,9 +116,14 @@ Push-Location (Join-Path $PayloadParent 'worktree-manager')
 try {
     # Version-install the fetched payload (idempotent, version-gated): publishes
     # the versions/<ver> slot + current-version marker + ~/.local/bin binstub.
+    # uv is native: $ErrorActionPreference does not stop on its exit code, and
+    # `pwsh -File` would otherwise report success. Throw (not exit) so the
+    # documented `iex (irm ...)` one-liner never closes the caller's shell.
     uv run --quiet python -m worktree_manager self-install --apply
+    if ($LASTEXITCODE -ne 0) { throw "Worktree Manager self-install failed (uv exit $LASTEXITCODE)." }
     # Then run whatever the caller asked for through the freshly-installed app.
     uv run --quiet python -m worktree_manager @args
+    if ($LASTEXITCODE -ne 0) { throw "Worktree Manager exited with code $LASTEXITCODE." }
 } finally {
     Pop-Location
 }

@@ -1,0 +1,9 @@
+{
+  "comment": "Worktree Manager bootstrap.ps1 now fails when uv, git or tar fails instead of exiting 0 with no binstub installed.",
+  "changes": [
+    {
+      "plugin": "worktree-manager",
+      "type": "patch"
+    }
+  ]
+}
