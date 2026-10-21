@@ -14,9 +14,11 @@
 
 An agent executing inside a target repository receives the eligible plugins
 selected for that repository, not merely a successful transport connection.
-Reflect payloads into the execution environment, register their local paths in
-the target checkout, and launch only after that preparation succeeds. Headed
-CLI and headless ACP sessions should discover equivalent skills.
+Reflect local payloads into the execution environment and register the selected
+sources in the target checkout. Native repository-scoped Git activation may
+complete during startup, but the execution owner delivers no task until the
+effective plugin selection is ready. Headed CLI and headless ACP sessions
+should discover equivalent skills.
 
 ## Participants
 
@@ -80,6 +82,39 @@ abstracted; the requested mechanics and priorities are unchanged):
 > installing all remote-marketplace plugins and copying over all locally-sourced
 > in-worktree plugins.
 
+### Source-preservation clarification
+
+> A controller's local-path reference remains a local-path reference for the
+> bridged agent: a reflected copy on a remote machine or container, or the same
+> original location in the same execution world. A Git reference remains a Git
+> reference. The exception is an absolute local reference to a plugin defined
+> in the target repository: rebind it as a target-relative local-marketplace
+> reference.
+
+Source declarations and launch directories are distinct outputs. Installing a
+Git-sourced plugin does not authorize replacing its declared Git source with an
+installation-cache directory. ACP still receives the installed payload's local
+directory. A path into a Git checkout remains path-sourced when the controller
+chose that path. Worked examples must show both outputs, including the
+target-owned relocation exception and the authority of target-local overrides.
+
+Repository scoping is the default. Preparing a selected plugin must not enable
+it in unrelated repositories or mutate user-global marketplace and enablement
+preferences as a readiness workaround. Native repository-declared auto-install
+is distinct from global plugin-management commands; shared installation
+bookkeeping alone does not grant global activation.
+
+### Startup-readiness decision
+
+The operator selected **startup-readiness**: native repository-scoped Git
+acquisition and activation may complete during productive process startup.
+Bridge must confirm the selected plugins are ready before delivering a task.
+This replaces a strict requirement that native installation bookkeeping exist
+before the productive Copilot process starts; it does not relax source
+preservation, repository scope, target-local registration before startup, or
+failure reporting. Modes requiring explicit directories must still have usable
+payload paths when those directories are supplied.
+
 ## Plan
 
 ### Phase 0 - Reconcile and review
@@ -118,10 +153,24 @@ abstracted; the requested mechanics and priorities are unchanged):
 
 ### Phase 2 - Static local, remote SSH and privileged relay
 
-- [ ] Apply target-local registration before static local-loopback launches in
-  both CLI and ACP modes, retaining existing own/related selection, native
+- [ ] Preserve declared source kind through shared preparation in every
+  integrated venue: retain Git origin/revision/location declarations, retain
+  local references or reflected local copies, and rebind target-owned absolute
+  local references relative to the actual execution checkout.
+- [ ] Gate task delivery on the complete effective plugin set, allowing native
+  repository-scoped Git startup acquisition without treating process creation,
+  a connection or a session acknowledgment as plugin readiness.
+- [x] Publish worked examples mapping controller selection and execution
+  location to target-local settings and the complete automatic ACP directory
+  set; cover source preservation, target ownership, mixed origins, installed
+  fallback and explicit target-local choices.
+- [ ] Apply target-local registration before static-registry local-loopback ACP
+  launches, retaining existing own/related selection, native
   operator precedence and account/platform locality checks. Resolve local
   filesystem references without assuming a remote provider owns this path.
+- [ ] Apply the same registration barrier through the existing local
+  acquisition owner in CLI and ACP modes; settings-only consumer discovery is
+  not proof that this adapter prepares its target.
 - [ ] Apply the same contract to genuine remote static-registry SSH targets:
   target-owned resolution plus control-repository payload staging.
 - [ ] Resolve the privileged launch's real identity/filesystem context and
@@ -151,7 +200,7 @@ abstracted; the requested mechanics and priorities are unchanged):
   same identity resolve to the selected target payload without duplicate skill
   loading. Explicit target-local operator overrides remain authoritative unless
   this operation explicitly owns that entry.
-- [x] Shared preparation covers headed CLI and ACP with the same selected
+- [x] Pre-start preparation covers headed CLI and ACP with the same selected
   payload identities; ordering tests prove remote installation and local copying
   complete before settings assembly, and settings assembly completes before
   launch. Missing installation or copy failure prevents child startup.
@@ -171,6 +220,16 @@ abstracted; the requested mechanics and priorities are unchanged):
   modes, with effective paths/settings and launch version recorded.
 - [ ] Static local, SSH, and privileged lanes have equivalent acceptance
   evidence or explicit tracked transfers.
+- [ ] Source-preservation examples agree with executable cases: local
+  same-world references retain the original path, remote local sources use
+  reflected paths, Git declarations remain Git declarations after installation,
+  and target-owned absolute paths become target-relative marketplace paths.
+- [ ] Git preparation and activation leave user-global preferences unchanged;
+  an unrelated repository using the same execution profile does not load the
+  target repository's selected plugins.
+- [ ] Native startup acquisition completes before task delivery; a failed or
+  incomplete selection prevents ready status and task submission, including
+  cancellation, retry and modes with no skill contribution to observe.
 - [x] Existing own-plugin, related-plugin, Session Host resume, and native
   repository settings behavior remain intact.
 
@@ -206,6 +265,418 @@ on malformed configuration. These are reliability details, not new authority
 or a reason to create a daemon.
 
 ## Journal
+
+### 2026-10-20 - Preserve rollback hydration and quoted Windows executable lookup
+
+- A newer full review on the same head invalidated the earlier clean verdict
+  before any merge was attempted. Its rollback finding reproduced: two new
+  constructor keys in persisted targets made the preceding strict reader fail.
+  Preparation provenance now lives inside existing extensible request-override
+  metadata. New readers recover it after an old reader hydrates and re-saves
+  the target; ephemeral prepared loadouts and requests remain unpersisted.
+- A frozen, hash-checked copy of the preceding target reader exercises real
+  SQLite session hydration and rollback/forward round trips. Ordinary targets
+  retain the preceding serialized shape, provider classification stays unchanged,
+  and preparation metadata survives without overwriting unrelated overrides.
+  Session/acquisition/snapshot coverage passes 256 cases; local launch,
+  transport and compatibility coverage passes 172.
+- Both executable helpers now honor paired quotes around Windows PATH entries
+  before anchoring relative entries to the real execution checkout. Tests run
+  an actual selected batch command from quoted relative and absolute directories
+  containing spaces, preserve the productive environment, and retain literal
+  quote characters on POSIX. The full contained shared suite passes 284 cases
+  with one explicit platform skip; the shipped vendored helper remains identical.
+  The focused lookup selection also passes 14 cases with one platform skip,
+  including real installation through both direct and emitted consumers with
+  quoted Windows PATH entries.
+- Authenticated native Codespace revalidation passes on committed source
+  `9d4a450898081e9b0f78cb3b716955d55cfe9212`: one selected-skill task, identical
+  retry message 3, unchanged productive preferences and verified owned cleanup.
+  The venue was recovered and stopped without deletion or shared runtime updates.
+- The supported HTTP range and capability floors are unchanged. Current-head
+  native acceptance, review, CI and merge remain required; no previously pinned
+  merge permission transfers to the amended head.
+
+### 2026-10-20 - Preserve published remote ACP ownership and advance readiness to 44
+
+- A further upstream merge published managed remote ACP ownership at HTTP 43
+  during review. Replayed the owned slice onto the new base, preserving that
+  capability at 43, attention boundaries at 42, direct targets at 41 and the
+  supported minimum at 1. Only readiness-bound task/mode delivery requires 44;
+  ordinary older operations retain their sliding-range compatibility.
+- Preserved all 344 published HTTP fixtures byte-for-byte and all upstream
+  ownership assertions. Re-attested 45 independent generation-43 expectations
+  and eight readiness vectors at 44. All 406 registered fixtures and the three
+  authority vectors reproduced from committed source pass.
+- Full Bridge guards pass 337 cases with eight explicit platform/tier skips.
+  The protocol, registry, target, ownership, provider and reconciliation
+  selection passes 224 cases, including old-daemon capability refusal before
+  submission and current-reader tolerance of older ordinary packets.
+- Authenticated native Codespace acceptance passes against committed source
+  `25a5685be6ab272691609bde32c4209eb4b1649d` and the real HTTP-44 boundary.
+  Exactly one task invoked the selected skill; retry retained message 3.
+  Productive preferences stayed unchanged and the owned mux, authentication
+  scope, forward and HTTP fixture were cleaned up. This remains source-only
+  acceptance, not release promotion or shared runtime rollout.
+- The integrated head still owes fresh review, required CI and authorized
+  role-scoped merge. Earlier one-head merge consent does not transfer to it.
+
+### 2026-10-20 - Retain newly published attention boundaries and advance readiness to 43
+
+- While the reconciled head was in review, #7272 published attention boundaries
+  at HTTP 42. Replayed this owned branch again, retaining direct remote ACP
+  targets at 41, attention boundaries at 42 and the supported minimum at 1.
+  Readiness alone now requires 43; ordinary receipt delivery through 42 remains
+  supported. Preserved all 299 upstream HTTP fixtures and deferred-reference
+  metadata, and re-attested 50 current vectors without rewriting history.
+- The integrated protocol, target, attention and admission selection passes 281
+  tests. Full Bridge guards pass 299 with eight explicit platform/tier skips;
+  all 358 immutable fixtures and the reproduced authority vectors pass.
+- Authenticated native Codespace acceptance passes against committed runtime
+  `a2b7b5c976e2bfd474150c50243678916b7b8517` and the real HTTP-43 boundary.
+  Exactly one SDK task invoked the selected skill and retry retained message 3.
+  Existing auth, mode-0700 scope, unchanged productive settings and owned
+  process/forward cleanup retain their verified behavior. The final publication
+  still owes current-head review, CI and role-scoped merge authority.
+
+### 2026-10-20 - Reconcile the upstream protocol generation without narrowing compatibility
+
+- New `dev` changes assigned HTTP generation 41 to direct remote ACP targets
+  while this open slice independently used 41 for plugin readiness. Replayed
+  the owned commits onto the new base and assigned readiness generation 42,
+  retaining remote ACP targeting at 41 and the minimum-supported generation
+  at 1. The supported range and per-capability floors remain distinct.
+- Preserved every upstream immutable HTTP fixture, including the generation-41
+  targets and exact-workspace-owner vectors. Integrated generation-42 evidence
+  retains the independently frozen expectations and older capability floors;
+  the new readiness vectors continue to exercise real HTTP/SQLite admission.
+- Focused contained integration passes 244 cases, including ordinary receipt
+  delivery to generation-39/40/41 peers, older ordinary packets accepted without
+  readiness gating, readiness refusal before dispatch to generation-40/41
+  peers, and remote ACP target negotiation through generation 42.
+- Broad guard collection exposed this slice's standard-library `TypedDict`
+  inside the newly integrated Pydantic session-snapshot graph on Python 3.11.
+  Used the explicitly declared `typing-extensions` form without changing the
+  dictionary shape and added a strict typed-target JSON round-trip regression.
+  The full Bridge guards pass 295 cases (eight explicit platform/tier skips);
+  focused launch, transport, typed-target and readiness coverage passes 174.
+- Repeated the authenticated Codespace consumer against committed source
+  `4d432a57f939efb9c49a5ed1969f6f5c98a13120`, including the real HTTP-42
+  client/server boundary and source extension. Exactly one admitted task invoked
+  the selected skill; retry returned message 3. Mode-0700 auth scope, one-time
+  credential consumption, mux/forward/server cleanup and unchanged productive
+  settings all passed. Recovered the session and stopped the preserved venue.
+  Current-head review and required CI still gate merge; the earlier one-time
+  provider merge consent was pinned to the old head, not this replacement.
+
+### 2026-10-19 - Validate detached source startup with existing inference authentication
+
+- A source-bound Codespace consumer exercised canonical emitted preparation,
+  the detached owned-command builder, real Worktrees `embody`, the full Bridge
+  extension, and HTTP-41/SQLite/client/CLI admission. A no-skill local selection
+  and a non-default Git revision with a nested plugin location registered at
+  their expected versions before one SDK-delivered task successfully invoked
+  the selected skill. A missing selection was refused before admission;
+  identical retries returned the same message without another task.
+- Reused the existing clean-room host-token borrowing strategy for the native
+  selected identity and the existing process-only Copilot launcher. The
+  credential travelled over stdin into guarded tmpfs and was consumed once by
+  native Copilot with the documented `--secret-env-vars` isolation enabled. No interactive
+  login, global activation, productive-profile switch or shared runtime
+  deployment was needed. Productive configuration and settings stayed
+  byte-identical; the native mux, authentication scope, forward and source
+  HTTP fixture were cleaned up.
+- The live lane exposed an existing launch-directory defect: inherited default
+  ACLs can override umask and widen a plain `mkdir`. Executable scopes now
+  specify mode 0700 at creation. A real POSIX default-ACL regression covers the
+  source shell command, and the live consumer confirmed mode 0700 and guarded
+  cleanup. The contained Windows process-auth file passes 35 tests with its
+  POSIX-only ACL case skipped; final Linux CI still gates merge.
+- This is composed source-consumer evidence with the existing completed native
+  bootstrap runtime as a read-only dependency, not fresh-machine provisioning,
+  a production Connection Owner rollout or a live ambiguous-admission recovery
+  proof. Those remaining validation and release obligations stay open in
+  Phase 2/3; this journal is not an effort-completion claim.
+
+### 2026-10-19 - Bind executable lookup to the real execution context
+
+- Full review found eager native executable lookup using the daemon's cwd for
+  relative `PATH` entries, and an outdated README exclusion for local CLI
+  acquisition. The same lookup context also matters when preparation moves a
+  relative installer command into its intentionally neutral acquisition cwd.
+- Bound lookup to the final execution directory and reused a stdlib-only shared
+  helper for the direct owner and preparation, including emitted receivers.
+  Preparation anchors a copy of `PATH` before Git/installer work, retains the
+  original execution directory across repository-root discovery, and resolves a
+  required installer lazily. Productive environment, process cwd, explicit
+  command precedence and opaque runtime wrappers remain unchanged.
+- Real contained subprocess regressions cover relative, empty and dot entries,
+  direct/environment/managed relative installers, and the emitted receiver from
+  a subdirectory. The local/transport selection passes 141 tests and the entire
+  shared preparation suite passes 282, including unchanged private preferences.
+  The dependent customization suite passes 527 tests with the existing private
+  Git validation policy; no machine-global Git configuration is changed.
+  The README now distinguishes supported ordinary local CLI acquisition from
+  remaining excluded contexts. New-head review and CI still gate merge.
+
+### 2026-10-19 - Fix the actual merged-hook inventory CI gate
+
+- Current-head full review returned no open issues, but runtime CI exposed a
+  customization-inventory regression when the PR's merge tree included #7160's
+  native bootstrap-admission wrapper. The scanner did not recognize that
+  output-free wrapper and misclassified the suite's session-start stack.
+- Extended only the static scanner's standard-wrapper proof: capture selector
+  output, require the bounded empty-output wrapper structure and recursively
+  verify its legacy delegate. No adoption hook, installation policy, runtime,
+  test expectation or CI requirement was changed or bypassed.
+- Both wrapper regressions failed before the fix. The full customization suite
+  then passed 527 tests in isolated Python 3.12 state, using test-private Git LF
+  settings with safe-CRLF checks retained. A separate static replay of the actual
+  committed hook/writer sources classified them output-free without executing
+  admission, installers or any service operation. New-head review and CI remain
+  required before merge.
+
+### 2026-10-19 - Replay frozen readiness packets at the public boundary
+
+- Full review confirmed the three recovery corrections resolved, then found
+  the same public-request error in eight readiness fixtures: they supplied the
+  reserved internal startup kind instead of a public queued prompt.
+- Corrected every affected packet and its numeric control binding, deterministic
+  selection digest and admission receipt. Added one parameterized real
+  HTTP-router/SQLite/control-ack regression over all eight fixtures; it proves
+  reserved incoming kinds still fail, readiness precedes task admission, the
+  generated inbox packet matches exactly, identical retries keep one message,
+  and changed selection is refused.
+- The regression reproduced HTTP 400 before the packet correction. The combined
+  wire/readiness/native-golden selection now passes all 89 tests, and immutable
+  source/fixture evidence checks pass. This replaces the insufficient
+  model-parsing-only check for public-request replayability. Fresh current-head
+  review and required CI still gate merge.
+
+### 2026-10-19 - Current-head full-review recovery corrections
+
+- The first full review of the combined startup candidate found three further
+  recovery defects: confirmed admission could be lost on settlement retry,
+  unknown container delivery could replay before restoring a dead forward,
+  and CodeSpace tenant expiry could erase its pending journal. These findings
+  block merge; the earlier named local-review corrections were not a substitute
+  for the full-PR review.
+- The follow-up retains confirmed admission and retries only receipt settlement,
+  persists CodeSpace workflow journals independently of connection leases, and
+  restores/probes the retained native forward before unknown delivery replay.
+  A bounded, per-attempt CodeSpace recovery connection does not renew the
+  original session lease or launch another mux.
+- Focused contained suites pass 189 CodeSpace, 62 container and 115 shared venue
+  contracts, including expired-tenant migration, failed keeper replacement,
+  failed probes and settlement after native-session exit. Current-head review
+  and required CI remain pending; no installed rollout is claimed.
+- Actual CI also exposed strict unknown-field rejection in the three new wire
+  models and a container test that patched the internal release alias but still
+  invoked the host CLI through the public alias. The follow-up preserves typed
+  ownership validation while tolerating additive peer fields, and makes the
+  test's release boundary hermetic. The CI-equivalent wire/readiness selection
+  passes all 80 tests; the corrected container selection passes all 62.
+
+### 2026-10-19 - Admission ambiguity correction and contract evidence
+
+- Admission now distinguishes admitted, refused and unknown outcomes. An
+  identical operation retries against its original native session and input;
+  unknown admission retains the session, connection ownership and recovery
+  journal instead of stopping a session that may already be executing.
+- Pending container delivery journals survive replacement of disposable keeper
+  state, including replacement spawn failure and another worktree's release.
+  Creation receipts settle only after confirmed admission. Independent review
+  verified both named safety findings resolved; the coordinator independently
+  reran the 58 detached-container tests.
+- Protocol-41 evidence retains historical packets and capability floors, adds
+  typed readiness/task/mode and legacy-omission vectors, and records actual
+  committed source blobs. Focused contract/readiness consumers and the registry
+  checker's full regression suite passed. Extracted cohesive startup helpers
+  without widening module limits; the integrated Bridge guard suite passed
+  under the same Python generation used by CI. Publication, current-head
+  review, required CI and external-venue acceptance remain open.
+
+### 2026-10-18 - Detached seed integration and admission ambiguity review
+
+- Detached Codespace/container owners now carry the writer-produced context,
+  withhold owned terminal seeds and use the protocol-gated Bridge queue. Existing
+  creation-seed receipts retain deferred delivery and settlement; ordinary
+  attached/operator input remains distinct.
+- An independent source check exercised the real HTTP router, SQLite queue,
+  public client, native SDK readiness observation and native task delivery
+  together. One queued task invoked the selected skill, an identical operation
+  retry returned the same message, and changed compiled selection was refused.
+  Preferences and target settings stayed byte-identical. The isolated test
+  server and native processes were stopped; this is not installed rollout or a
+  full remote lifecycle proof.
+- Independent review found a blocking ambiguity: a lost response after durable
+  admission could be mistaken for non-admission and cause a newly created
+  session to be stopped while its task was already running. The correction must
+  reconcile the same operation and retain native/session-connection ownership
+  while admission is unknown. Review, contract attestation and publication stay
+  open until this case is fixed and verified.
+
+### 2026-10-18 - Automatic acquisition candidate and compiled native loadout
+
+- Ordinary local ACP acquisition now invokes preparation automatically. Native
+  CLI acquisition uses the existing Worktrees launch owner after its real
+  profile-environment merge, before mux creation, and carries the writer's
+  compiled selection into task admission. Legacy live CLI without a matching
+  native-bound preparation receipt is refused rather than guessed or reseeded.
+- The compiled context comes from the effective registration under its existing
+  lock: actual projected identities, logical identities, available versions and
+  known local marketplace roots. A private Git acquisition root is not reported
+  as the productive native marketplace root. Remote transports can opt into the
+  versioned context record without changing prepared-directory parsing.
+- Independent source-owner verification used the real controller selection
+  reader, a separate Worktrees preparation process and the actual native
+  installer. A fresh interactive frontend then accepted the compiled set of a
+  target-native local plugin, a controller-local alias and a Git-sourced plugin.
+  The two local plugins had no skills, so skill discovery was not the readiness
+  oracle. All three registered before one SDK-delivered task invoked the
+  selected Git skill; preferences and target settings stayed byte-identical.
+- This check exercised real owner preparation, compilation, native registration
+  and source inbox delivery with a synthetic queue. It did not replace the
+  pending full managed-owner/HTTP-daemon or external-venue acceptance lanes.
+  Detached provider seed forwarding remains the next source integration step;
+  native session registration alone is not its completion condition.
+
+### 2026-10-18 - Candidate native gate and remote ownership integration
+
+- The source readiness observer passed in an actual joined interactive CLI:
+  selected registered plugins were ready, a missing plugin remained pending,
+  and a mismatched session was refused. Session and cwd remained stable. The
+  temporary observer was removed; no plugin installation, activation, reload,
+  task send or preference write was used by the observation.
+- A fresh interactive native consumer then exercised the source observer and
+  inbox-delivery helper together. A synthetic queue's missing-plugin seed was
+  held with zero SDK sends; the actual registered loadout was observed before
+  exactly one SDK send and successful skill invocation. The productive test
+  profile's preferences and target settings stayed byte-identical. This used a
+  real frontend and SDK, not a model's readiness statement; the queue adapter
+  was synthetic, so it is not full acquisition-owner or HTTP-daemon evidence.
+- The candidate typed gate does not by itself cover real startup owners.
+  Automatic local acquisition preparation, compiled effective expectations and
+  withholding of owned seeds remain a separate integration step before claiming
+  end-to-end readiness.
+- Trusted Codespace/container producers now derive target-owned annotations
+  from explicit repository-registry bindings. Bridge preserves that identity
+  when merging provider and related plans. Unrelated checkouts are not inferred
+  from a matching basename or remote.
+- A new registered-bare-anchor case exposed a missing source-side identity
+  path; the candidate now handles that anchor without relaxing the receiver's
+  real-checkout requirement or nested-repository refusal. Focused contained
+  selections passed 40 Codespace, 30 container, 120 Bridge and 14 shared-parser
+  compatibility contracts. Read-only source-peer CLI checks also resolved the
+  bindings with sibling Python imports unavailable. These are candidate results,
+  not merge, release or rollout evidence.
+- Owned mode controls now retain their readiness requirement and recheck it
+  immediately before applying autopilot. A successful initial observation cannot
+  authorize a later mode change after cwd or plugin state changes; ordinary
+  operator mode controls retain their existing shape.
+
+### 2026-10-18 - Native selector and registration grounding
+
+- An isolated native CLI acquisition fetched an explicitly selected non-default
+  Git branch and installed the plugin at that revision's nested catalog
+  location. The installed version and a revision-specific skill marker matched
+  the selected branch, not the default branch's root-level plugin. The source
+  declaration was unchanged; no transport rewrite was used.
+- A separate fresh-profile run used only the target repository's declaration,
+  with no global plugin-management commands. The actual CLI loaded and invoked
+  that same non-default, nested plugin. An unrelated repository using the same
+  profile and cache did not load it. User settings remained byte-identical after
+  both runs, and the target's Git source declaration was preserved.
+- The candidate shared preparation engine also acquired that revision through
+  the actual native installer, retained the original Git declaration, returned
+  the verified payload directory, and repeated without changing productive
+  preferences or installing into the productive profile.
+- A separate candidate-engine check rebound an absolute anchor reference to
+  `./.ai` in the actual execution worktree. The settings-only native CLI loaded
+  and invoked that worktree's distinct skill, not the anchor's version, without
+  snapshots or source-catalog changes. This does not establish remote-producer
+  ownership annotation.
+- The first synthetic run hit a Windows Git cache-path limit. A shorter isolated
+  native cache path succeeded; an operation-scoped long-path setting alone did
+  not. This is acquisition evidence, not an external-network acceptance result
+  or authorization for user-global plugin management.
+- A read-only, temporary extension in an actual interactive native CLI session
+  observed its registered plugins through the public session RPC, with stable
+  session and checkout metadata. Optional installation-path fields were absent
+  on the selected entries. The observer was removed afterward. This grounds the
+  readiness API but does not close the fresh-start task-delivery integration
+  gate.
+
+### 2026-10-18 - Startup-readiness ordering accepted
+
+- The operator selected native repository-scoped startup activation, with task
+  delivery gated on confirmed plugin readiness. This removes a strict
+  install-before-process bookkeeping requirement, not the requirement to
+  deliver the complete selected plugin set before accepting work.
+- Source-kind preservation, target-owned relative relocation and repository-only
+  activation remain unchanged. There is no authorization for user-global
+  installation/enablement changes, a profile switch, dummy inference or private
+  native-state manipulation.
+- The seven worked settings/argument cases are published in this draft's
+  acceptance reference. Updated their ordering language and retained the
+  separate implementation/validation gates for startup readiness, Git source
+  handling and deferred adapters.
+
+### 2026-10-18 - Source preservation and repository-scoped activation
+
+- Clarified the standing contract: local references stay local, Git references
+  stay Git-based, and an absolute local reference to target-owned content is
+  rebound relative to the actual execution checkout. Source declarations and
+  concrete ACP directories are distinct outputs.
+- Repository scope is the default. Native repository-declared Git auto-install
+  was exercised without global marketplace/install commands: the declaring
+  repository loaded the selected skill, user-global settings remained unchanged,
+  and a separate repository using the same profile did not load it.
+- The existing management CLI, cache-only reuse, and no-prompt ACP
+  initialization/session creation are not established scoped preparation
+  barriers. Normal startup activation is not by itself proof that acquisition
+  completed before the productive child. That readiness seam remains open;
+  no user-global activation or silent profile replacement is an acceptable
+  workaround.
+- Preserved the mixed-local-origin and installed-inventory corrections, with
+  242 shared contracts and focused Bridge coverage. An independent actual CLI
+  consumer loaded both original physical payloads from settings generated by
+  preparation, including the operation-owned local alias. Neither source catalog
+  was changed.
+- Added worked acceptance examples for ordinary local references, explicit
+  target choices, remote local copies, preserved Git sources, target-owned
+  relocation, mixed physical origins and legacy ACP inventory. These examples
+  do not close the source-preserving Git or deferred-adapter gates.
+
+### 2026-10-18 - Static local ACP candidate and consumer proof
+
+- The next bounded slice implements ordinary static local ACP preparation
+  after actual workspace allocation and environment resolution, before either
+  raw-local or local Session Host child startup. Structured argument provenance
+  replaces only automatic plugin directories; explicit flags remain intact.
+- Shared preparation has opt-in same-filesystem references. Target-local
+  settings point directly at the original selected marketplace; preparation
+  neither snapshots those payloads nor writes source catalogs. Remote-copy
+  defaults, native operator authority, atomic settings publication and verified
+  remote installation remain unchanged.
+- Direct launches honor their explicit Copilot executable. Managed opaque
+  wrappers use a separate packaging CLI selected from the resolved environment,
+  matching the existing shared preparation contract; this is not a claim that
+  the installer executable equals a backend selected later by a setup script.
+  No Worktrees launch-plan API or configuration surface is added.
+- Contained coverage includes fresh/repeated preparation, real related-repo
+  selection, allocation ordering, source-worktree precedence, operator
+  overrides, explicit arguments, installer environment, missing installation,
+  malformed settings, cancellation quiescence and deferred-lane exclusions.
+  Independent actual Copilot CLI and ACP consumers loaded and invoked a
+  synthetic skill from the original filesystem reference. The CLI consumer
+  used only target settings, with no plugin-directory flags; ACP used the
+  launch adapter's effective directory.
+- These are source-candidate and fresh-checkout consumer checks, not installed
+  rollout or native CLI acquisition acceptance. Native local CLI, SSH,
+  privileged execution, live trusted-container proof and release remain open.
+  This candidate still requires review, required CI and merge; no implementation
+  checkbox is closed by this journal entry.
 
 ### 2026-10-18 - Trusted provider registration merged; static targets next
 
