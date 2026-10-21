@@ -5,12 +5,115 @@ from __future__ import annotations
 import json
 import logging
 import shlex
+import asyncio
+import threading
 from pathlib import Path
 
 from plugin_resolve.reflection import build_plan, build_prepare_script, parse_prepared, selection_spec
+from plugin_resolve.target import requires_repository_binding
 
 
-def with_controller_origin(target, origin):
+async def local_plugin_request(target, workspace: str, environment: dict[str, str]) -> dict | None:
+    """Build a readonly producer plan for the actual allocated checkout."""
+    from plugin_resolve.conventions import SETTINGS_RELS
+    from plugin_resolve.registration import _settings_document
+    from .related_plugins import control_plane_anchors, is_harness_plugin, related_plugins_for_repo
+
+    if not isinstance(workspace, str) or not workspace.strip():
+        raise ValueError("Local plugin preparation requires the allocated execution checkout")
+    checkout = Path(workspace).resolve(strict=True)
+    if not checkout.is_dir():
+        raise ValueError("Local execution checkout is not a directory")
+    if not any((parent / ".git").exists() for parent in (checkout, *checkout.parents)):
+        return None  # Legacy Gitless launches have no repository registration surface.
+    from .session_manager import _REQUEST_OVERRIDES_KEY
+
+    provenance = (target.venue or {}).get(_REQUEST_OVERRIDES_KEY, {})
+    controller = await resolve_controller_cwd(
+        target, caller_session_id=provenance.get("controller_session_id"),
+    )
+    roots = list(dict.fromkeys([
+        *([Path(controller)] if controller else []), *control_plane_anchors(),
+    ]))
+    def plan_request():
+        for root in roots:
+            for relative in SETTINGS_RELS:
+                _settings_document(root.joinpath(*relative))
+        specs = [
+            {"source": ref.source, "enable": ref.enable}
+            for ref in related_plugins_for_repo(target.project, anchors=roots)
+            if not is_harness_plugin(ref.source)
+        ]
+        plan = build_plan(
+            specs, roots, allow_external=True, local_mode="reference",
+            target_checkout=checkout, environment=environment,
+        )
+        return {"repo": str(checkout), **plan, "local_mode": "reference"}
+
+    return await asyncio.to_thread(plan_request)
+
+
+async def prepare_local_plugins(
+    target, workspace: str, environment: dict[str, str], *, prepared_context: dict | None = None,
+) -> list[str] | None:
+    """Prepare the actual local checkout, retaining no copied local payloads."""
+    from plugin_resolve.preparation import prepare
+    from .transport import _find_copilot, _wrap_batch_for_windows
+
+    request = await local_plugin_request(target, workspace, environment)
+    if request is None:
+        if prepared_context is not None:
+            prepared_context.clear()
+            prepared_context.update({
+                "applicable": False, "cwd": str(Path(workspace).resolve()),
+                "plugins": [], "logical_payloads": {},
+            })
+        return None
+    cancelled = threading.Event()
+
+    def check_cancelled():
+        if cancelled.is_set():
+            raise InterruptedError("Local plugin preparation cancelled")
+
+    def prepare_checkout():
+        check_cancelled()
+        direct_launch = not target.project or (target.explicit_cwd and not target.native_resume_id)
+        # Managed plans may run opaque setup wrappers. Their selected environment
+        # supplies the packaging CLI, not proof of the wrapper's eventual backend.
+        executable = _find_copilot(
+            environment, cwd=workspace,
+            explicit_path=target.copilot_path if direct_launch else None,
+        )
+        installer_environment = dict(environment)
+        command = tuple(_wrap_batch_for_windows([executable], installer_environment))
+        prepared = prepare(
+            request,
+            copilot_command=command, environment=installer_environment, check_cancelled=check_cancelled,
+            prepared_context=prepared_context,
+        )
+        return [arg for directory in prepared.values() for arg in ("--plugin-dir", directory)]
+
+    worker = asyncio.create_task(asyncio.to_thread(prepare_checkout))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        cancelled.set()
+        # Cancellation cannot leave a mutating thread behind a failed launch.
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except InterruptedError:
+                break
+        try:
+            worker.result()
+        except InterruptedError:
+            pass
+        raise
+
+
+def with_controller_origin(target, origin, *, caller_session_id=None):
     from dataclasses import replace
     from .session_manager import _REQUEST_OVERRIDES_KEY
 
@@ -18,6 +121,7 @@ def with_controller_origin(target, origin):
     return replace(target, venue={
         **venue, _REQUEST_OVERRIDES_KEY: {
             **venue.get(_REQUEST_OVERRIDES_KEY, {}), "controller_worktree_origin": origin,
+            **({"controller_session_id": caller_session_id} if caller_session_id is not None else {}),
         },
     })
 
@@ -100,6 +204,57 @@ async def resolve_controller_cwd(
     return str(canonical)
 
 
+async def _registered_target_binding(repository: str) -> dict:
+    from plugin_activation import normalize_remote
+    from .acquisition_authority import worktree_command
+    from .acquisition_contract import AcquisitionRefused
+
+    try:
+        inventory = await worktree_command(["repos", "list", "--strict", "--json"], None)
+    except AcquisitionRefused as exc:
+        if exc.code != "worktrees_unavailable":
+            raise
+        logging.getLogger("agent-bridge").warning(
+            "Target-relative plugin ownership is unavailable without the repository registry",
+        )
+        return {}
+    if inventory.get("inventory_authority") != "complete" or not isinstance(inventory.get("repos"), list):
+        raise RuntimeError("Target plugin ownership requires a complete repository registry")
+    remote = repository
+    if "://" not in remote and ":" not in remote and remote.count("/") == 1:
+        remote = f"https://github.com/{remote}"
+    identity = normalize_remote(remote)
+    if identity and identity.startswith("network:github.com/"):
+        identity = identity.casefold()
+    bound_roots = []
+    for row in inventory["repos"]:
+        if not isinstance(row, dict) or not isinstance(row.get("name"), str):
+            raise RuntimeError("Repository registry returned an invalid target binding")
+        registered_remote = normalize_remote(row.get("remote", ""))
+        if registered_remote and registered_remote.startswith("network:github.com/"):
+            registered_remote = registered_remote.casefold()
+        if row["name"] != repository and not (
+            identity and not identity.startswith("file-relative:") and registered_remote == identity
+        ):
+            continue
+        found = await worktree_command(
+            ["repos", "find", row["name"], "--registered-only", "--json"], None,
+        )
+        if (
+            found.get("registration") != "ready" or found.get("name") != row["name"]
+            or found.get("remote") != row.get("remote") or not isinstance(found.get("path"), str)
+        ):
+            raise RuntimeError("Registered target plugin ownership changed during resolution")
+        root = Path(found["path"])
+        if not root.is_absolute():
+            raise RuntimeError("Registered target plugin source is not an absolute path")
+        bound_roots.append(root.resolve(strict=True))
+    return {
+        "target_repository": identity if identity and not identity.startswith("file-relative:") else repository,
+        "target_source_roots": bound_roots,
+    } if bound_roots else {}
+
+
 async def prepare_venue_plugins(
     target: dict, transport, workspace: str, *, prelude: str = "", remote_env: str | None = None,
     caller=None, controller_cwd: str | None = None,
@@ -147,7 +302,15 @@ async def prepare_venue_plugins(
             if not is_harness_plugin(spec["source"]):
                 selected_related.setdefault(spec["source"], spec)
     if selected_related:
-        related = build_plan(list(selected_related.values()), roots)
+        binding = {}
+        if target.get("repo") and requires_repository_binding(selected_related.values(), roots):
+            binding = await _registered_target_binding(target["repo"])
+        related = build_plan(list(selected_related.values()), roots, **binding)
+        if (
+            plan.get("target_repository") and related.get("target_repository")
+            and plan["target_repository"] != related["target_repository"]
+        ):
+            raise RuntimeError("Provider and related plugins disagree on the execution repository")
         selected = {item["source"]: item for item in plan["plugins"]}
         for item in related["plugins"]:
             provider_item = selected.get(item["source"])
@@ -157,8 +320,10 @@ async def prepare_venue_plugins(
                 **item, "enable": provider_item["enable"] if provider_item is not None else item["enable"],
             }
         plan = {
+            **plan,
             "plugins": list(selected.values()),
             "marketplaces": {**plan.get("marketplaces", {}), **related.get("marketplaces", {})},
+            **({"target_repository": related["target_repository"]} if related.get("target_repository") else {}),
         }
     environment = f". {shlex.quote(remote_env)};\n" if remote_env else ""
     script = environment + prelude + "\n" + build_prepare_script(plan, workspace)
