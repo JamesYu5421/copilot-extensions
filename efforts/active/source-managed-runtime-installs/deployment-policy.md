@@ -13,7 +13,7 @@ Installation-mode governance owns legacy versus namespaced selection,
 activation and transfer. Command binding owns source-qualified installation
 identity. Canonical runtime construction/publication owns immutable candidates,
 redirects and rollback. Manager orchestrates an explicitly selected install;
-Agent Machines owns scheduled invocation.
+the [maintenance slice](maintenance.md) owns recurring invocation.
 
 Managed deployment is an additional authority decision at those existing
 publication boundaries, not another installation mode, source of actual-root
@@ -167,11 +167,21 @@ does not bypass policy. Retained bootstraps include the canonical command-bindin
 and lifecycle companions so legacy management can authenticate its existing live
 publication-purpose lease without importing source code.
 
-This is plugin-publication admission, not explicit managed-cell installation.
-That separate integration still needs authenticated durable management purpose
-on the existing namespace custody throughout staging, candidate handover and
-callbacks. A context receipt or staging environment flag alone remains
+Explicit managed-cell installation now composes the canonical
+[Python publication custody API](../../../libs/installation-context/README.md#explicit-runtime-publication-custody-python).
+Worktrees' native staging, backend construction, retained candidate handover
+and native callbacks authenticate and borrow the same live genesis/install
+owners. A context receipt or staging environment flag alone remains
 insufficient; namespaced installs are not coerced into legacy command binding.
+Management purpose pins the original native process birth as well as its PID;
+an exited, unreaped or reused process cannot retain publication authority.
+Standalone and managed flows acquire namespace custody before service cutover.
+Explicit modes retain the same governance owner through nested settlement and
+release cutover before releasing the namespace, avoiding an overlap cycle with
+an outer management owner.
+Settlement revalidates after blocking cutover acquisition and preparation,
+before helper or selector publication, including callers without a native
+frontend. A wait cannot extend an expired management owner's authority.
 Manager source selection and other caller/launcher gates remain open.
 
 ## Native bootstrap and early first-use admission

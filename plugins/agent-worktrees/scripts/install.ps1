@@ -381,6 +381,26 @@ if ($ContextualInstall) {
     }
 
     function Assert-ContextPublication {
+        if ($env:COPILOT_EXTENSIONS_RUNTIME_PUBLICATION) {
+            if (-not $BootstrapPython) {
+                throw 'Runtime publication management requires explicit -BootstrapPython.'
+            }
+            $managementHelper = Join-Path $PSScriptRoot 'installation-context\installation_context.py'
+            $managementJson = @(& $BootstrapPython -I -B -X utf8 $managementHelper probe-management-publication `
+                --context $contextPath --durable-home $contextDurableHome `
+                --payload-root $contextPayload --plugin-id agent-worktrees `
+                --legacy-root (Join-Path $env:USERPROFILE '.agent-worktrees'))
+            if ($LASTEXITCODE -ne 0) {
+                throw 'Runtime publication management custody was refused.'
+            }
+            $management = ($managementJson -join "`n") | ConvertFrom-Json -ErrorAction Stop
+            if ($management.managementPublication -isnot [bool] -or
+                -not $management.managementPublication -or
+                [string]$management.runtimeRoot -cne $InstallDir) {
+                throw 'Runtime publication management returned an invalid decision.'
+            }
+            return
+        }
         $publicationArgs = $contextStatusArgs.Clone()
         $publicationArgs.Action = 'probe-plugin-publication'
         $publicationJson = @(& $contextHelper @publicationArgs)
@@ -2788,7 +2808,7 @@ function Deploy-PythonRuntime {
     try {
         Assert-SourceRuntime
         $sourcePin = if ($SourceRuntimeIdentity) { $SourceRuntimeIdentity } else { '{}' }
-        $arguments = @('-I', '-B', (Join-Path $ScriptDir 'runtime_install.py'),
+        $arguments = @('-I', '-B', '-X', 'utf8', (Join-Path $ScriptDir 'runtime_install.py'),
             '--root', $InstallDir, '--plugin', $runtimeInputs,
             '--payload', $originPayload, '--uv', $uvPath, '--base-python', $base,
             '--result', $resultPath, '--expected-source-identity', $sourcePin) + $modeArgs
@@ -4037,7 +4057,7 @@ switch ($Action) {
             throw 'Helper publication requires its admitted plan, digest and base interpreter.'
         }
         $nativeError = ''
-        $arguments = @('-I', '-B', (Join-Path $ScriptDir 'runtime_install.py'),
+        $arguments = @('-I', '-B', '-X', 'utf8', (Join-Path $ScriptDir 'runtime_install.py'),
             '--root', $InstallDir, '--plugin', $PluginDir.ToString(),
             '--inspect-helper-publication', $RuntimePublicationPlan,
             '--publication-digest', $RuntimePublicationDigest)
@@ -4059,7 +4079,7 @@ switch ($Action) {
             }
             Deploy-GlobalBinstub
         }
-        $arguments = @('-I', '-B', (Join-Path $ScriptDir 'runtime_install.py'),
+        $arguments = @('-I', '-B', '-X', 'utf8', (Join-Path $ScriptDir 'runtime_install.py'),
             '--root', $InstallDir, '--plugin', $PluginDir.ToString(),
             '--complete-helper-publication', $RuntimePublicationPlan,
             '--publication-digest', $RuntimePublicationDigest)

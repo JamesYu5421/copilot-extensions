@@ -88,6 +88,9 @@ class Governance:
         if Path(actual_root).resolve() != self.root:
             raise InstallationRefused("Runtime deployment policy names another root")
         policy = decision["deployment"]
+        if self.context and os.environ.get(self.helper.RUNTIME_PUBLICATION_ENV):
+            self.helper.borrow_runtime_publication(**arguments)
+            return
         if policy["allowPluginPublication"] is True:
             return
         if not self.context and policy["state"] == "valid" and policy["managed"] is True:
@@ -133,11 +136,23 @@ class Governance:
 
     @contextmanager
     def held(self, *, timeout: float = 180):
+        if self.publication_locks:
+            for lock in self.publication_locks:
+                lock.assert_owned()
+            self.recheck()
+            yield
+            return
         deadline = time.monotonic() + timeout
         with ExitStack() as stack:
             locks = []
             receipt = self.initial[1]
-            if receipt is not None:
+            if receipt is not None and os.environ.get(self.helper.RUNTIME_PUBLICATION_ENV):
+                locks.extend(self.helper.borrow_runtime_publication(
+                    legacy_root=Path.home() / ".agent-worktrees", payload_root=self.payload,
+                    plugin_id="agent-worktrees", durable_home=self.durable_home,
+                    context=self.context,
+                ))
+            elif receipt is not None:
                 marketplace = receipt["marketplaceId"]
                 locks.append(stack.enter_context(self.helper._DirectoryLock(
                     self.durable_home / "marketplaces" / ".locks" / f"{marketplace}.genesis",
@@ -279,7 +294,10 @@ def _publish_helpers(
                 pin["runtime_source"]["package_version"] if pin else identity["build_info"]["version"]
             ), "governance": governance.signature(),
             "locks": [dict(lock._owner()) for lock in governance.publication_locks],
-            "pid": os.getpid(), "result": str(result_path),
+            "pid": (
+                governance.publication_locks[0]._owner()["pid"]
+                if governance.publication_locks else os.getpid()
+            ), "result": str(result_path),
             "copies": str(copies_path), "copies_identity": [copies_state.device, copies_state.inode],
             "bindings": helper_publication.declared_copies(
                 content, governance.root, frontend["scope"], frontend["shell"], bool(governance.context),
@@ -714,8 +732,9 @@ def settle_candidate(
     frontend: dict | None = None, publication_source_root: Path | None = None,
     child_timeout: float = 180,
     base_python: Path | None = None,
+    governance: Governance | None = None,
 ) -> dict:
-    governance = Governance(root, payload)
+    governance = governance if governance is not None else Governance(root, payload)
     if governance.signature() != expected_governance:
         raise InstallationRefused("Installation governance changed before candidate handover")
     root = governance.root
@@ -741,12 +760,14 @@ def settle_candidate(
         manifest = deployment.manifest_bytes(identity, candidate_slot, payload_hash)
 
         monitor_scope = cfg.install_dir().resolve() == root
-        guard = cutover_guard
-        if guard is None:
-            guard = cutover._acquire_cutover_lock(root / "status-monitor-routing")
-            custody.callback(guard.release)
-        print(f"Runtime {version}: cutover authority acquired", flush=True)
-        with governance.held(timeout=wait_timeout):
+        with governance.held(timeout=wait_timeout), ExitStack() as cutover_custody:
+            guard = cutover_guard
+            if guard is None:
+                guard = cutover._acquire_cutover_lock(root / "status-monitor-routing")
+                cutover_custody.callback(guard.release)
+            # Waiting does not extend borrowed management authority.
+            governance.recheck()
+            print(f"Runtime {version}: cutover authority acquired", flush=True)
             selected = _selected(root)
             if selected is not None and selected != previous:
                 custody.enter_context(runtime.retention_lease(root, selected, timeout=wait_timeout))
@@ -773,6 +794,7 @@ def settle_candidate(
                 f"Runtime {version}: monitor scope={monitor_scope} "
                 f"predecessor={predecessor} already-serving={already_serving}", flush=True,
             )
+            governance.recheck()
             helpers = None
             if frontend is not None:
                 if publication_source_root is None:
@@ -788,6 +810,7 @@ def settle_candidate(
             try:
                 if helpers is not None:
                     helpers.verify()
+                governance.recheck()
                 runtime.activate(root, version, link_free=True)
                 print(f"Runtime {version}: selection published", flush=True)
                 committed = True
