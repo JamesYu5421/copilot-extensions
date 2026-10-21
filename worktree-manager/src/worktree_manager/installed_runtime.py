@@ -56,7 +56,7 @@ def _owned_runner(
     try:
         sys.path.insert(0, str(library))
         if os.name == "nt":
-            from agent_procutil.owned_process import run_owned
+            from agent_procutil.owned_process import OwnedCleanupError, run_owned
         else:
             from .engine_process import run
     finally:
@@ -76,10 +76,18 @@ def _owned_runner(
             return subprocess.CompletedProcess(
                 argv, result.returncode, result.stdout, errors.read().decode("utf-8"),
             )
-    return run_owned(
-        [sys.executable, "-I", "-B", "-X", "utf8", "-c", _CHILD, str(cwd), *argv],
-        timeout=timeout,
-    )
+    try:
+        return run_owned(
+            [sys.executable, "-I", "-B", "-X", "utf8", "-c", _CHILD, str(cwd), *argv],
+            timeout=timeout,
+        )
+    except OwnedCleanupError as error:
+        from .engine_posix_process import CleanupError
+
+        raise CleanupError(
+            "Windows construction cleanup is unconfirmed; retain its filesystem paths",
+            process=error.process, job=error.job,
+        ) from error
 
 
 def _run(argv: list[str], *, cwd: Path, timeout: float) -> subprocess.CompletedProcess[str]:

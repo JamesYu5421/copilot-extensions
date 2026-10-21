@@ -133,7 +133,9 @@ with a 64-KiB control-stderr ceiling. Failures remain explicit:
 - `OwnedCleanupError` means cleanup is unconfirmed, not that a partial command
   succeeded. It retains the exact `process` and optional `job` custody for the
   owner; retain that evidence rather than reaping an unconfirmed group or
-  replaying the operation.
+  replaying the operation. This includes Windows standard capture: failed Job
+  retirement or pipe-reader settlement preserves the process, Job and open
+  streams instead of reporting an ordinary command failure.
 - Invalid input, unsupported custody, malformed completion and invalid UTF-8
   refuse visibly. Native OS errors do not assert that no target effect occurred.
 

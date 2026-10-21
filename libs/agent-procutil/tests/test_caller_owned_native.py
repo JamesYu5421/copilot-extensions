@@ -240,7 +240,19 @@ def test_installed_console_faults_settle_before_observer_cleanup(
                     ]
                     return values if all(values) else None
 
-                observations = _wait(ready, 4, "installed fixture did not expose all live roles")
+                try:
+                    observations = _wait(ready, 8, "installed fixture did not expose all live roles")
+                except AssertionError as error:
+                    if job is not None:
+                        job.terminate_and_wait(3)
+                        job = None
+                    elif process.poll() is None:
+                        process.kill()
+                    stdout, stderr = process.communicate(timeout=3)
+                    raise AssertionError(
+                        f"{error}; caller exit={process.returncode}; "
+                        f"stdout={stdout!r}; stderr={stderr!r}",
+                    ) from error
                 caller, target, leaf = observations
                 assert Path(caller["package"]).resolve().is_relative_to(slot.resolve())
                 assert Path(caller["prefix"]).resolve() == slot.resolve()

@@ -316,6 +316,49 @@ def test_windows_cleanup_failure_is_explicit_and_not_retried():
     assert "partial" not in str(caught.value)
 
 
+@pytest.mark.parametrize("input_text", [None, "request"])
+@pytest.mark.parametrize("boundary", ["retire", "retire-timeout", "wait", "reader"])
+def test_run_owned_windows_cleanup_failure_retains_exact_custody(
+    monkeypatch, input_text, boundary,
+):
+    events = []
+    streams = [io.StringIO(), io.StringIO(), io.StringIO()]
+
+    def wait(**_):
+        events.append("wait")
+        if boundary == "wait":
+            raise TimeoutError("unconfirmed root exit")
+        return 0
+
+    process = SimpleNamespace(
+        pid=123, returncode=0, stdin=streams[0], stdout=streams[1], stderr=streams[2],
+        communicate=lambda *_a, **_k: ("output", ""), wait=wait,
+    )
+    if boundary == "reader":
+        process.stdout_thread = SimpleNamespace(
+            join=lambda **_: events.append("reader"),
+            is_alive=lambda: True,
+        )
+
+    def retire(_):
+        events.append("retire")
+        if boundary == "retire":
+            raise OSError("unconfirmed Job retirement")
+        if boundary == "retire-timeout":
+            raise TimeoutError("unconfirmed Job retirement")
+
+    job = SimpleNamespace(terminate_and_wait=retire)
+    monkeypatch.setattr(ownership, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(ownership, "spawn_sync_in_kill_on_close_job", lambda *_a, **_k: (process, job))
+    with pytest.raises(OwnedCleanupError) as caught:
+        run_owned(["engine"], timeout=2, input_text=input_text)
+    assert caught.value.process is process and caught.value.job is job
+    assert isinstance(caught.value.__cause__, (OSError, RuntimeError))
+    assert not any(stream.closed for stream in streams)
+    if boundary.startswith("retire"):
+        assert events == ["retire"]
+
+
 @pytest.mark.parametrize("exits", [True, False])
 def test_group_confirmation_waits_for_exit_without_releasing_root(monkeypatch, exits):
     process = SimpleNamespace(pid=10, returncode=None)

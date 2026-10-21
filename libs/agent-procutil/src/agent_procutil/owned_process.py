@@ -200,21 +200,34 @@ def _communicate_windows(
         stop.set()
     finally:
         stop.set()
+        cleanup_error = None
         try:
             retire()
-        finally:
+        except BaseException as error:
+            cleanup_error = error
+        try:
             if watchdog is not None and watchdog.ident is not None:
                 watchdog.join()
-            process.wait(timeout=2.0)
-            # All Job-owned pipe ends are now closed. Join readers before the
-            # caller closes their streams; stdin writing ran on this caller.
-            for reader in (
-                getattr(process, "stdout_thread", None), getattr(process, "stderr_thread", None),
-            ):
-                if reader is not None:
-                    reader.join()
-        if failures:
-            raise failures[0]
+        except BaseException as error:
+            if cleanup_error is None:
+                cleanup_error = error
+        if cleanup_error is None and failures:
+            cleanup_error = failures[0]
+        if cleanup_error is None:
+            try:
+                process.wait(timeout=2.0)
+                # Join readers only after Job retirement has confirmed pipe closure.
+                for reader in (
+                    getattr(process, "stdout_thread", None), getattr(process, "stderr_thread", None),
+                ):
+                    if reader is not None:
+                        reader.join(timeout=2.0)
+                        if reader.is_alive():
+                            raise RuntimeError("native child pipe reader did not settle")
+            except BaseException as error:
+                cleanup_error = error
+        if cleanup_error is not None:
+            raise OwnedCleanupError(process, job) from cleanup_error
     if expired.is_set() or completed_at >= deadline:
         raise subprocess.TimeoutExpired(argv, timeout, stdout, stderr)
     return stdout, stderr

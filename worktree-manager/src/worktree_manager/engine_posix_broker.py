@@ -49,11 +49,12 @@ finally:
 class CleanupError(RuntimeError):
     """No cleanup acknowledgement: retain the broker and affected filesystem paths."""
 
-    def __init__(self, message, *, process=None, connection=None, directory=None):
+    def __init__(self, message, *, process=None, connection=None, directory=None, job=None):
         super().__init__(message)
         self.process = process
         self.connection = connection
         self.directory = directory
+        self.job = job
 
 
 def send_frame(connection, value, descriptors=()):

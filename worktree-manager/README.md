@@ -395,7 +395,10 @@ instead of deleting or renaming them on unconfirmed custody. The broker is a
 per-operation owner, not a resident service. A legacy inherited-group marker
 without the broker context refuses before launching work: run the supported
 bootstrap from a shell outside that older Manager process. Windows construction
-retains its existing nested Job ownership.
+retains its existing nested Job ownership. If Job retirement or pipe-reader
+settlement fails, construction raises the same fatal cleanup error and retains
+the exact process, Job, bootstrap runner and staging paths for their owner;
+ordinary command-failure handling must not delete them.
 
 If you hit `No module named worktree_manager`, the `worktree-manager` binstub
 itself is unusable (it runs `python -m worktree_manager` straight out of the
