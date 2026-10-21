@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -166,6 +168,181 @@ def test_execution_rejects_changed_root(deployment: Any) -> None:
     diagnostic = reconcile_deployment.execution_diagnostic(step)
     assert diagnostic is not None
     assert "runtime_root changed" in diagnostic["message"]
+
+
+@pytest.mark.parametrize("state", ["missing", "standalone", "managed", "invalid"])
+@pytest.mark.parametrize("old_helper", [False, True])
+def test_native_execution_cli_rechecks_cached_plan(
+    deployment: Any, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], state: str, old_helper: bool,
+) -> None:
+    step = reconcile.build_plan(
+        deployment.repo, machine="test", cache={}, save=False,
+    )["updates"][0]
+    if state != "missing":
+        deployment.policy(state)
+    if old_helper:
+        monkeypatch.setattr(reconcile, "_installation_context_helper", lambda *args: None)
+    before = _snapshot(deployment.home)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(step)))
+    monkeypatch.setattr(
+        update_cli.worktree_identity, "_find_repo_dir",
+        lambda: pytest.fail("Execution admission must not discover a repository"),
+    )
+    allowed = state == "missing" or (state == "standalone" and not old_helper)
+    parser = argparse.ArgumentParser()
+    update_cli.add_parsers(parser.add_subparsers(dest="command", required=True))
+    result = update_cli.cmd_reconcile_plugins(
+        parser.parse_args(["reconcile-plugins", "--check-update"]),
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert result == (0 if allowed else 3)
+    assert report["allowed"] is allowed
+    assert bool(report["diagnostics"]) is not allowed
+    assert _snapshot(deployment.home) == before
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["not json", "[]", "null", '{"phase":"payload","service":"agent-index"}',
+     '{"phase":"runtime","service":"agent-index","environment":null}',
+     '{"phase":"runtime","service":"agent-index","environment":{"COPILOT_EXTENSIONS_CONTEXT":1}}'],
+)
+def test_native_execution_cli_refuses_invalid_input(
+    raw: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO(raw))
+    monkeypatch.setattr(
+        reconcile_deployment, "execution_diagnostic",
+        lambda update: pytest.fail("Invalid input reached execution admission"),
+    )
+    assert update_cli.cmd_reconcile_plugins(argparse.Namespace(check_update=True)) == 3
+    report = json.loads(capsys.readouterr().out)
+    assert report["allowed"] is False
+    assert report["diagnostics"][0]["reason"] == "execution-admission-invalid"
+
+
+@pytest.mark.parametrize("field", ["runtime_root", "payload_root", "environment"])
+def test_native_execution_cli_refuses_changed_installation(
+    deployment: Any, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], field: str,
+) -> None:
+    step = reconcile.build_plan(
+        deployment.repo, machine="test", cache={}, save=False,
+    )["updates"][0]
+    step[field] = (
+        {"COPILOT_EXTENSIONS_CONTEXT": str(deployment.home / "other-context")}
+        if field == "environment" else str(deployment.home / "other-root")
+    )
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(step)))
+    assert update_cli.cmd_reconcile_plugins(argparse.Namespace(check_update=True)) == 3
+    report = json.loads(capsys.readouterr().out)
+    assert report["allowed"] is False
+    assert "changed; rebuild the plan" in report["diagnostics"][0]["message"]
+
+
+@pytest.mark.parametrize("managed", [False, True])
+def test_native_execution_front_door_needs_no_project(
+    deployment: Any, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], managed: bool,
+) -> None:
+    from agent_worktrees import __main__ as main
+
+    step = reconcile.build_plan(
+        deployment.repo, machine="test", cache={}, save=False,
+    )["updates"][0]
+    if managed:
+        deployment.policy("managed")
+    main.cfg.set_active_project(None)
+    monkeypatch.delenv("WORKTREE_PROJECT", raising=False)
+    monkeypatch.chdir(deployment.home)
+    monkeypatch.setattr(
+        main, "_resolve_active_project",
+        lambda project: pytest.fail("Execution admission tried to resolve a project"),
+    )
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(step)))
+    assert main.main(["reconcile-plugins", "--check-update"]) == (3 if managed else 0)
+    report = json.loads(capsys.readouterr().out)
+    assert report["allowed"] is not managed
+
+
+@pytest.mark.parametrize("deployment", ["agent-worktrees"], indirect=True)
+@pytest.mark.parametrize(
+    "state",
+    ["missing", "standalone", "managed", "old-helper", "old-helper-policy", "root-changed",
+     "payload-changed", "context-changed", "marketplace-arrived"],
+)
+def test_direct_stage_execution_retains_owning_discovery(
+    deployment: Any, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], state: str,
+) -> None:
+    from agent_worktrees import __main__ as core
+
+    direct = deployment.home / ".copilot" / "installed-plugins" / "_direct" / "worktrees"
+    direct.parent.mkdir(parents=True)
+    deployment.payload.rename(direct)
+    deployment.payload = direct
+    assert reconcile.core_installed_payload_dir("agent-worktrees") is None
+    monkeypatch.setattr(
+        update_stage, "_run_copilot_update",
+        lambda: pytest.fail("Direct staging must not refresh marketplace content"),
+    )
+    monkeypatch.setattr(core, "plan_pre_launch", lambda: {"action": "continue"})
+    staged = update_stage.stage(
+        status=deployment.home / "stage-status.json",
+        lock=deployment.home / "stage-lock", home=deployment.home,
+    )
+    assert staged["layout"] == "direct" and staged["venv_drift"] is True
+    assert staged["plugin_changed"] is True
+    step = {
+        "service": "agent-worktrees", "phase": "runtime", "trigger": "stage-update",
+        "payload_root": staged["plugin_dir"], "runtime_root": staged["runtime_root"],
+        "environment": staged["environment"],
+    }
+    # Ordinary marketplace reconciliation cannot borrow staged direct discovery.
+    assert reconcile_deployment.execution_diagnostic(step) is not None
+    if state in {"standalone", "managed"}:
+        deployment.policy(state)
+    elif state in {"old-helper", "old-helper-policy"}:
+        if state == "old-helper-policy":
+            deployment.policy("standalone")
+        monkeypatch.setattr(reconcile, "_installation_context_helper", lambda *args: None)
+    elif state == "root-changed":
+        step["runtime_root"] = str(deployment.home / "other-runtime")
+    elif state == "payload-changed":
+        step["payload_root"] = str(deployment.home / "other-payload")
+    elif state == "context-changed":
+        step["environment"] = {"COPILOT_EXTENSIONS_CONTEXT": str(deployment.home / "other-context")}
+    elif state == "marketplace-arrived":
+        deployment.install_payload("agent-worktrees", "3.0.0", scope="universal")
+    before = _snapshot(deployment.home)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(step)))
+    allowed = state in {"missing", "standalone", "old-helper"}
+    assert update_cli.cmd_reconcile_plugins(argparse.Namespace(check_update=True)) == (
+        0 if allowed else 3
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert report["allowed"] is allowed
+    assert _snapshot(deployment.home) == before
+
+
+def test_staged_discovery_cannot_select_other_plugins(
+    deployment: Any, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    step = reconcile.build_plan(
+        deployment.repo, machine="test", cache={}, save=False,
+    )["updates"][0]
+    step["trigger"] = "stage-update"
+    monkeypatch.setattr(
+        update_stage, "discover_plugin_dir",
+        lambda: pytest.fail("A foreign plugin reached staged Worktrees discovery"),
+    )
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(step)))
+    assert update_cli.cmd_reconcile_plugins(argparse.Namespace(check_update=True)) == 3
+    report = json.loads(capsys.readouterr().out)
+    assert report["allowed"] is False
+    assert "only supported for agent-worktrees" in report["diagnostics"][0]["message"]
 
 
 @pytest.mark.parametrize("phase", ["payload", "uninstall"])
