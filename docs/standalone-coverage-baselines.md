@@ -214,6 +214,9 @@ not a host-wide injector or importable default collector. Building a bundle
 does not install that entry or grant its caller process-observation rights.
 Required source and worker-posture checks use explicit refusals rather than
 Python assertions, so original `-O`/`-OO` arguments cannot disable them.
+Generated-source callbacks close their private output before publishing its
+digest name with a non-replacing hard link. Concurrent identical callbacks
+therefore compare complete bytes; an existing mismatch is still refused.
 
 ### Opt-in measurement-launch prototype
 

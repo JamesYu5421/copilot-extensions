@@ -19,7 +19,8 @@ from tools.coverage_guided_selection import observer_native_build as build
 from tools.coverage_guided_selection import child_stream as stream
 
 
-def test_python_generated_guard_preserves_actual_native_dispatch_mapping(tmp_path, monkeypatch):
+@pytest.fixture
+def native_callbacks(tmp_path, monkeypatch):
     emitter_path = tmp_path / "emitter.py"
     emitter_bytes = b"def emit():\n    pass\n"
     emitter_path.write_bytes(emitter_bytes)
@@ -35,7 +36,6 @@ def test_python_generated_guard_preserves_actual_native_dispatch_mapping(tmp_pat
         ("_code_sources", {}), ("_sources", {}), ("_root", ""), ("_package", "fixture_package"),
     ):
         monkeypatch.setattr(stream, key, value)
-    monkeypatch.setattr(stream.sys, "_getframe", lambda depth: SimpleNamespace(f_back=frame))
     (tmp_path / "generated").mkdir()
     entry = Path(build.__file__).with_name("native_observer_entry.py")
     functions = [node for node in ast.parse(entry.read_text()).body
@@ -49,6 +49,12 @@ def test_python_generated_guard_preserves_actual_native_dispatch_mapping(tmp_pat
         "catalog": {"sources": {}, "origin_source_sha256": [hashlib.sha256(emitter_bytes).hexdigest()]},
     }
     exec(compile(ast.Module(body=functions, type_ignores=[]), str(entry), "exec"), namespace)
+    return namespace, emitter, frame
+
+
+def test_python_generated_guard_preserves_actual_native_dispatch_mapping(tmp_path, native_callbacks, monkeypatch):
+    namespace, emitter, frame = native_callbacks
+    monkeypatch.setattr(stream.sys, "_getframe", lambda depth: SimpleNamespace(f_back=frame))
     content = b"def generated():\n    return 22\n"
     actual = compile(content, "<string>", "exec", dont_inherit=True)
     with (tmp_path / "events.jsonl").open("wb") as events:
@@ -66,6 +72,93 @@ def test_python_generated_guard_preserves_actual_native_dispatch_mapping(tmp_pat
     assert stream._frame_source(SimpleNamespace(
         f_code=method, f_globals={"__name__": "fixture_package.source"},
     )) == native[id(method)][1]
+
+
+def test_identical_generated_callbacks_publish_only_complete_files(tmp_path, native_callbacks):
+    namespace, emitter, _ = native_callbacks
+    first_write, second_done = threading.Event(), threading.Event()
+    failures, errors = [], []
+    namespace["auditor"] = SimpleNamespace(error=errors.append)
+    content = b"def generated():\n    return 22\n"
+    actual = compile(content, "<string>", "exec", dont_inherit=True)
+    original_open = open
+
+    class DelayedWrite:
+        def __init__(self, handle):
+            self.handle = handle
+
+        def __enter__(self):
+            self.handle.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.handle.__exit__(*args)
+
+        def write(self, value):
+            first_write.set()
+            if not second_done.wait(5):
+                raise TimeoutError("second callback did not finish")
+            return self.handle.write(value)
+
+    def opened(path, mode="r", *args, **kwargs):
+        handle = original_open(path, mode, *args, **kwargs)
+        if (mode == "xb" and os.path.dirname(path) == str(tmp_path / "generated")
+                and threading.current_thread().name == "first-publication"):
+            return DelayedWrite(handle)
+        return handle
+
+    def invoke(second=False):
+        try:
+            namespace["native_source_event"]("exec", (actual,), emitter, 0)
+        except Exception as error:
+            failures.append(error)
+        finally:
+            if second:
+                second_done.set()
+
+    namespace["open"] = opened
+    with (tmp_path / "events.jsonl").open("wb") as events:
+        namespace["source_event_fd"] = events.fileno()
+        namespace["native_source_event"]("compile", (content, "<string>"), emitter, 0)
+        first = threading.Thread(target=invoke, name="first-publication")
+        second = threading.Thread(target=invoke, kwargs={"second": True})
+        try:
+            first.start()
+            assert first_write.wait(5)
+            second.start()
+            first.join(5)
+            second.join(5)
+        finally:
+            second_done.set()
+            first.join(5)
+            if second.ident is not None:
+                second.join(5)
+        assert not first.is_alive() and not second.is_alive()
+    assert not failures and not errors
+    published = tmp_path / "generated" / (hashlib.sha256(content).hexdigest() + ".py")
+    assert list((tmp_path / "generated").iterdir()) == [published]
+    assert published.read_bytes() == content
+    records = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
+    assert len(records) == 2 and all(row["generated_source_admitted"] for row in records)
+
+
+def test_generated_publication_keeps_mismatched_existing_bytes(tmp_path, native_callbacks):
+    namespace, emitter, _ = native_callbacks
+    errors = []
+    namespace["auditor"] = SimpleNamespace(error=errors.append)
+    content = b"def generated():\n    return 22\n"
+    actual = compile(content, "<string>", "exec", dont_inherit=True)
+    published = tmp_path / "generated" / (hashlib.sha256(content).hexdigest() + ".py")
+    published.write_bytes(b"unexpected existing bytes")
+    with (tmp_path / "events.jsonl").open("wb") as events:
+        namespace["source_event_fd"] = events.fileno()
+        namespace["native_source_event"]("compile", (content, "<string>"), emitter, 0)
+        namespace["native_source_event"]("exec", (actual,), emitter, 0)
+    assert errors == ["actual generated source changed"]
+    assert published.read_bytes() == b"unexpected existing bytes"
+    assert list((tmp_path / "generated").iterdir()) == [published]
+    assert not namespace["generated_code_refs"]
+    assert not json.loads((tmp_path / "events.jsonl").read_text())["generated_source_admitted"]
 
 
 @pytest.mark.skipif(

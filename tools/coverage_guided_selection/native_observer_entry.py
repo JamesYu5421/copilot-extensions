@@ -139,15 +139,25 @@ def native_source_event(event, args, origin, offset):
             identifier = 1 + int(digest[:4], 16) % 65534
             reserved = {row["id"] for row in catalog["sources"].values()}
             target = os.path.join(control, "generated", digest + ".py")
+            temporary = os.path.join(
+                control, "generated", f".publish-{os.getpid()}-{os.urandom(16).hex()}",
+            )
+            created = False
             try:
-                with open(target, "xb") as output:
+                with open(temporary, "xb") as output:
+                    created = True
                     output.write(content)
-            except FileExistsError:
-                with open(target, "rb") as existing:
-                    same = existing.read() == content
-                if not same:
-                    auditor.error("actual generated source changed")
-                    record["generated_refusal"] = "source changed"
+                try:
+                    os.link(temporary, target)
+                except FileExistsError:
+                    with open(target, "rb") as existing:
+                        same = existing.read() == content
+                    if not same:
+                        auditor.error("actual generated source changed")
+                        record["generated_refusal"] = "source changed"
+            finally:
+                if created:
+                    os.unlink(temporary)
             if "generated_refusal" not in record:
                 actual_codes = tuple(code_tree(code))
                 with stream._generated_lock:
