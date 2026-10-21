@@ -104,3 +104,35 @@ barriers. Installation identity, registration-to-source resolution and control
 authentication belong to the future owning coordinator integration, not to a
 caller constructing a scope value. Existing unconfigured execution is unchanged.
 Do not call this primitive against a live queue to simulate a supported switch.
+
+## Reservation-send custody construction
+
+The internal `TaskQueue.admit_execution_send()` records one reservation-bound
+launch, resume, delivery or redrive stage before a future runtime sends it.
+Admission uses the same queue write transaction as scope closure and validates
+the queue identity, managed producer generation, current task generation and
+retained reservation. `ExecutionSendIdentity` also binds the qualified scope,
+execution generation, runtime identity, stage and durable send ID. This first
+construction supports only automatic generation 1.
+
+A newly admitted result has `replayed: false`. An exact retry returns the
+existing operation with `replayed: true`, even after closure or restart: it is
+observation, **not permission to resend**. A different send ID cannot replay the
+same reservation/task-generation/stage. A different qualified producer scope
+cannot close admission while hiding previously recorded sends.
+
+`settle_execution_send()` retains explicit transport evidence as `sent`,
+`not_sent` or `unknown`. Pending and unknown outcomes survive restart and closure;
+timeouts cannot establish absence. A known outcome cannot be overwritten by a
+contradictory or late result. A successful send is not proof of task completion,
+process exit or adopter-effect settlement. The closure inventory retains every
+send, including those associated with terminal tasks.
+
+This API is **not wired to production senders**. Runtime enrollment, coordinator
+authentication, final integration of fresh and already admitted launches,
+strict resumes, ordinary/restricted transports, redrives and both wake outboxes
+remain gates. Runtime callers must enforce the new-versus-replayed distinction
+at their actual send boundary and reconcile ambiguous responses through the
+existing transport authority. No HTTP/CLI control, acknowledgement, destination
+admission or handback is exposed; `acknowledged` remains false. The internal
+accounting alone must never be advertised as universal execution fencing.

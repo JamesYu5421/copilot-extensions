@@ -91,7 +91,10 @@ grants.
       The internal queue construction slice persists closure and inventories
       tasks, reservations and wakes under existing transactions; authenticated
       coordinator resolution, runtime enrollment and final launch gates remain
-      open. An empty inventory is never an acknowledgement.
+      open. Internal reservation-send custody also serializes first admission
+      with closure and retains pending/ambiguous transport outcomes; it is not
+      yet wired to production senders. An empty inventory is never an
+      acknowledgement.
 - [ ] Define the adopter effect-fence adapter and implement generation-bound
       mutation admission without conflating effect authority with task ownership.
       The first source slice defines and validates the optional
@@ -140,6 +143,20 @@ do not treat a validated adapter response as complete task admission or live
 handoff support.
 
 ## Journal
+
+### 2026-10-21 - Reservation-send custody construction
+- Added immutable reservation-stage send identities and same-queue admission
+  serialized with closure, without adding a transport, scheduler or live switch.
+- Lost replies replay the recorded observation, never fresh send permission;
+  another ID cannot repeat the same reservation/task-generation/stage.
+- Pending and ambiguous sends survive restart and remain in the complete
+  closure inventory, including terminal tasks' history. Known transport
+  outcomes remain distinct from process exit and adopter-effect settlement.
+- Deterministic coverage exercises closure/send ordering, durable ambiguity,
+  exact replay, conflicting identities and refusal to hide custody by rebinding
+  the qualified scope. Runtime enrollment, every actual sender and wake path,
+  legacy qualification, adopter effects and handback remain open Phase 2 gates.
+- This is source/test construction only, not an acknowledged or adopted handoff.
 
 ### 2026-10-20 - Durable queue-closure construction
 - Added a same-queue, operation-bound admission closure and transaction-consistent
