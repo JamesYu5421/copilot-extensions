@@ -26,6 +26,18 @@ RUNTIME_SYMBOLS = (
 )
 
 
+def entry_source():
+    """Inline the shared codec into the source covered by the existing entry pin."""
+    import inspect
+    from .measurement_launch import ChildJSON
+
+    template = Path(__file__).with_name("native_observer_entry.py").read_text(encoding="utf-8")
+    declaration = "from tools.coverage_guided_selection.measurement_launch import ChildJSON\n"
+    if template.count(declaration) != 1:
+        raise ValueError("native entry requires exactly one shared codec declaration")
+    return template.replace(declaration, inspect.getsource(ChildJSON) + "\n").encode("utf-8")
+
+
 def _digest(path):
     with open(path, "rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()

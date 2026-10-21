@@ -5,6 +5,8 @@ import hashlib
 import os
 from pathlib import Path
 import struct
+import subprocess
+import sys
 from types import ModuleType, SimpleNamespace
 import zipfile
 
@@ -21,6 +23,66 @@ def test_canonical_native_source_is_versioned_and_matches_its_build_pin():
     assert hashlib.sha256(source).hexdigest() == build.C_SHA256
     entry = Path(build.__file__).with_name("native_observer_entry.py")
     assert entry.is_file() and b"\r" not in entry.read_bytes()
+
+
+def test_native_entry_embeds_the_exact_shared_codec_in_its_pinned_source():
+    import ast
+    import inspect
+    from tools.coverage_guided_selection.measurement_launch import ChildJSON
+
+    source = build.entry_source()
+    assert b"\r" not in source
+    tree = ast.parse(source)
+    codec = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "ChildJSON")
+    assert ast.dump(codec) == ast.dump(ast.parse(inspect.getsource(ChildJSON)).body[0])
+    for node in ast.walk(tree):
+        names = ([alias.name for alias in node.names] if isinstance(node, ast.Import) else
+                 [node.module or ""] if isinstance(node, ast.ImportFrom) else [])
+        assert not any(name == "json" or name.startswith("tools.") for name in names)
+
+
+@pytest.mark.parametrize("declarations", [0, 2])
+def test_native_entry_refuses_missing_or_ambiguous_codec_declaration(monkeypatch, declarations):
+    original = Path.read_text
+    declaration = "from tools.coverage_guided_selection.measurement_launch import ChildJSON\n"
+    def read(path, *args, **kwargs):
+        text = original(path, *args, **kwargs)
+        if path.name == "native_observer_entry.py":
+            return text.replace(declaration, declaration * declarations)
+        return text
+    monkeypatch.setattr(Path, "read_text", read)
+    with pytest.raises(ValueError, match="exactly one shared codec declaration"):
+        build.entry_source()
+
+
+@pytest.mark.parametrize("optimize", [0, 1, 2])
+def test_rendered_native_codec_initializes_in_each_fresh_isolated_child(optimize):
+    import ast
+    import json
+
+    source = build.entry_source().decode("utf-8")
+    boundary = next(node.lineno for node in ast.parse(source).body if isinstance(node, ast.With))
+    prefix = "\n".join(source.splitlines()[:boundary - 1]) + "\n"
+    payload = {"catalog": {"nonce": "a" * 64, "n": 2, "values": [True, None, "\ud800", 1.25]}}
+    expected = json.dumps(payload, sort_keys=True)
+    program = (
+        "import sys\n"
+        "assert 'json' not in sys.modules\n"
+        "namespace={}\n"
+        f"exec(compile({prefix!r},'<native-entry-codec>','exec',dont_inherit=True,"
+        f"optimize={optimize}),namespace)\n"
+        "codec=namespace['json']\n"
+        f"assert codec.dumps({payload!r},sort_keys=True)=={expected!r}\n"
+        f"decoded=codec.loads({expected!r})\n"
+        f"assert decoded=={payload!r} and decoded['catalog']['values'][0] is True\n"
+        "assert not {'json','re','pathlib'} & sys.modules.keys()\n"
+    )
+    flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    completed = subprocess.run(
+        [sys.executable, "-I", "-S", "-B", "-c", program],
+        capture_output=True, text=True, timeout=30, **flags,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 @pytest.mark.parametrize("optimize", [0, 1, 2])

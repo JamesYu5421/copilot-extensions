@@ -16,10 +16,12 @@ def phase(name):
 phase("native-entry-first")
 import hashlib
 phase("native-entry-hashlib-ready")
-import json
+import sys
+from tools.coverage_guided_selection.measurement_launch import ChildJSON
+
+json = ChildJSON()
 phase("native-entry-json-ready")
 import marshal
-import sys
 from types import ModuleType
 
 phase("native-entry-imports-ready")
@@ -45,7 +47,7 @@ for path, expected, message in (
         require(file.read().strip() == expected, message)
 control = os.environ["CGS_NATIVE_CONTROL"]
 with open(os.path.join(control, "catalog.json")) as file:
-    catalog = json.load(file)
+    catalog = json.loads(file.read())
 for name in ("_cgs_child_audit", "_cgs_child_stream"):
     path = catalog["helpers"][name]["path"]
     with open(path, "rb") as file:

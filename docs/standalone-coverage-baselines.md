@@ -198,8 +198,17 @@ any publication must use the existing governed artifact mechanism.
 The prototype has no native Windows implementation or default activation.
 
 The exact container-fixture inputs are versioned beside the builder as
-`native_observer_entry.c` and `native_observer_entry.py`; the C build pin binds
-the checked-in LF bytes on both hosts. The native entry still requires the
+`native_observer_entry.c` and `native_observer_entry.py`. Use
+`observer_native_build.entry_source()` for the entry bytes: it embeds the
+existing `measurement_launch.ChildJSON` source in place of its template
+import, keeping one authored codec implementation. The existing C entry hash
+and artifact manifest bind those complete rendered bytes; no separately
+loaded codec or additional trust pin is introduced. The capability-checked
+CPython codec is compiled and initialized in every child, inside its original
+prelude, without importing the full `json` module. SDK source verification
+and compilation likewise remain in every child, not in this observer-source
+rendering step. The C source pin still binds the checked-in LF bytes.
+The native entry still requires the
 explicit `/work` fixture paths, catalog and constrained worker posture; it is
 not a host-wide injector or importable default collector. Building a bundle
 does not install that entry or grant its caller process-observation rights.
