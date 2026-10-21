@@ -7,7 +7,7 @@ exclude-newer = "7 days"
 
 [project]
 name = "agent-bridge"
-version = "0.9.80-dev1"
+version = "0.9.81-dev1"
 description = "Persistent inter-agent communication service for Copilot CLI"
 readme = "README.md"
 license = "MIT"
@@ -45,9 +45,11 @@ dependencies = [
     "agent-plugin-activation",
     "agent-remote-login-shell",
     "agent-machine-transport",
+    "agent-worktree-identity",
 ]
 
 [tool.uv.sources]
+agent-worktree-identity = { path = "libs/worktree-identity" }
 # Always resolve the vendored lib from the local path, never an index.
 # The distribution is named agent-ssh-manager (not the squatted PyPI name
 # "ssh-manager") to prevent dependency-confusion; the import module stays
