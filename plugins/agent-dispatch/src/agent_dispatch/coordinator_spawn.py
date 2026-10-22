@@ -61,6 +61,18 @@ class RecordSpawnBody(BaseModel):
     session_handle: str | None = None
     worktree: str | None = None
     session_info: dict | None = None
+    startup_complete: bool | None = Field(default=None, strict=True)
+    startup_revision: int | None = Field(default=None, ge=1, strict=True)
+
+class FenceSpawnStartupBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    startup_revision: int = Field(ge=1, strict=True)
+
+
+class ClaimSpawnCoolingBody(FenceSpawnStartupBody):
+    session_handle: str = Field(min_length=1)
+    state: str
 
 
 class RecordSpawnWorktreeBody(BaseModel):
@@ -94,10 +106,14 @@ class FailSpawnBody(ReservationDetailBody):
 
 class DeferSpawnBody(ReservationDetailBody):
     expected_generation: int | None = Field(default=None, ge=0, le=2**63 - 1, strict=True)
+    startup_revision: int | None = Field(default=None, ge=1, strict=True)
+    cooling_token: str | None = Field(default=None, min_length=1)
 
 
 class RecordColdBody(BaseModel):
     release_exclusive: bool = False
+    startup_revision: int | None = Field(default=None, ge=1, strict=True)
+    cooling_token: str | None = Field(default=None, min_length=1)
 
 
 class RequestSpawnReleaseBody(BaseModel):
@@ -105,6 +121,7 @@ class RequestSpawnReleaseBody(BaseModel):
     disposition: str = "failed"
     session_handle: str | None = None
     worktree: str | None = None
+    finished_startup_revision: int | None = Field(default=None, ge=1, strict=True)
 
 
 class RetireSpawnBody(ReservationDetailBody):
@@ -276,6 +293,10 @@ def register_spawn_routes(
                     queue.request_spawn_release(reservation.key, detail=delivery_error)
                     return {"reserved": False, "reservation": _reservation_dict(queue.get_reservation(reservation.key)),
                             "coordinator_launch": {"ok": False, "error": delivery_error}}
+                queue.record_spawn(
+                    reservation.key, session_handle=handle["session"], startup_complete=True,
+                    startup_revision=reservation.startup_revision,
+                )
             else:
                 if handle.get("session"):
                     queue.request_spawn_release(
@@ -390,10 +411,29 @@ def register_spawn_routes(
                     raise HTTPException(status_code=403, detail="CI repair spawned identity not independently verified")
         result = _reservation_guard(
             lambda: queue.record_spawn(
-                key, session_handle=body.session_handle, worktree=body.worktree
+                key, session_handle=body.session_handle, worktree=body.worktree,
+                startup_complete=body.startup_complete,
+                startup_revision=body.startup_revision,
             )
         )
         bus.publish({"type": "spawn.spawned", "reservation": result})
+        return result
+
+    @app.post("/spawn-reservations/{key}/startup-fence")
+    def fence_spawn_startup(key: str, body: FenceSpawnStartupBody) -> dict:
+        result = _reservation_guard(
+            lambda: queue.fence_spawn_startup(key, startup_revision=body.startup_revision)
+        )
+        bus.publish({"type": "spawn.startup_fenced", "reservation": result})
+        return result
+
+    @app.post("/spawn-reservations/{key}/claim-cooling")
+    def claim_spawn_cooling(key: str, body: ClaimSpawnCoolingBody) -> dict:
+        result = _reservation_guard(lambda: queue.claim_spawn_cooling(
+            key, startup_revision=body.startup_revision,
+            session_handle=body.session_handle, state=body.state,
+        ))
+        bus.publish({"type": "spawn.cooling_claimed", "reservation": result})
         return result
 
     from .ordinary_bridge import register_routes
@@ -469,6 +509,7 @@ def register_spawn_routes(
             key, detail=body.detail,
             **({"expected_generation": body.expected_generation}
                if body.expected_generation is not None else {}),
+            startup_revision=body.startup_revision, cooling_token=body.cooling_token,
         ))
         bus.publish({"type": "spawn.deferred", "reservation": result})
         return result
@@ -476,7 +517,11 @@ def register_spawn_routes(
     @app.post("/spawn-reservations/{key}/cold")
     def record_cold(key: str, body: RecordColdBody = RecordColdBody()) -> dict:
         result = _reservation_guard(
-            lambda: queue.record_cold(key, release_exclusive=body.release_exclusive)
+            lambda: queue.record_cold(
+                key, release_exclusive=body.release_exclusive,
+                startup_revision=body.startup_revision,
+                cooling_token=body.cooling_token,
+            )
         )
         bus.publish({"type": "spawn.cold", "reservation": result})
         return result

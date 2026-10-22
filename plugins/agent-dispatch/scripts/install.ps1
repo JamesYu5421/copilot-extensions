@@ -48,10 +48,20 @@
 .PARAMETER Force
     On update: bypass the downgrade guard (deliberate rollback). Env:
     AGENT_DISPATCH_ALLOW_DOWNGRADE=1.
+
+.PARAMETER RequireGracefulCutover
+    On update: fail without restart or supervisor reconciliation unless a
+    routed coordinator cuts over successfully. Runtime selection may already
+    have changed when a cutover fails.
+
+.PARAMETER RetainedRuntime
+    With restore: a record captured by retained_runtime.py before the update.
+    Reuses its completed immutable marketplace assembly with mandatory strict
+    cutover; never invokes the historical installer or rebuilds its runtime.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('install', 'update', 'status', 'start', 'stop', 'uninstall', 'stamp', 'provision')]
+    [ValidateSet('install', 'update', 'status', 'start', 'stop', 'uninstall', 'stamp', 'provision', 'restore')]
     [string]$Action = 'install',
     [string]$InstallDir,
     [switch]$NoService,
@@ -59,6 +69,8 @@ param(
     [switch]$Interactive,
     [switch]$Purge,
     [switch]$Force,
+    [switch]$RequireGracefulCutover,
+    [string]$RetainedRuntime,
 
     # DEPRECATED / no-op (Thread B): the graceful zdd cutover
     # (Invoke-CoordinatorCutover) is already the DEFAULT on `update` whenever a
@@ -82,6 +94,17 @@ if ($env:COPILOT_EXTENSIONS_HUMAN_UTF8 -eq '1') {
         throw 'Required installer human-output initializer is unavailable.'
     }
     . (Join-Path $PSScriptRoot 'installer-human-output.ps1')
+}
+
+if ($RequireGracefulCutover -and ($Action -ne 'update' -or $NoService)) {
+    throw '-RequireGracefulCutover requires update without -NoService'
+}
+if ($Action -eq 'restore') {
+    if (-not $RetainedRuntime -or $NoService -or $NoSupervisor) {
+        throw 'restore requires -RetainedRuntime and full coordinator/supervisor reconciliation'
+    }
+} elseif ($RetainedRuntime) {
+    throw '-RetainedRuntime is valid only with restore'
 }
 
 # Raise the shared self-stage watchdog's deadline for THIS plugin specifically,
@@ -616,6 +639,9 @@ function Invoke-VersionedActivate {
         }
         $legacyVenv = Join-Path $InstallDir '.venv'
         if ((Test-Path $legacyVenv) -and -not (Test-VenvIsLink $legacyVenv)) {
+            if ($RequireGracefulCutover) {
+                throw 'Required graceful cutover cannot migrate a real legacy .venv without stopping residents; no process stop attempted.'
+            }
             Write-Step 'Releasing legacy .venv for versioned migration (stopping coordinator + supervisor)...'
             try { Stop-DispatchProcess -Subcommand serve | Out-Null } catch {}
             try { Retire-SupervisorProcesses | Out-Null } catch {}
@@ -1660,7 +1686,27 @@ function Test-DispatchVenv {
     return [string]::Equals($actual, $expected, $comparison)
 }
 
+function Install-RetainedRuntime {
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & $VenvPython -I -B -c 'import agent_dispatch, agent_dispatch.embody, agent_dispatch.__main__' 2>$null
+    $slotOk = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $prevEAP
+    if (-not $slotOk) { throw 'Retained runtime failed its health gate; not activating' }
+    $mutex = Enter-PluginSnapshotLock -InstallDir $InstallDir -TimeoutSeconds $script:GlobalActivationLockTimeoutSeconds
+    try {
+        if (-not (Invoke-VersionedActivate)) { throw 'Retained runtime activation failed' }
+        if (Test-ActivationSupersededNow) { throw 'Retained runtime activation was superseded' }
+        Deploy-SelfProvisioningBinstub
+        Write-Manifest
+    } finally {
+        [void]$mutex.ReleaseMutex()
+        $mutex.Dispose()
+    }
+}
+
 function Install-Runtime {
+    if ($RetainedRuntime) { Install-RetainedRuntime; return }
     Assert-SourceRuntime
     $selectedBasePython = Resolve-DispatchBasePython
     if (-not (Test-Path $PkgSrcDir)) {
@@ -2153,6 +2199,18 @@ function Install-Runtime {
 }
 
 function Write-Manifest {
+    if ($RetainedRuntime) {
+        $nativeError = ''
+        $text = Invoke-Hidden -FilePath $VenvPython -ArgList @(
+            '-I', '-B', (Join-Path $ScriptDir 'retained_runtime.py'), 'manifest',
+            '--root', $InstallDir, '--record', $RetainedRuntime
+        ) -ErrorOutput ([ref]$nativeError)
+        if ($LASTEXITCODE -ne 0) { throw "Retained manifest validation failed: $text$nativeError" }
+        Publish-FileAtomically -Path (Join-Path $InstallDir 'payload-dir') -Content "$PluginDir`n" -Encoding $utf8NoBom
+        Publish-FileAtomically -Path (Join-Path $InstallDir 'stamped-version') -Content "$SrcVersion`n" -Encoding $utf8NoBom
+        Publish-FileAtomically -Path (Join-Path $InstallDir 'deploy-manifest.json') -Content $text -Encoding $utf8NoBom
+        return
+    }
     $sourcePath = if ($env:COPILOT_PLUGIN_STAGED_FROM) { $env:COPILOT_PLUGIN_STAGED_FROM } else { $PluginDir }
     $gitInfo = { param($Path) Get-GitInfo -Path (Split-Path -Parent $Path) }
     $extra = @{}
@@ -3983,21 +4041,38 @@ function Invoke-CoordinatorCutover {
     Write-Step 'Graceful cutover: standing the new coordinator up beside the old, then flipping routing...'
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    $out = & $py -m agent_dispatch _cutover --json 2>&1 | Out-String
+    $out = if ($RequireGracefulCutover) {
+        & $py -m agent_dispatch _cutover --json | Out-String
+    } else {
+        & $py -m agent_dispatch _cutover --json 2>&1 | Out-String
+    }
     $rc = $LASTEXITCODE
     $ErrorActionPreference = $prevEAP
     $ok = $false
     try {
-        # The JSON result is the last brace-balanced object on stdout; steps go to stderr.
-        $jsonLine = ($out -split "`n" | Where-Object { $_.Trim().StartsWith('{') } | Select-Object -Last 1)
-        if ($jsonLine) { $ok = [bool]((ConvertFrom-Json $jsonLine).ok) }
+        $jsonLine = if ($RequireGracefulCutover) { $out } else {
+            ($out -split "`n" | Where-Object { $_.Trim().StartsWith('{') } | Select-Object -Last 1)
+        }
+        if ($jsonLine) {
+            $decoded = ConvertFrom-Json $jsonLine
+            $value = $decoded.ok
+            $ok = if ($RequireGracefulCutover) {
+                $jsonLine.TrimStart().StartsWith('{') -and
+                $decoded -is [PSCustomObject] -and $value -is [bool] -and $value
+            } else { [bool]$value }
+        }
     } catch { $ok = $false }
-    if ($ok -or $rc -eq 0) {
+    if (($RequireGracefulCutover -and $ok -and $rc -eq 0) -or
+        (-not $RequireGracefulCutover -and ($ok -or $rc -eq 0))) {
         Invoke-SupervisorAudit -Event coordinator-cutover -Reason coordinator-cutover-returned -Outcome ok
         Write-Ok 'Coordinator cut over to the new build (no in-flight work killed; supervisor/workers re-adopt via the queue DB + routing table)'
         return $true
     }
-    Write-Warn 'Graceful cutover did not complete -- falling back to a normal restart'
+    if ($RequireGracefulCutover) {
+        Write-Warn 'Required graceful cutover was not confirmed'
+    } else {
+        Write-Warn 'Graceful cutover did not complete -- falling back to a normal restart'
+    }
     if ($out.Trim()) { Write-Step ($out.Trim()) }
     return $false
 }
@@ -4074,6 +4149,9 @@ function Invoke-Update {
                     # A Thread-B coordinator (routed, /drain seam) -> graceful cutover.
                     $didCutover = Invoke-CoordinatorCutover
                 } else {
+                    if ($RequireGracefulCutover) {
+                        throw 'Required graceful cutover needs a routed coordinator; no process stop attempted. Runtime selection may already have changed.'
+                    }
                     # Pre-Thread-B coordinator (unrouted, no /drain): one-time
                     # stop-and-swap (invariant #2 fallback). Every future update from a
                     # Thread-B build is graceful. The supervisor is left running.
@@ -4082,6 +4160,9 @@ function Invoke-Update {
                         Write-Step "Stopped $stopped pre-cutover coordinator process(es) -- one-time transition to graceful cutover"
                     }
                 }
+            }
+            if ($RequireGracefulCutover -and -not $didCutover) {
+                throw 'Required graceful cutover was not confirmed; runtime selection may already have changed. No restart or supervisor reconciliation attempted.'
             }
             Remove-CoordinatorFirewallRule
             # Refresh the boot task definition either way; -NoStart avoids launching a
@@ -4289,6 +4370,43 @@ $ScriptDir = $PSScriptRoot
 . (Join-Path $PSScriptRoot 'source-runtime.ps1')
 $PackageVersion = $SrcVersion
 $script:SourceRuntimeIdentity = $null
+if ($Action -eq 'restore') {
+    $restorePython = Get-BootstrapPython
+    if (-not $restorePython) { throw 'Retained restoration requires a bootstrap Python interpreter' }
+    # Recursion control only; the parent helper owns the real retention lease.
+    if (-not $env:_AGENT_DISPATCH_RESTORE_OWNER) {
+        $nativeError = ''
+        $result = Invoke-Hidden -FilePath $restorePython -ArgList @(
+            '-I', '-B', (Join-Path $ScriptDir 'retained_runtime.py'), 'restore',
+            '--root', $InstallDir, '--record', $RetainedRuntime, '--shell', 'ps1',
+            '--shell-executable', (Get-Process -Id $PID).Path
+        ) -ErrorOutput ([ref]$nativeError)
+        $restoreExit = $LASTEXITCODE
+        if ($result) { [Console]::Out.Write($result) }
+        if ($nativeError) { [Console]::Error.Write($nativeError) }
+        exit $restoreExit
+    }
+    Remove-Item Env:\_AGENT_DISPATCH_RESTORE_OWNER
+    $nativeError = ''
+    $restored = Invoke-Hidden -FilePath $restorePython -ArgList @(
+        '-I', '-B', (Join-Path $ScriptDir 'retained_runtime.py'), 'inspect',
+        '--root', $InstallDir, '--record', $RetainedRuntime
+    ) -ErrorOutput ([ref]$nativeError)
+    if ($LASTEXITCODE -ne 0) { throw "Retained runtime validation failed: $restored$nativeError" }
+    $restored = $restored | ConvertFrom-Json
+    $SrcVersion = $restored.version
+    $PluginDir = $restored.payload
+    $PkgSrcDir = Join-Path $PluginDir 'src/agent_dispatch'
+    $VenvDir = $restored.slot
+    $VenvPython = if ($env:OS -eq 'Windows_NT') {
+        Join-Path $VenvDir 'Scripts/python.exe'
+    } else { Join-Path $VenvDir 'bin/python' }
+    $LinkPython = $VenvPython
+    $PackageVersion = $SrcVersion
+    $Force = $true
+    $RequireGracefulCutover = $true
+    $Action = 'update'
+}
 
 function Write-InstallerLifecycle {
     param([string]$Outcome)

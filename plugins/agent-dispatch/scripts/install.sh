@@ -28,6 +28,7 @@
 # Usage:
 #   bash scripts/install.sh install        # venv + binstub + service + pivot
 #   bash scripts/install.sh update         # idempotent refresh (downgrade-guarded)
+#   bash scripts/install.sh restore --retained-runtime RECORD
 #   bash scripts/install.sh status
 #   bash scripts/install.sh start | stop
 #   bash scripts/install.sh uninstall [--purge]
@@ -40,6 +41,9 @@
 #   --purge            On uninstall: also delete config, DB, and env file.
 #   --force            On update: bypass the downgrade guard (deliberate
 #                      rollback). Env: AGENT_DISPATCH_ALLOW_DOWNGRADE=1.
+#   --require-graceful-cutover
+#                      On update: fail without restart/supervisor reconciliation
+#                      unless a routed coordinator cuts over successfully.
 #   --install-dir DIR  Override the runtime root (default ~/.agent-dispatch).
 # =============================================================================
 
@@ -353,6 +357,8 @@ NO_SERVICE=0
 NO_SUPERVISOR=0
 PURGE=0
 DRY_RUN=0
+REQUIRE_GRACEFUL_CUTOVER=0
+RETAINED_RUNTIME=""
 INSTALL_DIR=""
 FORCE="${AGENT_DISPATCH_ALLOW_DOWNGRADE:-0}"
 [[ "$FORCE" == "1" ]] && FORCE=1 || FORCE=0
@@ -362,11 +368,29 @@ while [[ $# -gt 0 ]]; do
         --no-supervisor) NO_SUPERVISOR=1; shift ;;
         --purge) PURGE=1; shift ;;
         --force) FORCE=1; shift ;;
+        --require-graceful-cutover) REQUIRE_GRACEFUL_CUTOVER=1; shift ;;
+        --retained-runtime) RETAINED_RUNTIME="$2"; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
         --install-dir) INSTALL_DIR="$2"; shift 2 ;;
         *) shift ;;
     esac
 done
+
+if [[ "$ACTION" == restore ]]; then
+    if [[ -z "$RETAINED_RUNTIME" || "$NO_SERVICE" -eq 1 || "$NO_SUPERVISOR" -eq 1 ]]; then
+        _fail 'restore requires --retained-runtime and full coordinator/supervisor reconciliation'
+        exit 1
+    fi
+elif [[ -n "$RETAINED_RUNTIME" ]]; then
+    _fail '--retained-runtime is valid only with restore'
+    exit 1
+fi
+
+if [[ "$REQUIRE_GRACEFUL_CUTOVER" -eq 1 ]] &&
+   { [[ "$ACTION" != update ]] || [[ "$NO_SERVICE" -eq 1 ]]; }; then
+    _fail '--require-graceful-cutover requires update without --no-service'
+    exit 1
+fi
 
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.agent-dispatch}"
 if [[ "$INSTALL_DIR" != /* ]]; then
@@ -1090,6 +1114,7 @@ STUBEOF
 }
 
 _ensure_runtime() {
+    if [[ -z "${RETAINED_RUNTIME:-}" ]]; then
     _assert_source_runtime || return 1
     if [[ -n "${SOURCE_RUNTIME_IDENTITY:-}" ]]; then
         _source_snapshot >/dev/null || return 1
@@ -1277,6 +1302,7 @@ _ensure_runtime() {
     # mode. Remember the previous active version as the gc keep target.
     fi
 
+    fi
     local prev_version=""
     # `embody` is only ever imported lazily, inside spawn_factories.
     # make_headless_spawn -- so a bare `import agent_dispatch` never touches
@@ -1296,11 +1322,13 @@ _ensure_runtime() {
     # ever activated.
     if [[ "$VERSIONED_RUNTIME" == 1 ]]; then
         prev_version="$(_versioned_current)"
-        if ! "$VENV_PYTHON" -I -c 'import agent_dispatch, agent_dispatch.embody, agent_dispatch.__main__' 2>/dev/null; then
+        if ! "$VENV_PYTHON" -I -B -c 'import agent_dispatch, agent_dispatch.embody, agent_dispatch.__main__' 2>/dev/null; then
             _fail "Fresh runtime slot failed its health gate (versions/$SRC_VERSION) -- not activating"
             exit 1
         fi
-        _versioned_mark_complete || exit 1
+        if [[ -z "${RETAINED_RUNTIME:-}" ]]; then
+            _versioned_mark_complete || exit 1
+        fi
         _supervisor_audit runtime-ready import-health-gate "" "" ok
         # Hold one publication lock across activation and required file writes.
         # Restore the previous selectors/readers if any publication fails;
@@ -1429,7 +1457,7 @@ _ensure_runtime() {
         _register_pivot
     fi
 
-    if "$LINK_PYTHON" -I -c 'import agent_dispatch, agent_dispatch.embody, agent_dispatch.__main__' 2>/dev/null; then
+    if "$LINK_PYTHON" -I -B -c 'import agent_dispatch, agent_dispatch.embody, agent_dispatch.__main__' 2>/dev/null; then
         _ok 'Verification: module imports successfully'
     else
         _fail 'Verification: module import failed'
@@ -1437,7 +1465,7 @@ _ensure_runtime() {
     fi
 
     # Versioned: prune old slots, keeping current + previous-good + live-pinned.
-    if [[ "$VERSIONED_RUNTIME" == 1 ]]; then
+    if [[ "$VERSIONED_RUNTIME" == 1 && -z "${RETAINED_RUNTIME:-}" ]]; then
         _versioned_gc "$prev_version"
     fi
 
@@ -1448,6 +1476,16 @@ _ensure_runtime() {
 }
 
 _write_manifest() {
+    if [[ -n "${RETAINED_RUNTIME:-}" ]]; then
+        local stage
+        _runtime_publication_write_value "$INSTALL_DIR/payload-dir" "$PLUGIN_DIR"$'\n' || return 1
+        _runtime_publication_write_value "$INSTALL_DIR/stamped-version" "$SRC_VERSION"$'\n' || return 1
+        _runtime_publication_stage "$INSTALL_DIR/deploy-manifest.json" stage || return 1
+        "$VENV_PYTHON" -I -B "$SCRIPT_DIR/retained_runtime.py" manifest \
+            --root "$INSTALL_DIR" --record "$RETAINED_RUNTIME" > "$stage" || return 1
+        _runtime_publication_commit_file "$INSTALL_DIR/deploy-manifest.json" "$stage"
+        return $?
+    fi
     local manifest_origin="${COPILOT_PLUGIN_STAGED_FROM:-$PLUGIN_DIR}"
     local manifest_commit=""
     if [[ -n "${SOURCE_RUNTIME_IDENTITY:-}" ]]; then
@@ -1630,11 +1668,24 @@ _coordinator_cutover() {
     # /drain-capable). read_active_endpoint verifies a live listener too.
     "$py" -c 'import sys; from zdd.routing import read_active_endpoint; from agent_dispatch.config import routing_dir; sys.exit(0 if read_active_endpoint(routing_dir()) else 1)' 2>/dev/null || return 1
     _step 'Graceful cutover: standing the new coordinator up beside the old, then flipping routing...'
-    if "$py" -m agent_dispatch _cutover >/dev/null 2>&1; then
+    local cutover_ok=0 output
+    if [[ "${REQUIRE_GRACEFUL_CUTOVER:-0}" -eq 1 ]]; then
+        if output="$("$py" -m agent_dispatch _cutover --json)"; then
+            if printf '%s' "$output" | "$py" -c 'import json, sys; result = json.load(sys.stdin); sys.exit(0 if isinstance(result, dict) and result.get("ok") is True else 1)'; then
+                cutover_ok=1
+            fi
+        fi
+        [[ "$cutover_ok" -eq 1 ]] || _warn "Graceful cutover was not confirmed: $output"
+    elif "$py" -m agent_dispatch _cutover >/dev/null 2>&1; then
+        cutover_ok=1
+    fi
+    if [[ "$cutover_ok" -eq 1 ]]; then
         _ok 'Coordinator cut over to the new build (no in-flight claim dropped; supervisor/workers re-adopt via the queue DB + routing table)'
         return 0
     fi
-    _warn 'Graceful cutover did not complete -- falling back to a SIGTERM-graceful systemctl restart'
+    if [[ "${REQUIRE_GRACEFUL_CUTOVER:-0}" -ne 1 ]]; then
+        _warn 'Graceful cutover did not complete -- falling back to a SIGTERM-graceful systemctl restart'
+    fi
     return 1
 }
 
@@ -2472,6 +2523,11 @@ do_update() {
         _supervisor_audit coordinator-cutover coordinator-cutover-returned "$SUPERVISOR_UNIT" "$SUPERVISOR_ENV_FILE" ok
         _install_service --no-restart
     else
+        if [[ "${REQUIRE_GRACEFUL_CUTOVER:-0}" -eq 1 ]]; then
+            _fail 'Required graceful cutover was not confirmed; runtime selection may already have changed. No restart or supervisor reconciliation attempted.'
+            _unlock_cutover
+            return 1
+        fi
         _install_service
     fi
     _install_supervisor_service
@@ -2652,6 +2708,28 @@ _lifecycle_finish() {
 source "$SCRIPT_DIR/source-runtime.sh"
 PACKAGE_VERSION="$SRC_VERSION"
 SOURCE_RUNTIME_IDENTITY=""
+if [[ "$ACTION" == restore ]]; then
+    restore_python="$(_bootstrap_python)" || exit 1
+    # Recursion control only; the parent helper owns the real retention lease.
+    if [[ -z "${_AGENT_DISPATCH_RESTORE_OWNER:-}" ]]; then
+        exec "$restore_python" -I -B "$SCRIPT_DIR/retained_runtime.py" restore \
+            --root "$INSTALL_DIR" --record "$RETAINED_RUNTIME" --shell sh \
+            --shell-executable "$(command -v bash)"
+    fi
+    unset _AGENT_DISPATCH_RESTORE_OWNER
+    restored="$("$restore_python" -I -B "$SCRIPT_DIR/retained_runtime.py" inspect \
+        --root "$INSTALL_DIR" --record "$RETAINED_RUNTIME")" || exit 1
+    SRC_VERSION="$(printf '%s' "$restored" | "$restore_python" -c 'import json,sys; print(json.load(sys.stdin)["version"])')" || exit 1
+    PLUGIN_DIR="$(printf '%s' "$restored" | "$restore_python" -c 'import json,sys; print(json.load(sys.stdin)["payload"])')" || exit 1
+    PKG_SRC_DIR="$PLUGIN_DIR/src/agent_dispatch"
+    VENV_DIR="$INSTALL_DIR/versions/$SRC_VERSION"
+    VENV_PYTHON="$VENV_DIR/bin/python"
+    LINK_PYTHON="$VENV_PYTHON"
+    PACKAGE_VERSION="$SRC_VERSION"
+    FORCE=1
+    REQUIRE_GRACEFUL_CUTOVER=1
+    ACTION=update
+fi
 _LIFECYCLE_ACTION=""
 case "$ACTION" in
     install|provision) _LIFECYCLE_ACTION=install ;;

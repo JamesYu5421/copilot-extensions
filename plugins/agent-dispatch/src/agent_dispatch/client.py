@@ -661,11 +661,15 @@ class DispatchClient(CleanupRecoveryClientMixin, CategoryClientMixin, ScheduleCl
         session_handle: str | None = None,
         worktree: str | None = None,
         session_info: dict | None = None,
+        startup_complete: bool | None = None,
+        startup_revision: int | None = None,
     ) -> dict:
         return self._unwrap(
             self._http.post(
                 f"/spawn-reservations/{key}/spawned",
                 json={"session_handle": session_handle, "worktree": worktree,
+                      **({"startup_complete": startup_complete} if startup_complete is not None else {}),
+                      **({"startup_revision": startup_revision} if startup_revision is not None else {}),
                       **({"session_info": session_info} if session_info is not None else {})},
             )
         )
@@ -774,12 +778,15 @@ class DispatchClient(CleanupRecoveryClientMixin, CategoryClientMixin, ScheduleCl
         self, key: str, *, detail: str | None = None,
         disposition: str = "failed", session_handle: str | None = None,
         worktree: str | None = None,
+        finished_startup_revision: int | None = None,
     ) -> dict:
         payload = {"detail": detail, "disposition": disposition}
         if session_handle is not None:
             payload["session_handle"] = session_handle
         if worktree is not None:
             payload["worktree"] = worktree
+        if finished_startup_revision is not None:
+            payload["finished_startup_revision"] = finished_startup_revision
         return self._unwrap(
             self._http.post(f"/spawn-reservations/{key}/release", json=payload)
         )
@@ -805,11 +812,18 @@ class DispatchClient(CleanupRecoveryClientMixin, CategoryClientMixin, ScheduleCl
             )
         )
 
-    def record_cold(self, key: str, *, release_exclusive: bool = False) -> dict:
+    def record_cold(
+        self, key: str, *, release_exclusive: bool = False,
+        startup_revision: int | None = None, cooling_token: str | None = None,
+    ) -> dict:
         return self._unwrap(
             self._http.post(
                 f"/spawn-reservations/{key}/cold",
-                json={"release_exclusive": release_exclusive},
+                json={
+                    "release_exclusive": release_exclusive,
+                    **({"startup_revision": startup_revision} if startup_revision is not None else {}),
+                    **({"cooling_token": cooling_token} if cooling_token is not None else {}),
+                },
             )
         )
 

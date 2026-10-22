@@ -13,6 +13,11 @@ control of an agent, or the decision to delegate a bounded subtask. Use
 agent-bridge for live cross-boundary conversation and steering, and
 `delegation-guidance:delegating-work` for runtime task decomposition.
 
+Each queue operation owns a short-lived SQLite connection. Leaving its context
+commits or rolls back the transaction and closes the connection immediately,
+including on commit failure. Setup failures also close the connection; resource
+release does not depend on garbage collection.
+
 Held housekeeping on a completed task has a separate preview-first
 [`reservations retry-cleanup` recovery flow](docs/cleanup-recovery.md).
 It preserves failure and attachment history and never rearms completed work.
@@ -248,6 +253,45 @@ deploy manifest, the **"Tasks" picker pivot** (see below), and -- unless
 coordinator, matching agent-bridge).
 `update` is downgrade-guarded (a stale checkout won't silently roll back a newer
 deployed runtime; override with `--force`).
+
+For controlled updates that must never fall back to a restart, use
+`update --require-graceful-cutover` on POSIX or
+`update -RequireGracefulCutover` on PowerShell. The option requires a live,
+routed coordinator and a successful cutover with an explicit JSON `ok: true`
+and zero exit status. Missing routing, failed execution or ambiguous output
+fails the update before coordinator restart/legacy process retirement and
+supervisor reconciliation. The default update behavior is unchanged. This is
+not a build-only or transactional rollback option: the candidate runtime,
+launchers and manifest may already be selected/published when it fails.
+Inspect routing, resident processes and runtime selection before recovery;
+do not blindly retry or revert database files. The option is valid only for
+`update` without `--no-service` / `-NoService`.
+
+For an explicitly authorized historical restoration, capture the currently
+selected immutable marketplace assembly **before** changing it:
+`python scripts/retained_runtime.py capture --root <runtime-root>` emits a JSON
+record to save in a private operator-owned file. It binds the original manifest,
+payload and completed slot by content, rejects editable dependencies, and does
+not copy or modify the runtime or database. Retain the payload and slot; this
+record is not an archive or a schema-compatibility certificate.
+
+Use the **current guarded controller**, not the historical installer:
+`bash scripts/install.sh restore --retained-runtime <record> --install-dir <runtime-root>`
+or `install.ps1 -Action restore -RetainedRuntime <record> -InstallDir <runtime-root>`.
+Restoration holds the runtime manager's retention lease through the full
+operation, checks the retained bytes again, skips construction/completion-marker
+rewrites and GC, restores the original deployment manifest and payload selectors,
+and refreshes launchers, native service definitions and the configured supervisor.
+Its coordinator cutover is always strict; failed or ambiguous cutover never
+falls back to a restart or supervisor reconciliation. As with strict update,
+selection/publication can precede a failed cutover and is not automatically
+undone. The regular update path is unchanged.
+
+Before restoring an older writer, contain new admissions, resolve all pending
+startup/cooling operations, verify database compatibility and inspect routing
+and resident generations. Stop on uncertainty; never restore database/WAL files
+or treat a retention lease or archive as proof of writer quiescence. A changed,
+missing or source-managed assembly is refused rather than rebuilt or relabelled.
 
 Both installers source the canonical installer engine during development;
 release tooling materializes byte-identical payload-local copies. The engine
@@ -520,8 +564,9 @@ started -> suspended -> started
   without a captured interactive inbox instead releases to **queued** and
   settles its reservation for safe re-embodiment. `release <id>`
   explicitly clears ownership and moves **suspended → queued**. Suspended tasks
-  do not participate in liveness GC, supervisor capacity/claiming, or retry
-  accounting.
+  do not participate in liveness GC, claiming or retry accounting. Their
+  reservations retain process capacity while startup or cooling is unresolved;
+  see [startup and cooling fencing](docs/spawn-startup-fencing.md).
 - A bare `suspend` always attaches a **cooldown monitor** (default
   `DEFAULT_SUSPEND_COOLDOWN_SECONDS`, override with `--cooldown-seconds`, or
   suppress with `--no-cooldown` for a caller that has arranged its own, more
@@ -2646,10 +2691,13 @@ agent-dispatch reservations fail <key>                # release a confirmed-dead
 
 `--max-active-processes` (legacy alias `--max-concurrent`) is a **pool-local**
 cap on live or launching worker processes, not on durable tasks. Queued tasks
-are unlimited. Suspended tasks and tasks blocked on a card are cold: their
-headless bridge process is stopped while the task, owner, progress, card, and
-spawn handle remain durable. Submitting a steer releases the cold reservation
-and queues a fresh embodiment that consumes the saved guidance. Because the cap
+are unlimited. Suspended tasks and tasks blocked on a card can become cold:
+their headless bridge process is stopped while the task, owner, progress, card
+and spawn handle remain durable. Unresolved startup or cooling still occupies
+capacity. Steering requests the preserved body's resume where supported;
+replacement paths consume the saved guidance. The coordinator-held
+[startup/cooling fence](docs/spawn-startup-fencing.md) excludes stale physical
+stops from later resumes. Because the cap
 is evaluated only over tasks matching this supervisor's repo/label filter,
 unrelated pools do not consume one another's process capacity.
 

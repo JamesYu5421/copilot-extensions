@@ -154,6 +154,53 @@ handoff support.
 
 ## Journal
 
+### 2026-10-22 - Serialize physical cooling with resume admission
+- Further review of #7836 found that a fresh snapshot cannot exclude a later
+  resume before the actual stop. A coordinator-held, revision/handle-bound
+  cooling operation now spans probing, physical stop and cold/deferral
+  publication. Ambiguous outcomes retain the durable guard without expiry.
+- Suspended incomplete startups retain capacity before abandonment, including
+  stale cooled-cache observations. Stranded queued historical cold rows cannot
+  be stopped or deferred without completion and guarded generation checks.
+- The final bounded queue/ordinary/restricted/supervisor family passed 1,375
+  cases with 34 explicit skips. The focused cooling/clean-room selection
+  passed 46. An encountered containment test incorrectly required a particular
+  ancestor to reap the synthetic body; it now checks actual descendant absence
+  after reaping any adopted children, retaining owner-unwind and marker checks.
+- Source review remains a separate pending gate.
+- The additive schema and mixed-version quiescence requirements are documented
+  in the plugin's startup-fencing reference. No migration, release, installed
+  adoption or Phase 2 completion is claimed.
+
+### 2026-10-22 - Keep completion behind task-resume finalization
+- Current-head review exposed a final gap: publishing startup completion before
+  the task's resume transition let cooling stop the body while the task still
+  appeared suspended, followed by a misleading started task.
+- Startup now stays incomplete through owned task finalization. Task start
+  transitions reject a retained cooling operation. A finalization error retains
+  unresolved startup rather than automatically recooling under a potentially
+  late task transition; that explicit safety behavior replaces the old test's
+  unsafe recooling expectation.
+- The bounded affected family passed 1,377 cases with 34 explicit skips.
+  New controls exercise the exact completion/finalization gap, task resume
+  during cooling, and durable steering without an interactive wake.
+- Source review, controlled runtime qualification and authorized adoption
+  remain separate. These tests do not establish a running spawn/start outcome.
+
+### 2026-10-22 - Preserve predecessor startup across recovery reentry
+- The pending startup-capacity source correction in #7836 now rejects a second
+  resume or redelivery while the original launch remains unresolved. Recovery
+  promotion does not close that caller or license another operation.
+- Cooling preserves proven completion and compares the captured startup
+  revision. Unproven historical cold rows retain capacity and cannot resume
+  or pass terminal cleanup; stale cold snapshots cannot hide a newer resume.
+- Actual queue/thread regressions cover blocked original launch and cold-resume
+  callbacks, alongside stale publication, cooling and legacy controls.
+  Positive lifecycle fixtures explicitly establish completed startup rather
+  than relying on a legacy inferred value.
+- This remains an in-review source/test prerequisite, not enrollment, sender
+  integration, release, running adoption or completion of Phase 2.
+
 ### 2026-10-21 - Clarify logical-machine and supervisor lifetime boundaries
 - The coordinator, supervisor master and worker-lane supervisor are distinct
   roles within the same local Dispatch deployment. Retain the separate local

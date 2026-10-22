@@ -106,8 +106,30 @@ class QueueBackedClient:
         )
         return {"reserved": ok, "reservation": asdict(res)}
 
-    def record_spawn(self, key, *, session_handle=None, worktree=None):
-        return asdict(self._q.record_spawn(key, session_handle=session_handle, worktree=worktree))
+    def record_spawn(self, key, *, session_handle=None, worktree=None, startup_complete=None,
+                     startup_revision=None):
+        try:
+            return asdict(self._q.record_spawn(
+                key, session_handle=session_handle, worktree=worktree,
+                startup_complete=startup_complete, startup_revision=startup_revision,
+            ))
+        except TaskError as exc:
+            raise DispatchError(409, str(exc)) from exc
+
+    def fence_spawn_startup(self, key, *, startup_revision):
+        try:
+            return asdict(self._q.fence_spawn_startup(key, startup_revision=startup_revision))
+        except TaskError as exc:
+            raise DispatchError(409, str(exc)) from exc
+
+    def get_reservation(self, key):
+        reservation = self._q.get_reservation(key)
+        if reservation is None:
+            raise DispatchError(404, f"no such reservation: {key}")
+        return asdict(reservation)
+
+    def attachments(self, task_id):
+        return [asdict(item) for item in self._q.attachment_history(task_id)]
 
     def record_spawn_worktree(self, key, worktree, **kwargs):
         return asdict(
@@ -142,8 +164,17 @@ class QueueBackedClient:
             )
         )
 
-    def defer_spawn(self, key, *, detail=None):
-        return asdict(self._q.defer_spawn(key, detail=detail))
+    def defer_spawn(self, key, *, detail=None, **kwargs):
+        try:
+            return asdict(self._q.defer_spawn(key, detail=detail, **kwargs))
+        except TaskError as exc:
+            raise DispatchError(409, str(exc)) from exc
+
+    def claim_spawn_cooling(self, key, **kwargs):
+        try:
+            return asdict(self._q.claim_spawn_cooling(key, **kwargs))
+        except TaskError as exc:
+            raise DispatchError(409, str(exc)) from exc
 
     def request_spawn_release(
         self,
@@ -153,6 +184,7 @@ class QueueBackedClient:
         disposition="failed",
         session_handle=None,
         worktree=None,
+        finished_startup_revision=None,
     ):
         return asdict(
             self._q.request_spawn_release(
@@ -161,6 +193,7 @@ class QueueBackedClient:
                 disposition=disposition,
                 session_handle=session_handle,
                 worktree=worktree,
+                finished_startup_revision=finished_startup_revision,
             )
         )
 
@@ -183,8 +216,14 @@ class QueueBackedClient:
             )
         )
 
-    def record_cold(self, key, *, release_exclusive=False):
-        return asdict(self._q.record_cold(key, release_exclusive=release_exclusive))
+    def record_cold(self, key, *, release_exclusive=False, startup_revision=None, cooling_token=None):
+        try:
+            return asdict(self._q.record_cold(
+                key, release_exclusive=release_exclusive, startup_revision=startup_revision,
+                cooling_token=cooling_token,
+            ))
+        except TaskError as exc:
+            raise DispatchError(409, str(exc)) from exc
 
     def settle_spawn(
         self,
@@ -366,8 +405,8 @@ class QueueBackedClient:
         expected_owner_session_id=None,
         expected_generation=None,
     ):
-        return asdict(
-            self._q.resume(
+        try:
+            return asdict(self._q.resume(
                 task_id,
                 worker_id,
                 wake_requested=wake,
@@ -378,8 +417,9 @@ class QueueBackedClient:
                 reuse_session=reuse_session,
                 expected_owner_session_id=expected_owner_session_id,
                 expected_generation=expected_generation,
-            )
-        )
+            ))
+        except TaskError as exc:
+            raise DispatchError(409, str(exc)) from exc
 
     def progress_log(self, task_id):
         return self._q.progress_log(task_id)
@@ -780,13 +820,17 @@ def test_exact_gone_releasing_body_frees_process_capacity(
     q, client, session_handle, worktree, verdict_kwarg
 ):
     first = q.create("releasing")
+    if worktree:
+        client.attachments = lambda _task: [{
+            "session_id": session_handle, "worktree_id": worktree, "machine": "peer-host",
+        }]
     reservation, _ = q.reserve_spawn(first.id)
     q.record_spawn(
         reservation.key,
         session_handle=session_handle,
         worktree=worktree,
     )
-    q.request_spawn_release(reservation.key, disposition="failed")
+    q.request_spawn_release(reservation.key, disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,)
     q.create("runnable")
     spawn = _ok_spawn()
     sup = Supervisor(
@@ -881,7 +925,7 @@ def test_suspended_local_headless_body_is_cooled(q, client):
     task = q.create("dormant review", labels=["review"])
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:bridge-session-1"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:bridge-session-1"
     )
     q.claim_one("headless-owner", task_id=task.id)
     q.start(task.id, "headless-owner")
@@ -907,7 +951,7 @@ def test_cli_suspensions_do_not_consume_headless_cooling_budget(q, client):
         task = q.create(f"cli dormant {index}", labels=["review"])
         reservation, _ = q.reserve_spawn(task.id)
         q.record_spawn(
-            reservation.key,
+            reservation.key, startup_complete=True, startup_revision=1,
             session_handle=f"cli-session-{index}",
             worktree=f"wt-{index}",
         )
@@ -917,7 +961,7 @@ def test_cli_suspensions_do_not_consume_headless_cooling_budget(q, client):
     headless = q.create("headless dormant", labels=["review"])
     reservation, _ = q.reserve_spawn(headless.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:headless-session"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:headless-session"
     )
     q.claim_one("headless-owner", task_id=headless.id)
     q.start(headless.id, "headless-owner")
@@ -940,7 +984,7 @@ def test_blocking_card_cools_body_and_frees_process_capacity(q, client):
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:blocked-session"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:blocked-session"
     )
     q.claim_one("headless-owner", task_id=blocked.id)
     q.start(blocked.id, "headless-owner")
@@ -972,7 +1016,7 @@ def test_stopped_cold_body_does_not_consume_capacity_after_restart(q, client):
     blocked = q.create("waiting", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:stopped-session",
     )
     q.claim_one("headless-owner", task_id=blocked.id)
@@ -998,7 +1042,7 @@ def test_cold_steer_resumes_existing_acp_session(q, client):
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:blocked-session"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:blocked-session"
     )
     q.claim_one("headless-owner", task_id=blocked.id)
     q.start(blocked.id, "headless-owner")
@@ -1048,7 +1092,7 @@ def test_cold_resume_missing_worktree_preserves_identity_until_cleanup(
     )
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:blocked-session",
         worktree="removed-review-worktree",
     )
@@ -1113,7 +1157,7 @@ def test_cold_resume_preserves_unknown_or_present_worktree(
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:blocked-session"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:blocked-session"
     )
     q.claim_one("headless-owner", task_id=blocked.id)
     q.start(blocked.id, "headless-owner")
@@ -1145,7 +1189,7 @@ def test_cold_resume_preserves_worktree_on_stat_error(q, client, monkeypatch):
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:blocked-session"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:blocked-session"
     )
     q.claim_one("headless-owner", task_id=blocked.id)
     q.start(blocked.id, "headless-owner")
@@ -1182,7 +1226,7 @@ def test_cold_resume_missing_worktree_release_failure_backs_off(
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:blocked-session"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:blocked-session"
     )
     q.claim_one("headless-owner", task_id=blocked.id)
     q.start(blocked.id, "headless-owner")
@@ -1241,7 +1285,7 @@ def test_recover_stranded_cold_reservation_releases_confirmed_gone_body(q, clien
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:blocked-session"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:blocked-session"
     )
     q.record_cold(reservation.key)
     assert q.get(blocked.id).status == Status.QUEUED
@@ -1271,7 +1315,7 @@ def test_recover_stranded_cold_reservation_ignores_unconfirmed_liveness(q, clien
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:blocked-session"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:blocked-session"
     )
     q.record_cold(reservation.key)
 
@@ -1295,7 +1339,7 @@ def test_recover_stranded_cold_reservation_ignores_still_suspended_tasks(q, clie
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:blocked-session"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:blocked-session"
     )
     q.claim_one("headless-owner", task_id=blocked.id)
     q.start(blocked.id, "headless-owner")
@@ -1319,7 +1363,7 @@ def test_recover_stranded_cold_reservation_ignores_terminal_tasks(q, client):
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:blocked-session"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:blocked-session"
     )
     q.record_cold(reservation.key)
     q.claim_one("headless-owner-2", task_id=blocked.id)
@@ -1368,7 +1412,7 @@ def test_recover_stranded_cold_reservation_never_counts_toward_dead_letter(
         ):
             reservation, _ = q.reserve_spawn(blocked.id)
         q.record_spawn(
-            reservation.key, session_handle=f"local-body:{reservation.key}"
+            reservation.key, startup_complete=True, startup_revision=1, session_handle=f"local-body:{reservation.key}"
         )
         q.record_cold(reservation.key)
         assert sup.recover_stranded_cold_reservations() == 1
@@ -1479,7 +1523,7 @@ def test_reconcile_settles_reservation_once_task_is_confirmed(q, client):
     introduced)."""
     t = q.create("work")
     reservation, _ = q.reserve_spawn(t.id)
-    q.record_spawn(reservation.key, session_handle="local-body:sess")
+    q.record_spawn(reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:sess")
     q.claim_one("owner", task_id=t.id)
     q.start(t.id, "owner")
     q.complete(t.id, "owner", result_ref="done")
@@ -1505,7 +1549,7 @@ def test_reconcile_settles_abandoned_cold_reservation(q, client):
     after liveness-cap exhaustion abandons its task."""
     t = q.create("work")
     stale_reservation, _ = q.reserve_spawn(t.id)
-    q.record_spawn(stale_reservation.key)
+    q.record_spawn(stale_reservation.key, startup_complete=True, startup_revision=1, session_handle="retained-session")
     q.record_cold(stale_reservation.key)
 
     q.abandon(t.id, permitted=True, reason="test")
@@ -1531,7 +1575,7 @@ def test_pool_reservations_transient_transport_error_does_not_abort_cycle(
     """
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
-    q.record_spawn(reservation.key, session_handle="local-body:blocked-session")
+    q.record_spawn(reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:blocked-session")
     q.claim_one("headless-owner", task_id=blocked.id)
     q.start(blocked.id, "headless-owner")
     q.suspend(blocked.id, "headless-owner", reason="turn ended")
@@ -1626,7 +1670,7 @@ def test_release_requested_legacy_missing_worktree_recovers_from_held_conclusion
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:blocked-session",
         worktree="removed-review-worktree",
     )
@@ -1676,7 +1720,7 @@ def test_release_requested_rechecks_target_after_live_body_teardown(
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:blocked-session",
         worktree="recreated-worktree",
     )
@@ -1719,7 +1763,7 @@ def test_cold_resume_does_not_start_process_before_reservation_transition(
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:blocked-session"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:blocked-session"
     )
     q.claim_one("headless-owner", task_id=blocked.id)
     q.start(blocked.id, "headless-owner")
@@ -1750,11 +1794,11 @@ def test_cold_resume_does_not_start_process_before_reservation_transition(
     assert q.get(blocked.id).status == Status.SUSPENDED
 
 
-def test_cold_resume_task_failure_is_recoolable(q, client, monkeypatch):
+def test_cold_resume_task_failure_retains_unresolved_finalization(q, client, monkeypatch):
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:blocked-session"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:blocked-session"
     )
     q.claim_one("headless-owner", task_id=blocked.id)
     q.start(blocked.id, "headless-owner")
@@ -1783,17 +1827,19 @@ def test_cold_resume_task_failure_is_recoolable(q, client, monkeypatch):
 
     assert sup.release_resumed_cold_tasks() == 0
     assert q.get_reservation(reservation.key).state == SpawnState.SPAWNED
+    assert q.get_reservation(reservation.key).startup_complete is False
     assert q.get(blocked.id).status == Status.SUSPENDED
-    assert sup.cool_dormant_bodies() == 1
-    assert stopped == ["blocked-session"]
-    assert q.get_reservation(reservation.key).state == SpawnState.COLD
+    assert sup.cool_dormant_bodies() == 0
+    assert stopped == []
+    assert len(sup._active_reservations()) == 1
+    assert q.get_reservation(reservation.key).state == SpawnState.SPAWNED
 
 
-def test_cold_resume_process_exception_is_recoolable(q, client):
+def test_cold_resume_process_exception_retains_unresolved_startup(q, client):
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:blocked-session"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:blocked-session"
     )
     q.claim_one("headless-owner", task_id=blocked.id)
     q.start(blocked.id, "headless-owner")
@@ -1818,16 +1864,17 @@ def test_cold_resume_process_exception_is_recoolable(q, client):
     assert sup.release_resumed_cold_tasks() == 0
     assert q.get_reservation(reservation.key).state == SpawnState.SPAWNED
     assert q.get(blocked.id).status == Status.SUSPENDED
-    assert sup.cool_dormant_bodies() == 1
-    assert stopped == ["blocked-session"]
-    assert q.get_reservation(reservation.key).state == SpawnState.COLD
+    assert sup.cool_dormant_bodies() == 0
+    assert stopped == []
+    assert q.get_reservation(reservation.key).state == SpawnState.SPAWNED
+    assert q.get_reservation(reservation.key).startup_complete is False
 
 
 def test_cold_resume_process_failure_backs_off_before_retry(q, client):
     blocked = q.create("needs operator", labels=["review"])
     reservation, _ = q.reserve_spawn(blocked.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:blocked-session"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:blocked-session"
     )
     q.claim_one("headless-owner", task_id=blocked.id)
     q.start(blocked.id, "headless-owner")
@@ -1851,11 +1898,11 @@ def test_cold_resume_process_failure_backs_off_before_retry(q, client):
     )
 
     assert sup.release_resumed_cold_tasks(now=1000) == 0
-    assert sup.cool_dormant_bodies() == 1
+    assert sup.cool_dormant_bodies() == 0
     assert sup.release_resumed_cold_tasks(now=1299) == 0
     assert attempts == ["blocked-session"]
     assert sup.release_resumed_cold_tasks(now=1300) == 0
-    assert attempts == ["blocked-session", "blocked-session"]
+    assert attempts == ["blocked-session"]
 
 
 def test_idle_confirm_nudge_asks_whether_the_task_is_done(monkeypatch):
@@ -2122,7 +2169,7 @@ def test_supervisor_settles_suspended_task_completed_by_resolver(q, client):
     task = q.create("wait for condition")
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key, session_handle="session-1", worktree="wt-1"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="session-1", worktree="wt-1"
     )
     q.claim_one("host-a/wt-1", task_id=task.id)
     q.start(task.id, "host-a/wt-1")
@@ -2142,7 +2189,7 @@ def test_supervisor_settles_terminal_cold_reservation(q, client):
     task = q.create("wait for condition", labels=["review"])
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key, session_handle="local-body:session-1"
+        reservation.key, startup_complete=True, startup_revision=1, session_handle="local-body:session-1"
     )
     q.claim_one("headless-owner", task_id=task.id)
     q.start(task.id, "headless-owner")
@@ -2176,7 +2223,7 @@ def test_terminal_conclusion_uses_exact_reservation_identity(q, client):
     task = q.create("review", labels=["review"])
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="session-exact",
         worktree="worktree-exact",
     )
@@ -2219,7 +2266,7 @@ def test_terminal_refresh_does_not_replace_exact_reserved_session(q, client):
     task = q.create("review", labels=["review"])
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="original-session",
         worktree="worktree-exact",
     )
@@ -2256,7 +2303,7 @@ def test_terminal_refresh_uses_durable_owner_session_for_mux_placeholder(
     task = q.create("review", labels=["review"])
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="wt-worktree-exact",
         worktree="worktree-exact",
     )
@@ -2294,7 +2341,7 @@ def test_terminal_refresh_preserves_headless_session_type_before_end(q, client):
     )
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="wt-worktree-exact",
         worktree="worktree-exact",
     )
@@ -2338,7 +2385,7 @@ def test_terminal_conclusion_is_opt_in_only(q, client):
     task = q.create("ordinary", labels=["ordinary"])
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="session-exact",
         worktree="worktree-exact",
     )
@@ -2383,7 +2430,7 @@ def test_terminal_conclusion_failure_does_not_block_settlement(q, client):
     task = q.create("review", labels=["review"])
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="session-exact",
         worktree="worktree-exact",
     )
@@ -2409,7 +2456,7 @@ def test_terminal_conclusion_reconcile_is_idempotent(q, client):
     task = q.create("review", labels=["review"])
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="session-exact",
         worktree="worktree-exact",
     )
@@ -2439,7 +2486,7 @@ def test_live_terminal_conclusion_retries_after_settlement(q, client):
     task = q.create("review", labels=["review"])
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="session-exact",
         worktree="worktree-exact",
     )
@@ -2494,7 +2541,7 @@ def test_nonexclusive_disposable_idle_body_ends_before_conclusion(q, client):
     )
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:session-exact",
         worktree="worktree-exact",
     )
@@ -2539,7 +2586,7 @@ def test_idle_disposable_end_failure_keeps_exclusive_fence(q, client):
     )
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:session-exact",
         worktree="worktree-exact",
     )
@@ -2578,7 +2625,7 @@ def test_failed_disposable_body_ends_reach_durable_held_bound(q, client):
     )
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:session-exact",
         worktree="worktree-exact",
     )
@@ -2629,7 +2676,7 @@ def test_successful_disposable_body_end_runs_conclusion(q, client):
     )
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:session-exact",
         worktree="worktree-exact",
     )
@@ -2667,7 +2714,7 @@ def test_end_failure_counts_after_legacy_pending_attempts(q, client):
     )
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:session-exact",
         worktree="worktree-exact",
     )
@@ -2823,7 +2870,7 @@ def test_terminal_conclusion_retries_are_bounded(q, client):
     task = q.create("review", labels=["review"])
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="session-exact",
         worktree="worktree-exact",
     )
@@ -3150,7 +3197,7 @@ def test_gone_terminal_retry_preserves_terminal_cleanup_envelope(q, client):
     )
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:brg-disposable",
         worktree="worktree-disposable",
     )
@@ -4789,7 +4836,7 @@ def test_reconcile_settles_terminal_script_body_and_cleans_task_file(q, client, 
         + str(task_file).replace("\\", "\\\\")
         + '","worker_id":"script-1"}'
     ).join(("script-body:", ""))
-    q.record_spawn(reservation.key, session_handle=handle, worktree=None)
+    q.record_spawn(reservation.key, startup_complete=True, startup_revision=1, session_handle=handle, worktree=None)
     q.claim_one("script-1", repo=TEST_REPO, task_id=task.id)
     q.start(task.id, "script-1")
     q.complete(task.id, "script-1")
@@ -4811,7 +4858,7 @@ def test_superseded_task_does_not_release_exclusive_live_reservation(
     old = q.create("old", exclusive_key="review:repo:42")
     reservation, _ = q.reserve_spawn(old.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:session-old",
         worktree="wt-review",
     )
@@ -4843,7 +4890,7 @@ def test_confirmed_gone_superseded_body_releases_exclusive_key(q, client):
     old = q.create("old", exclusive_key="review:repo:42")
     reservation, _ = q.reserve_spawn(old.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:session-old",
         worktree="wt-review",
     )
@@ -4872,7 +4919,7 @@ def test_explicit_end_releases_live_exclusive_body(q, client):
     task = q.create("work", exclusive_key="review:repo:42")
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:session-live",
         worktree="wt-review",
     )
@@ -4901,6 +4948,7 @@ def test_yielded_fleet_body_is_not_replaced_before_safe_teardown(
     q.record_spawn(
         reservation.key,
         session_handle="fleet-body:worker-host:session-live",
+        startup_complete=True, startup_revision=reservation.startup_revision,
     )
     q.claim_one("fleet-owner", task_id=task.id)
     q.start(task.id, "fleet-owner")
@@ -4930,7 +4978,7 @@ def test_yielded_fleet_body_respawns_only_after_explicit_end(q, client):
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
         reservation.key,
-        session_handle="fleet-body:worker-host:session-live",
+        session_handle="fleet-body:worker-host:session-live", startup_complete=True, startup_revision=1,
     )
     q.claim_one("fleet-owner", task_id=task.id)
     q.start(task.id, "fleet-owner")
@@ -4967,7 +5015,7 @@ def test_yielded_created_worktree_is_concluded_before_respawn(q, client):
     q.record_spawn(
         reservation.key,
         session_handle="local-body:bridge-1",
-        worktree="wt-created",
+        worktree="wt-created", startup_complete=True, startup_revision=1,
     )
     q.claim_one("host-a/wt-created", task_id=task.id)
     q.start(
@@ -5017,7 +5065,7 @@ def test_yielded_attempt_checkpoints_identity_before_bridge_end_and_restart(q, c
         creating_host="host-a", driver="agent-dispatch",
     )
     q.record_spawn(
-        reservation.key, session_handle="local-body:bridge-1", worktree="wt-created",
+        reservation.key, session_handle="local-body:bridge-1", worktree="wt-created", startup_complete=True, startup_revision=1,
     )
     q.claim_one("host-a/wt-created", task_id=task.id)
     q.start(task.id, "host-a/wt-created", owner_session_id="session-exact")
@@ -5085,6 +5133,7 @@ def test_native_released_attempt_identity_survives_process_exit(tmp_path):
             q.record_spawn(
                 reservation.key, session_handle="local-body:bridge-1",
                 worktree="wt-created",
+                startup_complete=True, startup_revision=reservation.startup_revision,
             )
             q.claim_one("host-a/wt-created", task_id=task.id)
             q.start(task.id, "host-a/wt-created", owner_session_id="session-exact")
@@ -5168,7 +5217,7 @@ def test_failed_attempt_cleanup_retries_after_body_release(q, client):
     q.request_spawn_release(
         reservation.key,
         detail="launch failed",
-        disposition="failed",
+        disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,
     )
     spawn = _ok_spawn()
     first = Supervisor(
@@ -5177,6 +5226,7 @@ def test_failed_attempt_cleanup_retries_after_body_release(q, client):
         repo=TEST_REPO,
         machine="host-a",
         verdict_fn=lambda *_args: "gone",
+        worktree_directory_present_fn=lambda *_args: False,
         attempt_conclusion_fn=lambda *_args: {
             "action": "failed",
             "reason": "lifecycle lock busy",
@@ -5251,7 +5301,7 @@ def test_retires_unleased_worktree_reservation_when_directory_confirmed_absent(
     q.request_spawn_release(
         reservation.key,
         detail="worktree preparation failed",
-        disposition="failed",
+        disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,
     )
     assert q.get(task.id).owner is None  # never claimed -> no owner_session_id
     probe_calls = []
@@ -5299,7 +5349,7 @@ def test_probes_the_spawn_fns_own_allocation_project_when_overridden(q, client):
     q.request_spawn_release(
         reservation.key,
         detail="worktree preparation failed",
-        disposition="failed",
+        disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,
     )
     spawn = _ok_spawn()
     spawn.allocation_project_for = lambda _task: "routed-project"
@@ -5348,12 +5398,12 @@ def test_missing_allocation_project_degrades_only_that_reservation(q, client):
     q.request_spawn_release(
         reservation.key,
         detail="worktree preparation failed",
-        disposition="failed",
+        disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,
     )
     q.request_spawn_release(
         other_reservation.key,
         detail="worktree preparation failed",
-        disposition="failed",
+        disposition="failed", finished_startup_revision=q.get_reservation(other_reservation.key).startup_revision,
     )
 
     def raising_project_selector(task_dict):
@@ -5683,7 +5733,7 @@ def test_confirms_absence_with_case_insensitive_creating_host_match(q, client):
     q.request_spawn_release(
         reservation.key,
         detail="worktree preparation failed",
-        disposition="failed",
+        disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,
     )
     sup = Supervisor(
         client,
@@ -5718,7 +5768,7 @@ def test_held_attempt_cleanup_remains_visible_without_fencing_replacement(
     q.request_spawn_release(
         reservation.key,
         detail="launch failed",
-        disposition="failed",
+        disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,
     )
     conclusions = []
     spawn = _ok_spawn()
@@ -5728,6 +5778,7 @@ def test_held_attempt_cleanup_remains_visible_without_fencing_replacement(
         repo=TEST_REPO,
         machine="host-a",
         verdict_fn=lambda *_args: "gone",
+        worktree_directory_present_fn=lambda *_args: False,
         attempt_conclusion_fn=lambda *args: conclusions.append(args) or {
             "action": "preserved",
             "reason": "dirty-worktree",
@@ -5772,7 +5823,7 @@ def test_pending_cleanup_fences_successor_before_claim(q, client):
     )
     q.request_spawn_release(
         old_reservation.key,
-        disposition="failed",
+        disposition="failed", finished_startup_revision=q.get_reservation(old_reservation.key).startup_revision,
     )
     q.retire_spawn(
         old_reservation.key,
@@ -5859,7 +5910,7 @@ def test_cleanup_retry_does_not_touch_settled_successor_worktree(q, client):
         creating_host="host-a",
         driver="agent-dispatch",
     )
-    q.request_spawn_release(old_reservation.key, disposition="failed")
+    q.request_spawn_release(old_reservation.key, disposition="failed", finished_startup_revision=q.get_reservation(old_reservation.key).startup_revision,)
     q.retire_spawn(
         old_reservation.key,
         exact_absence=True,
@@ -5910,7 +5961,7 @@ def test_cleanup_retry_tracks_successor_inherited_worktree_after_replacement(
         creating_host="host-a",
         driver="agent-dispatch",
     )
-    q.request_spawn_release(old_reservation.key, disposition="failed")
+    q.request_spawn_release(old_reservation.key, disposition="failed", finished_startup_revision=q.get_reservation(old_reservation.key).startup_revision,)
     q.retire_spawn(
         old_reservation.key,
         exact_absence=True,
@@ -5998,7 +6049,7 @@ def test_absent_local_release_calls_idempotent_end(q, client):
     )
     q.request_spawn_release(
         reservation.key,
-        disposition="settled",
+        disposition="settled", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,
     )
     ended = []
     sup = Supervisor(
@@ -6021,7 +6072,7 @@ def test_absent_local_release_calls_idempotent_end(q, client):
 def test_retired_pending_without_worktree_claims_before_completion(q, client):
     task = q.create("work")
     reservation, _ = q.reserve_spawn(task.id)
-    q.request_spawn_release(reservation.key, disposition="failed")
+    q.request_spawn_release(reservation.key, disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,)
     q.retire_spawn(
         reservation.key,
         exact_absence=True,
@@ -6060,7 +6111,7 @@ def test_failed_absent_session_end_retries_after_exclusive_release(q, client):
     )
     q.request_spawn_release(
         reservation.key,
-        disposition="settled",
+        disposition="settled", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,
     )
     end_results = iter([False, True])
     ended = []
@@ -6119,7 +6170,7 @@ def test_retired_session_end_failure_backs_off_and_becomes_held(q, client):
         reservation.key,
         session_handle="local-body:session-stopped",
     )
-    q.request_spawn_release(reservation.key, disposition="settled")
+    q.request_spawn_release(reservation.key, disposition="settled", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,)
     ended = []
     sup = Supervisor(
         client,
@@ -6167,7 +6218,7 @@ def test_failing_session_end_allows_worktree_cleanup_immediately(q, client):
         session_handle="local-body:session-stopped",
         worktree="wt-created",
     )
-    q.request_spawn_release(reservation.key, disposition="failed")
+    q.request_spawn_release(reservation.key, disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,)
     ended = []
     conclusions = []
     sup = Supervisor(
@@ -6223,7 +6274,7 @@ def test_due_session_cleanup_runs_while_worktree_cleanup_is_backed_off(
         session_handle="local-body:session-stopped",
         worktree="wt-created",
     )
-    q.request_spawn_release(reservation.key, disposition="failed")
+    q.request_spawn_release(reservation.key, disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,)
     q.retire_spawn(
         reservation.key,
         exact_absence=True,
@@ -6271,6 +6322,9 @@ def test_due_session_cleanup_runs_while_worktree_cleanup_is_backed_off(
 
 
 def test_retired_worktree_cleanup_failure_backs_off_and_becomes_held(q, client):
+    client.attachments = lambda _task: [{
+        "session_id": "session-gone", "worktree_id": "wt-created", "machine": "host-a",
+    }]
     task = q.create("work")
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn_worktree(
@@ -6285,7 +6339,7 @@ def test_retired_worktree_cleanup_failure_backs_off_and_becomes_held(q, client):
         session_handle="session-gone",
         worktree="wt-created",
     )
-    q.request_spawn_release(reservation.key, disposition="failed")
+    q.request_spawn_release(reservation.key, disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,)
     conclusions = []
     sup = Supervisor(
         client,
@@ -6329,7 +6383,7 @@ def test_gone_body_retires_before_session_cleanup_uses_capacity(q, client):
         session_handle="local-body:session-stopped",
         worktree="wt-shared",
     )
-    q.request_spawn_release(reservation.key, disposition="failed")
+    q.request_spawn_release(reservation.key, disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,)
     replacement_task = q.create(
         "replacement",
         exclusive_key="stable:resource",
@@ -6375,7 +6429,7 @@ def test_gone_body_retires_before_worktree_cleanup(q, client):
         session_handle="local-body:session-stopped",
         worktree="wt-created",
     )
-    q.request_spawn_release(reservation.key, disposition="failed")
+    q.request_spawn_release(reservation.key, disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,)
     conclusions = []
 
     def conclude(*args):
@@ -6417,7 +6471,7 @@ def test_gone_fleet_body_retires_before_worktree_cleanup(q, client):
         session_handle="fleet-body:host-b:session-gone",
         worktree="wt-fleet",
     )
-    q.request_spawn_release(reservation.key, disposition="failed")
+    q.request_spawn_release(reservation.key, disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,)
     conclusions = []
 
     def conclude(*args):
@@ -6446,6 +6500,9 @@ def test_gone_fleet_body_retires_before_worktree_cleanup(q, client):
 
 
 def test_gone_worktree_body_retires_before_cleanup(q, client):
+    client.attachments = lambda _task: [{
+        "session_id": "session-gone", "worktree_id": "wt-gone", "machine": "host-a",
+    }]
     task = q.create("work", exclusive_key="stable:worktree")
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn_worktree(
@@ -6460,7 +6517,7 @@ def test_gone_worktree_body_retires_before_cleanup(q, client):
         session_handle="session-gone",
         worktree="wt-gone",
     )
-    q.request_spawn_release(reservation.key, disposition="failed")
+    q.request_spawn_release(reservation.key, disposition="failed", finished_startup_revision=q.get_reservation(reservation.key).startup_revision,)
     conclusions = []
 
     def conclude(*args):
@@ -6498,7 +6555,7 @@ def test_terminal_created_worktree_uses_attempt_cleanup_without_label(
         driver="agent-dispatch",
     )
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:bridge-1",
         worktree="wt-created",
     )
@@ -6538,7 +6595,7 @@ def test_yielded_targeted_worktree_is_preserved_without_conclusion(q, client):
     q.record_spawn(
         reservation.key,
         session_handle="local-body:bridge-1",
-        worktree="wt-target",
+        worktree="wt-target", startup_complete=True, startup_revision=1,
     )
     q.claim_one("host-a/wt-target", task_id=task.id)
     q.start(task.id, "host-a/wt-target")
@@ -6605,7 +6662,7 @@ def test_completed_idle_exclusive_body_is_carried_to_next_episode(q, client):
     task = q.create("old", exclusive_key="review:repo:42")
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="local-body:session-idle",
         worktree="wt-review",
     )
@@ -6638,7 +6695,7 @@ def test_completed_live_exclusive_fleet_body_is_ended_before_release(
     task = q.create("old", exclusive_key="review:repo:42")
     reservation, _ = q.reserve_spawn(task.id)
     q.record_spawn(
-        reservation.key,
+        reservation.key, startup_complete=True, startup_revision=1,
         session_handle="fleet-body:worker-host:session-live",
     )
     q.claim_one("fleet-owner", task_id=task.id)
@@ -7247,7 +7304,10 @@ def test_redrive_live_spawned_worker_that_never_claimed(q, client):
     task = q.create("work")
     reservation, acquired = q.reserve_spawn(task.id, reserved_by="supervisor")
     assert acquired is True
-    q.record_spawn(reservation.key, session_handle="wt-wt-1", worktree=None)
+    q.record_spawn(
+        reservation.key, session_handle="wt-wt-1", worktree=None,
+        startup_complete=True, startup_revision=reservation.startup_revision,
+    )
     redriven = []
     spawn = _ok_spawn({"session": "new", "worktree": "new-wt"})
     sup = Supervisor(
@@ -7302,7 +7362,7 @@ def test_redrive_is_once_per_supervisor_process(q, client):
     task = q.create("work")
     reservation, acquired = q.reserve_spawn(task.id, reserved_by="supervisor")
     assert acquired is True
-    q.record_spawn(reservation.key, session_handle="s", worktree="wt-1")
+    q.record_spawn(reservation.key, startup_complete=True, startup_revision=1, session_handle="s", worktree="wt-1")
     redriven = []
     sup = Supervisor(
         client,

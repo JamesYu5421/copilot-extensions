@@ -46,6 +46,8 @@ from collections.abc import Callable
 from .queue_allocation_revisions import revision_disposed
 from .queue_records import ExclusiveKeyBusyError, SpawnReservation, SpawnState, Status, TaskError
 from .queue_spawn_deferral import SpawnDeferralMixin
+from .queue_spawn_completion import SpawnCompletionMixin
+from .queue_spawn_cooling import require_no_cooling, validate_cooling_publication
 from .queue_execution_handoff import require_execution_admission
 from .queue_execution_custody import require_execution_send_reconciliation
 
@@ -106,7 +108,7 @@ def _newer_worktree_reservation(
     ).fetchone()
 
 
-class SpawnReservationMixin(SpawnDeferralMixin):
+class SpawnReservationMixin(SpawnDeferralMixin, SpawnCompletionMixin):
     """Spawn-reservation lifecycle methods for :class:`TaskQueue`."""
 
     # -- spawn reservations --------------------------------------------------
@@ -444,6 +446,9 @@ class SpawnReservationMixin(SpawnDeferralMixin):
         allowed_from: frozenset[str],
         now: float | None = None,
         session_handle: str | None = None,
+        startup_complete: bool | None = None,
+        expected_startup_revision: int | None = None,
+        cooling_token: str | None = None,
         worktree: str | None = None,
         detail: str | None = None,
         conclusion_state: str | None = None,
@@ -451,6 +456,7 @@ class SpawnReservationMixin(SpawnDeferralMixin):
         claim_token: str | None = None,
         release_requested: bool = False,
         exclusive_released: bool | None = None,
+        preserve_releasing: bool = False,
         guard: Callable[[sqlite3.Row], None] | None = None,
     ) -> SpawnReservation:
         ts = self._now(now)
@@ -460,18 +466,40 @@ class SpawnReservationMixin(SpawnDeferralMixin):
             if row is None:
                 conn.execute("COMMIT")
                 raise TaskError(f"no such reservation: {key}")
+            validate_cooling_publication(row, cooling_token, expected_startup_revision)
             if row["state"] not in allowed_from:
                 conn.execute("COMMIT")
                 raise TaskError(
                     f"reservation {key} is {row['state']!r}, not one of "
                     f"{sorted(allowed_from)} (cannot -> {to_state!r})"
                 )
+            if (
+                expected_startup_revision is not None
+                and row["startup_revision"] != expected_startup_revision
+            ):
+                raise TaskError("startup revision changed before publication")
+            if row["startup_fenced"] and (
+                startup_complete is False
+                or to_state == SpawnState.RESERVING
+                or to_state == SpawnState.SPAWNED and row["state"] == SpawnState.COLD
+                or session_handle is not None and session_handle != row["session_handle"]
+                or worktree is not None and worktree != row["worktree"]
+            ):
+                raise TaskError("terminal startup is fenced")
+            resuming_cold = row["state"] == SpawnState.COLD and to_state == SpawnState.SPAWNED
+            if (
+                startup_complete is False or to_state == SpawnState.COLD or resuming_cold
+            ) and not row["startup_complete"]:
+                raise TaskError("previous startup remains incomplete")
             if guard is not None:
                 try:
                     guard(row)
                 except TaskError:
                     conn.execute("COMMIT")
                     raise
+            if preserve_releasing and row["state"] == SpawnState.RELEASING:
+                to_state = SpawnState.RELEASING
+                exclusive_released = None
             if to_state == SpawnState.DEFERRED and row["release_requested"]:
                 conn.execute("COMMIT")
                 raise TaskError(f"reservation {key} has pending release (cannot defer)")
@@ -521,10 +549,23 @@ class SpawnReservationMixin(SpawnDeferralMixin):
                     raise TaskError(
                         f"worktree {worktree!r} has in-flight cleanup {cleanup_claim['key']}"
                     )
+            changed_handle = session_handle is not None and session_handle != row["session_handle"]
+            completion = row["startup_complete"]
+            revision = row["startup_revision"]
+            if startup_complete is not None:
+                completion = int(startup_complete)
+            elif to_state == SpawnState.RESERVING or resuming_cold or changed_handle:
+                completion = 0
+            if startup_complete is False or startup_complete is None and (
+                resuming_cold or changed_handle and row["session_handle"] is not None
+            ):
+                revision += 1
             try:
                 conn.execute(
                     "UPDATE spawn_reservations SET state = ?, updated_at = ?, "
                     "session_handle = CASE WHEN ? IS NOT NULL THEN ? ELSE session_handle END, "
+                    "startup_complete = ?, startup_revision = ?, "
+                    "cooling_token = CASE WHEN ? IS NOT NULL THEN NULL ELSE cooling_token END, "
                     "worktree = CASE WHEN ? IS NOT NULL THEN ? ELSE worktree END, "
                     "inherited_worktree = CASE "
                     "WHEN inherited_worktree IS NOT NULL THEN inherited_worktree "
@@ -541,7 +582,10 @@ class SpawnReservationMixin(SpawnDeferralMixin):
                     "exclusive_released = COALESCE(?, exclusive_released) "
                     "WHERE key = ?",
                     (
-                        to_state, ts, session_handle, session_handle, worktree, worktree,
+                        to_state, ts, session_handle, session_handle,
+                        completion, revision,
+                        cooling_token,
+                        worktree, worktree,
                         detail, conclusion_state, conclusion_state, conclusion_detail,
                         conclusion_detail, claim_token, 1 if release_requested else 0,
                         None if exclusive_released is None else int(exclusive_released), key,
@@ -564,47 +608,6 @@ class SpawnReservationMixin(SpawnDeferralMixin):
             row = conn.execute("SELECT * FROM spawn_reservations WHERE key = ?", (key,)).fetchone()
             conn.execute("COMMIT")
         return SpawnReservation._from_row(row)
-
-    def record_staging_spawn(self, key: str, session_handle: str) -> SpawnReservation:
-        """Persist an idle body before admission without making it claimable."""
-        return self._update_reservation(
-            key, to_state=SpawnState.RESERVING,
-            allowed_from=frozenset({SpawnState.RESERVING}),
-            session_handle=session_handle,
-        )
-
-    def record_spawn(
-        self,
-        key: str,
-        *,
-        session_handle: str | None = None,
-        worktree: str | None = None,
-        now: float | None = None,
-        authority_expected: tuple | None = None,
-    ) -> SpawnReservation:
-        """Mark a reservation ``spawned`` and record its embody session handle.
-
-        Called right after a successful ``agent-worktrees embody`` launch. The
-        handle is what lets a supervisor restart reconcile (join the reservation
-        to the live session) instead of re-spawning.
-        """
-        def authority_guard(row):
-            if authority_expected is not None:
-                from .ci_repair_spawn import authority_snapshot
-                with self._connect() as probe:
-                    task = self._fetch(probe, row["task_id"])
-                    if authority_snapshot(probe, task) != authority_expected:
-                        raise TaskError("CI repair authority changed before spawn publication")
-        return self._update_reservation(
-            key,
-            to_state=SpawnState.SPAWNED,
-            allowed_from=frozenset({SpawnState.RESERVING, SpawnState.SPAWNED, SpawnState.COLD}),
-            session_handle=session_handle,
-            worktree=worktree,
-            exclusive_released=False,
-            now=now,
-            guard=authority_guard,
-        )
 
     def record_spawn_worktree(
         self,
@@ -720,22 +723,6 @@ class SpawnReservationMixin(SpawnDeferralMixin):
             conn.execute("COMMIT")
         return SpawnReservation._from_row(updated)
 
-    def record_cold(
-        self, key: str, *, release_exclusive: bool = False, now: float | None = None
-    ) -> SpawnReservation:
-        """Mark a spawned headless body intentionally stopped and dormant.
-
-        ``release_exclusive`` drops this reservation's ``exclusive_key`` hold
-        while cold, so a sibling may spawn; ``record_spawn`` reacquires it.
-        """
-        return self._update_reservation(
-            key,
-            to_state=SpawnState.COLD,
-            allowed_from=frozenset({SpawnState.SPAWNED, SpawnState.COLD}),
-            exclusive_released=release_exclusive or None,
-            now=now,
-        )
-
     def fail_spawn(
         self,
         key: str,
@@ -842,6 +829,9 @@ class SpawnReservationMixin(SpawnDeferralMixin):
             if row["state"] != SpawnState.RELEASING:
                 conn.execute("COMMIT")
                 raise TaskError(f"reservation {key} is {row['state']!r}, not releasing")
+            require_no_cooling(row)
+            if not row["startup_complete"] and not row["startup_fenced"]:
+                raise TaskError("spawn retirement requires completed startup; original caller remains unresolved")
             to_state = (
                 SpawnState.SETTLED
                 if row["release_disposition"] == "settled"
@@ -890,11 +880,16 @@ class SpawnReservationMixin(SpawnDeferralMixin):
         disposition: str = "failed",
         session_handle: str | None = None,
         worktree: str | None = None,
+        finished_startup_revision: int | None = None,
         now: float | None = None,
     ) -> SpawnReservation:
         """Fence an attempt and atomically retain any failed body identity."""
         if disposition not in {"failed", "settled"}:
             raise TaskError(f"invalid spawn release disposition: {disposition!r}")
+        if finished_startup_revision is not None and (
+            type(finished_startup_revision) is not int or finished_startup_revision < 1
+        ):
+            raise TaskError("finished startup requires its current revision")
         ts = self._now(now)
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -902,6 +897,7 @@ class SpawnReservationMixin(SpawnDeferralMixin):
             if row is None:
                 conn.execute("ROLLBACK")
                 raise TaskError(f"no such reservation: {key}")
+            require_no_cooling(row)
             if row["state"] not in SpawnState.ACTIVE:
                 conn.execute("ROLLBACK")
                 raise TaskError(
@@ -912,6 +908,14 @@ class SpawnReservationMixin(SpawnDeferralMixin):
                 raise TaskError(
                     f"reservation {key} worktree is {row['worktree']!r}, "
                     f"not {worktree!r}"
+                )
+            if finished_startup_revision is not None:
+                if row["startup_revision"] != finished_startup_revision:
+                    raise TaskError("startup revision changed before failed startup closure")
+                # The original caller has returned definitively. Fence future
+                # startup without pretending its failed launch was successful.
+                conn.execute(
+                    "UPDATE spawn_reservations SET startup_fenced = 1 WHERE key = ?", (key,),
                 )
             if row["state"] == SpawnState.RELEASING:
                 release_disposition = (
