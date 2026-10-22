@@ -287,24 +287,48 @@ def test_enqueue_after_empty_scan_before_release_cannot_lose_wakeup(area, monkey
     assert workers[0].wait(timeout=10) == 0
 
 
-def test_failed_boot_admission_never_acknowledges_startup(area):
+@pytest.mark.parametrize("failure", [
+    "boot", "executor",
+    pytest.param("ignored-sigchld", marks=pytest.mark.skipif(os.name == "nt", reason="POSIX signal")),
+    pytest.param("custom-sigchld", marks=pytest.mark.skipif(os.name == "nt", reason="POSIX signal")),
+    pytest.param("unreaped", marks=pytest.mark.skipif(
+        not sys.platform.startswith("linux"), reason="Linux waitid wrapper prerequisite",
+    )),
+])
+def test_failed_worker_admission_never_acknowledges_startup(area, failure):
     root = area / "state"
     request = enqueue(RequestSpec("fixture"), runner=runner(area), root=root)
+    reason = "boot_identity_unavailable" if failure == "boot" else "executor_unavailable"
+    setup = {
+        "boot": (
+            "from update_driver import boot; "
+            "boot.kernel_boot_identity=lambda: (_ for _ in ()).throw(OSError('synthetic')); "
+        ),
+        "executor": (
+            "from agent_procutil import owned_process; "
+            "owned_process.require_caller_owned_support="
+            "lambda: (_ for _ in ()).throw(OSError('synthetic')); "
+        ),
+        "ignored-sigchld": "import signal; signal.signal(signal.SIGCHLD,signal.SIG_IGN); ",
+        "custom-sigchld": "import signal; signal.signal(signal.SIGCHLD,lambda *_args: None); ",
+        "unreaped": "import os; delattr(os,'WNOWAIT'); ",
+    }[failure]
     script = (
-        "import sys; from pathlib import Path; from update_driver import boot,drain; "
-        "boot.kernel_boot_identity=lambda: (_ for _ in ()).throw(OSError('synthetic')); "
+        "import sys; from pathlib import Path; from update_driver import drain; "
+        + setup +
         "drain(root=Path(sys.argv[1]))"
     )
-    with pytest.raises(SpawnError, match="worker admission failed: boot_identity_unavailable"):
+    with pytest.raises(SpawnError, match=f"worker admission failed: {reason}"):
         ensure_worker(
             (sys.executable, "-c", script, str(root)), root=root,
             env=environment(), startup_timeout=5,
         )
     result = status(request.id, root=root)
     assert result.state == "pending" and result.started_at is None and result.boot_id is None
-    assert result.error == "worker admission failed: boot_identity_unavailable:OSError"
+    kind = "OSError" if failure in ("boot", "executor") else "RuntimeError"
+    assert result.error == f"worker admission failed: {reason}:{kind}"
     assert not list(root.glob(".worker-started-*"))
-    with pytest.raises(SpawnError, match="boot_identity_unavailable"):
+    with pytest.raises(SpawnError, match=reason):
         wait(request.id, root=root)
 
 

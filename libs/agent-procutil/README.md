@@ -197,6 +197,15 @@ not application-level authorization.
 An ordinary synchronous caller that also needs caller-death cleanup uses the
 explicit opt-in API:
 
+Durable adapters may call `owned_process.require_caller_owned_support()` before
+claiming effects to validate native observation. On Linux, pidfds come from
+`os.pidfd_open` when provided, or the native libc entry point when a Python
+build omits that optional wrapper. Both paths retain the same kernel descriptor,
+identity check and group-exit observation; neither falls back to numeric-PID
+liveness. Missing native support remains an explicit failure before spawning.
+Admission uses the executor's same unreaped-child and default-`SIGCHLD`
+prerequisites, so an incompatible signal disposition also refuses before claim.
+
 ```python
 from agent_procutil.owned_process import run_caller_owned
 
