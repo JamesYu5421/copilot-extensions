@@ -1268,6 +1268,17 @@ propagate to the caller. `--no-manager`, read-only `--auth-report`, update help,
 request inspection, interrupted-request settlement, and non-update commands
 keep their existing dispatch behavior. Inspecting a durable request never
 triggers fresh installation.
+The Windows bootstrap waits for its constructed Manager observer in a
+windowless, caller-contained child and returns that child's exit status.
+It explicitly forwards the caller's standard streams, preserving interactive
+console input and redirected progress/diagnostics.
+If any forwarded stream needs the caller's existing console, that association
+is retained, including mixed redirection and console-only stderr. Fully
+redirected/windowless callers never allocate a new console.
+Console association is determined from the native handle with `GetConsoleMode`,
+not `isatty()`, which can also classify the Windows `NUL` device as a terminal.
+It does not use Windows CRT process replacement as a completion signal;
+POSIX retains process replacement.
 An older global helper need not equal the newly fetched payload: admission
 also accepts exact bytes from the prior installation's revalidated
 `commandBinding` payload or selected source snapshot. The fresh canonical
