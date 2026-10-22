@@ -255,6 +255,16 @@ read the corresponding raw commit trees in one ordered probe. Tree evidence
 does not replace parent reconstruction, raw author/message comparison, explicit
 conflict-continuation proof or the existing upstream-empty-commit checks.
 
+Recovery snapshots resolve their commit refs in one fresh NUL-input probe and
+retain local, published and lineage refs in one create-only Git transaction.
+A collision or invalid ref leaves the entire transaction unapplied. Subsequent
+settlement re-reads the retained refs; retention never grants replay or remote
+publication authority. Git versions without NUL-input `cat-file` support use
+the compatible newline-input batch only after a usage rejection and only for
+CR/LF-free refs, with the same strict commit-row validation. Other Git errors
+remain failures. Ref retention uses the implicit stdin transaction supported
+by the documented Git 2.15 prerequisite.
+
 ## Captured child ownership
 
 Bounded Git publication and static-guidance Git preflights use a headless
