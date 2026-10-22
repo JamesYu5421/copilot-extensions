@@ -61,6 +61,9 @@ def _resolve_environment(*args, **kwargs):
 
 
 def add_parsers(sub) -> None:
+    from .update_launch_cli import add_parsers as add_launch_parsers
+
+    add_launch_parsers(sub)
     p = sub.add_parser("update", help="Re-deploy from repo")
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--detach", action="store_true", help="Submit a durable update request without waiting")
@@ -899,6 +902,10 @@ def cmd_reconcile_plugins(args: argparse.Namespace) -> int:
                 machine=machine,
                 include_payload_refresh=with_payload,
                 log=_log,
+                **(
+                    {"output_fd": args.installer_output_fd}
+                    if getattr(args, "installer_output_fd", None) is not None else {}
+                ),
             )
         except Exception as e:
             print(f"provision: error: {e}", file=sys.stderr)
