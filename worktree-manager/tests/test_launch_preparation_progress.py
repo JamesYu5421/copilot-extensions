@@ -409,15 +409,57 @@ def test_detached_installer_recreates_sink_rotated_before_start(tmp_path, exit_c
     )
 
 
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_detached_bash_installer_retains_execution_with_legacy_formatter(tmp_path, exit_code):
+    _exercise_marketplace_installer(
+        tmp_path, "bash", exit_code, "allowed", False, legacy_observer=True,
+    )
+
+
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_detached_bash_bootstrap_keeps_native_exit_without_telemetry(tmp_path, exit_code):
+    if os.name != "posix":
+        pytest.skip("POSIX detached bootstrap contract")
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "bin/launch-session.sh").read_text(encoding="utf-8")
+    marker = "local _observer_code='\n"
+    assert source.count(marker) == 1
+    bootstrap = source.split(marker, 1)[1].split("\n'", 1)[0]
+    package = tmp_path / "update_telemetry"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    literal = "space ' \" ; $ ` &"
+    producer = (
+        "import sys; "
+        f"assert sys.argv[1] == {literal!r}; print('original native output'); "
+        f"sys.exit({exit_code})"
+    )
+    result = subprocess.run(
+        [
+            sys.executable, "-c", bootstrap, str(tmp_path / "unused-observer.log"),
+            sys.executable, "-I", "-c", producer, literal,
+        ],
+        env=dict(os.environ, PYTHONPATH=str(tmp_path)),
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == exit_code, result.stderr
+    assert result.stdout == "original native output\n"
+    assert "detached installer timing unavailable" in result.stderr
+    assert "observer-unavailable" in result.stderr
+    assert not (tmp_path / "unused-observer.log").exists()
+
+
 def _exercise_marketplace_installer(
-    tmp_path, shell, exit_code, admission, blocking, *, rotate_before_start=False,
+    tmp_path, shell, exit_code, admission, blocking, *,
+    rotate_before_start=False, legacy_observer=False,
 ):
-    if not blocking and admission == "allowed" and shell == "bash":
-        pytest.skip("Streaming fixture is synchronous; refused detached execution is covered")
     if shell == "bash" and os.name != "posix":
         pytest.skip("POSIX shell contract")
     if shell != "bash" and (os.name != "nt" or not shutil.which(shell)):
         pytest.skip("Windows launcher contract")
+    if shell == "bash" and not blocking and admission == "allowed":
+        if not hasattr(os, "pidfd_open") or not shutil.which("setsid"):
+            pytest.skip("Linux detached process identity contract")
     root = Path(__file__).resolve().parents[1]
     python = getattr(sys, "_base_executable", sys.executable)
     package = tmp_path / "agent_worktrees"
@@ -471,6 +513,8 @@ def _exercise_marketplace_installer(
     if blocking:
         env["WORKTREE_BLOCKING_INSTALL"] = "1"
     log = tmp_path / "setup.log"
+    env["WORKTREE_SETUP_LOG"] = str(log)
+    env.pop("APERTURE_SETUP_LOG", None)
     project = "space ' \" ; $ ` &" if not blocking else ""
     project_literal = project.replace("'", "''")
     if shell != "bash":
@@ -556,21 +600,52 @@ def _exercise_marketplace_installer(
             "#!/bin/bash\nset -euo pipefail\n"
             f"printf executed > {shlex.quote(str(marker))}\n"
             f"[[ \"$1\" == update && \"$2\" == --install-dir && \"$3\" == {shlex.quote(str(runtime_root))} ]]\n"
+            + (
+                f"[[ \"$4\" == --project-name && \"$5\" == {shlex.quote(project)} ]]\n"
+                if not blocking else ""
+            ) +
             "[[ \"$MAINTENANCE_FIXTURE\" == child && -z \"${MAINTENANCE_UNSET+x}\" ]]\n"
             "printf '%s\\n' installer-detail\n"
+            "printf '%s\\n' 'installer-unicode caf\u00e9 \u03a9'\n"
             "printf '%s\\n' installer-diagnostic >&2\n"
             f"printf '%s\\n' {shlex.quote(canonical)}\n"
+            + (
+                "deadline=$((SECONDS + 10))\n"
+                f"while [[ ! -f {shlex.quote(str(gate))} && $SECONDS -lt $deadline ]]; do sleep .02; done\n"
+                f"[[ -f {shlex.quote(str(gate))} ]] || exit 91\n"
+                if not blocking else ""
+            ) +
             "printf '%s' installer-last-line\n"
             f"exit {exit_code}\n",
+            encoding="utf-8",
         )
         env["PYTHONPATH"] = os.pathsep.join([
             str(tmp_path), str(root.parent / "libs/update-telemetry/src"),
         ])
+        if legacy_observer:
+            library = root.parent / "libs/update-telemetry/src/update_telemetry"
+            legacy = tmp_path / "update_telemetry"
+            legacy.mkdir()
+            (legacy / "__init__.py").write_text(
+                f"__path__.append({str(library)!r})\n", encoding="utf-8",
+            )
+            code = (library / "shell.py").read_text(encoding="utf-8")
+            assert code.count("def observe_command(") == 1
+            (legacy / "shell.py").write_text(
+                code.replace("def observe_command(", "def _future_observe_command("),
+                encoding="utf-8",
+            )
         script = "\n".join([
-            "set -euo pipefail; _NO_UPDATE=0; _UPDATE_APPLIED=''; _STAGE_PID=''; LAUNCH_PROJECT=''",
+            "set -euo pipefail; _NO_UPDATE=0; _UPDATE_APPLIED=''; _STAGE_PID=''",
+            f"LAUNCH_PROJECT={shlex.quote(project)}",
             f"PYTHON={shlex.quote(python)}",
             functions, apply,
-            f"setsid() {{ printf spawned > {shlex.quote(str(marker))}; }}",
+            (
+                f"setsid() {{ printf '%s' \"$BASHPID\" > {shlex.quote(str(detached_pid))}; "
+                f"exec {shlex.quote(shutil.which('setsid'))} \"$@\"; }}"
+                if not blocking and admission == "allowed"
+                else f"setsid() {{ printf spawned > {shlex.quote(str(marker))}; }}"
+            ),
             f"_SETUP_LOG_DIR={shlex.quote(str(tmp_path))}; SETUP_LOG={shlex.quote(str(log))}",
             "invoke_update_apply 0",
             '[[ "$MAINTENANCE_FIXTURE" == parent && "$MAINTENANCE_UNSET" == parent ]]',
@@ -587,11 +662,14 @@ def _exercise_marketplace_installer(
     assert result.stderr == ""
     installer_log = None
     if not blocking and admission == "allowed":
-        installer_log = Path(sink_path.read_text(encoding="utf-8"))
-        assert installer_log.parent == tmp_path
-        assert re.fullmatch(r"setup\.[a-f0-9]{32}\.installer\.log", installer_log.name)
-        assert rotated.exists() is rotate_before_start
-        assert f"output: {installer_log}" in log.read_text(encoding="utf-8-sig")
+        if shell == "bash":
+            installer_log = log
+        else:
+            installer_log = Path(sink_path.read_text(encoding="utf-8"))
+            assert installer_log.parent == tmp_path
+            assert re.fullmatch(r"setup\.[a-f0-9]{32}\.installer\.log", installer_log.name)
+            assert rotated.exists() is rotate_before_start
+            assert f"output: {installer_log}" in log.read_text(encoding="utf-8-sig")
         try:
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
@@ -599,44 +677,45 @@ def _exercise_marketplace_installer(
                     installer_log.read_text(encoding="utf-8-sig")
                     if installer_log.exists() else ""
                 )
-                if "installer-detail [elapsed " in report:
+                if ("installer-detail" if legacy_observer else "installer-detail [elapsed ") in report:
                     break
                 time.sleep(.02)
-            assert "installer-detail [elapsed " in report, "detached progress was not persisted"
-            assert list(tmp_path.glob("setup.*.installer.log")) == [installer_log]
+            expected = "installer-detail" if legacy_observer else "installer-detail [elapsed "
+            assert expected in report, "detached progress was not persisted"
+            if shell != "bash":
+                assert list(tmp_path.glob("setup.*.installer.log")) == [installer_log]
             assert "Installer update done" not in report and "Installer update failed" not in report
             assert not gate.exists(), "launcher waited for installer completion"
-            with pytest.raises(PermissionError) as error:
-                installer_log.unlink()
-            assert error.value.winerror in {32, 33}, "active sink was not protected against rotation"
+            if shell != "bash":
+                with pytest.raises(PermissionError) as error:
+                    installer_log.unlink()
+                assert error.value.winerror in {32, 33}, "active sink was not protected against rotation"
         finally:
             gate.write_text("continue")
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             report = installer_log.read_text(encoding="utf-8-sig")
-            if f"(exit {exit_code})" in report:
+            if ("installer-last-line" if legacy_observer else f"(exit {exit_code})") in report:
                 break
             time.sleep(.02)
         # The log observer and its headless console must finish with the child,
         # not remain alive after the native operation has completed.
-        import ctypes
-        from ctypes import wintypes
+        if shell == "bash":
+            import select
 
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-        kernel.OpenProcess.restype = wintypes.HANDLE
-        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-        handle = kernel.OpenProcess(0x00100000, False, int(detached_pid.read_text()))
-        if handle:
             try:
-                assert kernel.WaitForSingleObject(handle, 5000) == 0, "detached observer leaked"
-            finally:
-                kernel.CloseHandle(handle)
+                handle = os.pidfd_open(int(detached_pid.read_text()))
+            except ProcessLookupError:
+                pass
+            else:
+                try:
+                    assert select.select([handle], [], [], 5)[0], "detached observer leaked"
+                finally:
+                    os.close(handle)
         else:
-            assert ctypes.get_last_error() == 87, "detached liveness could not be verified"
+            _wait_for_detached_windows_installer(detached_pid)
     report = log.read_text(encoding="utf-8-sig")
-    if installer_log:
+    if installer_log and installer_log != log:
         report += installer_log.read_text(encoding="utf-8-sig")
     if admission != "allowed":
         assert not marker.exists(), report
@@ -646,9 +725,15 @@ def _exercise_marketplace_installer(
         ) in report
         assert "Checking bootstrap services" in report
         return
+    if legacy_observer:
+        assert marker.read_text() == "executed"
+        assert "detached installer timing unavailable" in report
+        assert "installer-last-line" in report
+        assert "Installer update done" not in report and "Installer update failed" not in report
+        assert report.splitlines().count(canonical) == 1
+        return
     assert "installer-detail [elapsed " in report
-    if shell != "bash":
-        assert "installer-unicode caf\u00e9 \u03a9 [elapsed " in report
+    assert "installer-unicode caf\u00e9 \u03a9 [elapsed " in report
     assert "installer-diagnostic [elapsed " in report
     assert "installer-last-line [elapsed " in report
     assert report.splitlines().count(canonical) == 1
@@ -656,6 +741,25 @@ def _exercise_marketplace_installer(
     assert re.search(rf"launch/installer {state} Installer update {state} \(exit {exit_code}\).*\[duration [0-9.]+s\]", report)
     assert "installer: [" not in report
     assert "Checking bootstrap services" in report
+
+
+def _wait_for_detached_windows_installer(detached_pid):
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.OpenProcess(0x00100000, False, int(detached_pid.read_text()))
+    if handle:
+        try:
+            assert kernel.WaitForSingleObject(handle, 5000) == 0, "detached observer leaked"
+        finally:
+            kernel.CloseHandle(handle)
+    else:
+        assert ctypes.get_last_error() == 87, "detached liveness could not be verified"
 
 
 @pytest.mark.parametrize("failure", ["sink", "command-limit", "spawn"])
