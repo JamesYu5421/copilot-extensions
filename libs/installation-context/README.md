@@ -8,9 +8,12 @@ cells. Mutation remains explicit and non-automatic:
   the canonical Python implementation componentized while the sync tool vendors
   the same self-contained file set into every consuming plugin.
 - `installation-context.sh` plus `json-query.awk` provides a Bash bootstrap that
-  does not require Python or `jq`. The Linux/WSL bootstrap requires Bash 4.4+
-  plus `awk`, a SHA-256 command (`sha256sum`, `shasum`, or `openssl`), and a
-  physical-path command (`realpath -m` or `readlink -f`).
+  does not require Python or `jq`. Read-only `status`, `deployment-status`,
+  `probe-plugin-publication` and `probe-legacy` support stock macOS Bash 3.2;
+  installation-management actions still require Bash 4.4+. Native dependencies
+  include `awk`, `sh` and a SHA-256 command (`sha256sum`, `shasum`, or `openssl`).
+  Physical-path resolution uses `realpath -m`, `readlink -f` or the canonical
+  shell fallback.
 - `installation-context.ps1` provides the PowerShell 5.1+/pwsh bootstrap.
   Missing native types compile in one batch to bound cold diagnostic startup;
   re-entry retains already-loaded types rather than recompiling them.
@@ -26,8 +29,11 @@ cells. Mutation remains explicit and non-automatic:
   Both publication and installation-mode admission must allow mutation of the
   same legacy root. They emit no success output, diagnose refusal on stderr
   and exit 3 without publishing, provisioning or installing an interpreter.
-  The common CodeSpaces/Logger/Pull Requests/Vault bootstrap calls this adapter
+  The CodeSpaces/Logger/Pull Requests/Vault family and the
+  Bridge/Dispatch/Containers/MCP/Budget Guidance bootstraps call this adapter
   before first stamping or drift-reconcile reaping, locking and dispatch.
+  Machines uses it for legacy publication and probes its independently
+  validated selected cell directly; context selection alone is not permission.
   Healthy current runtimes remain a read-only no-op; independent session hooks
   retain their separate invocation. An older helperless bootstrap retains
   standalone behavior only when its deployment policy is absent.
@@ -37,6 +43,13 @@ cells. Mutation remains explicit and non-automatic:
   managed dispatch without granting cold publication. Vault's payload dispatcher
   instead probes publication against its independently validated selected cell
   or canonical legacy root; a legacy-only adapter never admits a namespaced cell.
+
+On-demand stock-shell regressions use an actual Bash 3.2 interpreter selected by
+`INSTALLATION_CONTEXT_BASH32` (or stock `/bin/bash` for bootstrap cases). They
+cover cold and drift admission across bootstrap adopters, including Budget
+Guidance without Python. Canonical deployment-adapter cases also exercise that
+interpreter when explicitly selected. This is interpreter compatibility
+coverage, not a substitute for native macOS platform qualification.
 
 All three normalize marketplace source descriptors, derive source fingerprints
 and marketplace ids, resolve payload provenance, compute the approved durable
