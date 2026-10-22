@@ -83,10 +83,13 @@ if ($HaveGit) {
     New-Item -ItemType Directory -Force -Path $Staging | Out-Null
     if (Test-Path (Join-Path $Staging '.git')) {
         git -C $Staging fetch --depth 1 $Repo $Ref | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "git fetch of $Repo@$Ref failed (exit $LASTEXITCODE)." }
         git -C $Staging checkout -q FETCH_HEAD
+        if ($LASTEXITCODE -ne 0) { throw "git checkout of $Repo@$Ref failed (exit $LASTEXITCODE)." }
     } else {
         if (Test-Path $Staging) { Remove-Item -Recurse -Force $Staging }
         git clone --depth 1 --branch $Ref $Repo $Staging | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "git clone of $Repo@$Ref failed (exit $LASTEXITCODE)." }
     }
     $PayloadParent = $Staging
 } else {
@@ -104,6 +107,7 @@ if ($HaveGit) {
     if (Test-Path $Extract) { Remove-Item -Recurse -Force $Extract }
     New-Item -ItemType Directory -Force -Path $Extract | Out-Null
     tar -xzf $Tar -C $Extract   # bsdtar ships with Windows 10 1803+
+    if ($LASTEXITCODE -ne 0) { throw "Extracting the payload tarball failed (exit $LASTEXITCODE)." }
     $PayloadParent = (Get-ChildItem $Extract -Directory | Select-Object -First 1).FullName
     Remove-Item $Tar -Force
 }
