@@ -213,6 +213,14 @@ release or authorized-rollout gates.
 
 ### Phase 3 - Release and acceptance
 
+Earlier source slices through #7534 are confirmed in the promoted `main`
+snapshot from `dev` commit `9c70ad31b355de63ea76e42c367bb0cbd3670974`.
+Canonical Main state at `c6edcc9625ccebcd8c0013664370e8d2206806af` is unpaused;
+the selected preparation/readiness and fixture-maintenance bytes match the
+promoted source. This supersedes the earlier pause observation, not the
+requirement for authorized rollout or proof of the effective running version.
+The later #7841 slice and subsequent work still need their own publication.
+
 - [ ] Verify publication from `dev` to `main`; perform only authorized rollout
   through the unified update path and record the effective running version.
 - [ ] Complete the validation matrix below, or explicitly transfer any
@@ -313,6 +321,137 @@ on malformed configuration. These are reliability details, not new authority
 or a reason to create a daemon.
 
 ## Journal
+
+### 2026-10-22 - Keep probe and engine Git authority consistent
+
+- The next #7856 review identified inherited Git selectors redirecting the
+  checkout probe, while the shared engine correctly removed them. The probe
+  now removes that same selector set before querying the verified root; the
+  regression supplies another checkout's Git directory and work tree and
+  confirms only the actual child receives registration.
+- Self-review also reproduced a coupled executable-lookup failure: quoted
+  absolute and relative Windows Git PATH entries failed in the probe, then
+  exposed bare-Git lookup in the shared preparation and ownership readers.
+  Those readers now use the existing canonical execution lookup. Producer
+  plans bind relative entries once to the actual execution checkout before
+  inspecting a different, deeper source checkout.
+- Native controls select the declared Git with an unavailable daemon PATH and
+  refuse a missing execution Git rather than borrowing the daemon binary.
+  The sole physical vendored copy remains byte-identical; the existing
+  nine-consumer changefile covers this shared correction. Two synthetic
+  owner/inventory fixtures now supply complete child environments, matching
+  the existing contract instead of relying on accidental Windows lookup.
+- Validation passes 302 shared-engine cases with one platform skip, 335
+  contained ACP/CLI/sibling-worktree consumer cases with two live opt-in skips,
+  351 full Bridge guards with eight explicit skips, and both actual SSH
+  controls through the bounded host-state runner. The changed adapter now has
+  35 cases. Packaging, vendored-source, headless and touched-Python gates pass;
+  no frozen fixtures were rewritten.
+- No new API, launcher, environment overlay, credential flow or installed
+  runtime change was introduced. The parent remains **Active**, and this
+  correction still awaits the current source PR's review and merge.
+
+### 2026-10-22 - Keep Windows deadlines independent and distinguish execution cwd
+
+- #7856's next review found that a Windows worker surviving its supervisor
+  retained its own Job handle but lost the supervisor's deadline enforcement.
+  The worker now starts an independent deadline before executing preparation;
+  expiry terminates its entire Job, even if the supervisor is gone.
+- The exact regression keeps the worker and its mutating child active past a
+  one-second deadline, rather than making the worker voluntarily exit. The
+  published prior source fails the heartbeat-stability control; corrected
+  source passes, before the child's six-second natural completion. Probe
+  writers and temporary files were cleaned up.
+- The same review identified valid nested execution directories being compared
+  against a repository-root registration context. The receiver now verifies
+  the Git root separately, validates the raw compiled context against that
+  root, and retains the productive execution cwd with explicit repository-root
+  metadata. A native child-marketplace and launch-order regression exercises a
+  nested directory; an absent root proof fails explicitly.
+- The adapter suite passes all 32 cases, including the real SSH controls.
+  These corrections remain in the current source PR; no running-release,
+  privileged or complete parent-effort result is implied.
+
+### 2026-10-22 - Correct session-qualified controller and early-exit cleanup
+
+- #7856's first review identified two real gaps. The shared venue planner now
+  forwards the controller session identity recorded by the existing launch
+  owner, preserving matching session-qualified owner references while still
+  refusing a mismatched session.
+- A real POSIX control reproduced the published candidate's descendant leak:
+  success (exit 0) and error (exit 3) returned while a redirected child still
+  wrote; only the deadline control quiesced. The corrected receiver retains an
+  owned POSIX group keeper until complete-group cleanup on every outcome.
+  A broken report pipe or lost supervisor also reaches the keeper's cleanup.
+- Current native POSIX controls confirm quiescence for success, error, deadline
+  and supervisor loss. Windows/selection coverage passes 149 cases, including
+  actual SSH controls and the matching/mismatched controller regressions.
+  The existing retained test venue was used only for bounded stdlib probes,
+  with no agent, provisioning, credential relay or runtime update, then stopped
+  and preserved. Temporary remote probes were removed.
+- These are corrections to the current source PR, not parent completion or
+  running-release proof. Privileged, headed CLI, native combined-capability and
+  authorized-rollout gates remain open.
+
+### 2026-10-22 - Integrate the existing static SSH ACP preparation boundary
+
+- Exposed the shared stdlib Python bootstrap separately from its unchanged
+  POSIX wrapper and reused the existing controller/provider selection planner.
+  Static SSH ACP now resolves the actual remote worktree before registration,
+  even for a stored id/cwd, and replaces only its automatic plugin argument
+  span. The supported project/direct launch owner, profile/account, auth hooks,
+  explicit arguments and productive preferences stay unchanged.
+- Receiver subprocess controls exercise real fresh Git checkouts, current
+  controller payload reflection, child-native enable/disable/missing authority,
+  large stdin payloads, Unicode/spaced paths, Gitless legacy behavior and
+  failure-before-stdio ordering. No persisted constructor field or remote
+  launcher was introduced; existing old-reader metadata remains readable.
+- An actual Windows SSH control exposed a real cancellation leak: terminating
+  the local client did not stop a mutating remote descendant. The corrected
+  adapter retains the bounded channel until it settles. Its streamed stdlib
+  supervisor contains worker descendants in a kill-on-close Windows Job or
+  POSIX process group and enforces a receiver deadline before the outer
+  transport timeout. Real SSH cancellation and receiver-deadline controls
+  confirm the synthetic descendant stops; the failed probe was bounded and
+  exited before this continuation.
+- Validation: 296 shared-library tests; 260 focused transport/profile/rollback
+  contracts; 295 managed, contained preparation/consumer tests; and 24 adapter
+  tests including the two opt-in real SSH controls. Full managed Bridge guards
+  pass 351 cases with eight explicit skips and no fixture rewrites. One
+  shared-library platform skip and two ordinary opt-in skips are explicit.
+  Install-contract (13 plugins), headless, asyncio-timeout, vendored-library
+  and touched-Python checks pass. Publication remains to be completed.
+- The live SSH control shares the test runner's filesystem; it is not a
+  cross-machine native-skill or headed CLI result. Two declared POSIX profiles
+  were unavailable at hostname resolution, with no profile/runtime repair or
+  alternate auth introduced. Privileged, headed SSH CLI, trusted-container,
+  combined target-user/staged-repository and authorized-rollout gates remain
+  open. The effort stays **Active**.
+
+### 2026-10-22 - Land the sibling-worktree atlas and refresh publication facts
+
+- #7841 merged as `124aae4fe46f0859b5de60ad2fe9b134f4431e3a` after the
+  current-head Copilot approval, successful checks and zero review threads.
+  The HTML matrix and diagrams were also rendered in a separate headless
+  browser profile; no productive browser profile or shared service changed.
+- Ordinary managed status reconciliation followed by sync advances the source
+  worktree after a deleted-PR-ref refusal. No manual rebase/reset, raw merge,
+  installed update or worktree finalization was used.
+- A fresh read of canonical Main state reports `paused: false`, with the
+  `9c70ad31b355de63ea76e42c367bb0cbd3670974` snapshot promoted at
+  `2026-10-22T09:25:02Z`. Earlier parity source slices through #7534 are in
+  that Dev snapshot, and selected production/fixture-maintenance bytes compare
+  equal on actual Main. Publication is no longer described as paused; no
+  runtime rollout or effective running-version proof is inferred.
+- Continue the existing genuine static-SSH lane. Its actual preparation seam
+  is after the shared SSH connection and concrete remote-worktree resolution,
+  before the current project-binstub/direct ACP command opens. Static SSH is
+  not a namespace-provider CLI, and it does not yet use a survivable SSH
+  Session Host. Keep its execution identity, native owner and transport; do
+  not add a competing launcher or assume the privileged lane shares its home.
+- The complete simultaneous target-user/staged-repository acceptance inherited
+  from #1146 is now explicitly pending in the Validation Plan. #5286 and #5072
+  remain open, and this effort remains Active.
 
 ### 2026-10-22 - Prove sibling-worktree authority and map projection relationships
 

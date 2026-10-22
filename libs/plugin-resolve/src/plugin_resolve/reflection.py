@@ -13,6 +13,7 @@ import tarfile
 from collections.abc import Mapping
 from pathlib import Path
 
+from .execution import execution_environment
 from .marketplace import load_marketplace, plugin_dir
 from .payload import dependencies, plugin_manifest, publication_metadata, report_diagnostic
 from .settings import local_marketplace_path, marketplace_manifest_name, read_repo_settings, split_source
@@ -205,6 +206,9 @@ def build_plan(
     owners = {}
     bound_roots = list(target_source_roots)
     if target_checkout is not None:
+        environment = execution_environment(
+            os.environ if environment is None else environment, target_checkout,
+        )
         target_info = repository_info(Path(target_checkout), environment)
         if target_info is None:
             raise ValueError("Target checkout has no Git repository identity")
@@ -244,8 +248,8 @@ def plan_digest(plan: dict) -> str:
     return hashlib.sha256(json.dumps(plan, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def build_prepare_script(plan: dict, repo: str, *, include_prepared_context: bool = False) -> str:
-    """Ship the stdlib-only engine over an existing script/stdin transport."""
+def build_prepare_python(plan: dict, repo: str, *, include_prepared_context: bool = False) -> str:
+    """Build the stdlib-only engine for streaming to the receiver's Python."""
     if not isinstance(repo, str) or not repo.strip():
         raise ValueError("Plugin preparation requires the execution checkout")
     package = Path(__file__).parent
@@ -257,9 +261,7 @@ def build_prepare_script(plan: dict, repo: str, *, include_prepared_context: boo
     request = base64.b64encode(json.dumps({
         **plan, "repo": repo,
     }).encode()).decode("ascii")
-    # stdin is the script, not an unbounded SSH argv payload.
     return (
-        "set -e\npython3 - <<'VENUE_PLUGIN_PREPARE'\n"
         "import base64,io,tarfile,pathlib,hashlib,sys,json,uuid,os\n"
         f"content=base64.b64decode({encoded!r})\n"
         "root=pathlib.Path.home()/'.acp-staged-plugins'/'helpers'/hashlib.sha256(content).hexdigest()\n"
@@ -283,8 +285,15 @@ def build_prepare_script(plan: dict, repo: str, *, include_prepared_context: boo
         "print('__VENUE_PLUGINS__'+json.dumps(prepared))\n"
         + ("print('__VENUE_PLUGIN_CONTEXT__'+json.dumps({'version':1,**context}))\n"
            if include_prepared_context else "")
-        +
-        "VENUE_PLUGIN_PREPARE\n"
+    )
+
+
+def build_prepare_script(plan: dict, repo: str, *, include_prepared_context: bool = False) -> str:
+    """Ship the stdlib-only engine over an existing POSIX script transport."""
+    return (
+        "set -e\npython3 - <<'VENUE_PLUGIN_PREPARE'\n"
+        + build_prepare_python(plan, repo, include_prepared_context=include_prepared_context)
+        + "VENUE_PLUGIN_PREPARE\n"
     )
 
 

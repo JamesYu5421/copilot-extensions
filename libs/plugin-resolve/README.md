@@ -119,7 +119,12 @@ typed selections through enabled-only resolution results. `build_plan` retains
 its qualified-identity checks and first-selection-wins ordering; callers compose
 provider/related precedence before passing their selections.
 
-`build_prepare_script` carries that plan over an existing script/stdin transport.
+`build_prepare_python` emits the self-contained stdlib-only Python program for
+streaming to the receiver's Python stdin, independent of its shell or OS.
+`build_prepare_script` wraps the same program in the existing POSIX `python3`
+heredoc for script/stdin transports. Both require the actual execution checkout
+and support the same opt-in prepared-context frame; neither starts a transport
+or changes the productive process's account or environment.
 An explicitly selected qualified source whose marketplace is unknown on the
 host is a deferred target lookup, not an invented marketplace or a host-cache
 fallback. Preparation resolves it against the target's own settings/catalog,
@@ -315,7 +320,11 @@ does not mistake an old generated projection for current inventory authority.
 
 `prepare(..., environment=child_env)` passes that environment to Git and the
 isolated native installer after removing Git selectors. Omission retains the
-ambient-environment contract. `check_cancelled` may stop preparation between
+ambient-environment contract; a supplied mapping is the complete child
+environment, not an overlay onto the daemon. Git queries and ownership
+discovery resolve the Git executable through that execution environment too,
+including Windows quotes, `PATHEXT` and relative entries, rather than borrowing
+the daemon's executable search path. `check_cancelled` may stop preparation between
 bounded operations and before publication; callers using a worker thread must
 await its quiescence rather than abandon it.
 
