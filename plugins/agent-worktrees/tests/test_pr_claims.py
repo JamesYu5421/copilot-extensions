@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from agent_worktrees import claim_history
 from agent_worktrees import config as cfg
 from agent_worktrees import obligations, pr_ops, tracking
@@ -359,7 +361,7 @@ class TestReconcileActivePrSelfHeal:
         tracking.save_record(rec)
         return rec
 
-    def _fake_provider(self, *, merged, contained):
+    def _fake_provider(self, *, merged, contained, state="open"):
         from agent_worktrees.providers import PullResult
 
         class _P:
@@ -369,7 +371,7 @@ class TestReconcileActivePrSelfHeal:
                 self.contained_calls = []
 
             def get_pull(self, repo, number, *, api_base="", token=None):
-                return PullResult(number=number, state="open", merged=merged,
+                return PullResult(number=number, state=state, merged=merged,
                                   head_sha="abc", base_ref="master")
 
             def head_contained_in_base(self, repo, base, head_sha, *,
@@ -486,7 +488,10 @@ class TestReconcileActivePrSelfHeal:
         claims = [c for c in rec.resources if c.kind == "pr"]
         assert len(claims) == 1 and claims[0].state == "released"
 
-    def test_zombie_heal_to_merged_also_releases_claim(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("terminal_state", ["merged", "closed"])
+    def test_zombie_containment_keeps_provider_open_claim(
+        self, tmp_path, monkeypatch, terminal_state,
+    ):
         rec = self._record(tmp_path, monkeypatch)
         tracking.add_resource_claim(
             rec, tracking.ResourceClaim(
@@ -497,19 +502,31 @@ class TestReconcileActivePrSelfHeal:
         self._patch(monkeypatch, fake)
         pr_ops._reconcile_active_pr(rec, self._config())
         claims = [c for c in rec.resources if c.kind == "pr"]
-        assert len(claims) == 1 and claims[0].state == "released"
+        assert len(claims) == 1 and claims[0].state == "active"
+        self._patch(monkeypatch, self._fake_provider(
+            merged=terminal_state == "merged", contained=None, state=terminal_state,
+        ))
+        pr_ops._reconcile_active_pr(rec, self._config())
+        saved = tracking.load_record(rec.yaml_path)
+        assert saved.resources[0].state == "released"
+        assert saved.active_pr().state == "merged"
 
-    def test_closed_unmerged_never_releases_claim(self, tmp_path, monkeypatch):
-        """A closed-without-merge PR is abandoned WORK, not a clean
-        hand-back -- its claim stays active (blocking) until an operator
-        explicitly abandons it, mirroring sweep.py's own
-        never-silently-reclaim-an-unmerged-close contract."""
+    @pytest.mark.parametrize("cached_state", ["open", "closed"])
+    def test_closed_unmerged_releases_only_pr_claim(
+        self, tmp_path, monkeypatch, cached_state,
+    ):
         rec = self._record(tmp_path, monkeypatch)
+        rec.active_pr().state = cached_state
         tracking.add_resource_claim(
             rec, tracking.ResourceClaim(
                 kind="pr", ref=pr_ops._pr_claim_ref(rec.active_pr()),
                 created_at=tracking._now_iso(), state="active"),
             save=False)
+        tracking.add_resource_claim(
+            rec, tracking.ResourceClaim(kind="worktree", ref="child", state="active"),
+            save=False,
+        )
+        tracking.save_record(rec)
 
         from agent_worktrees.providers import PullResult
 
@@ -526,4 +543,274 @@ class TestReconcileActivePrSelfHeal:
         self._patch(monkeypatch, _ClosedProvider())
         pr_ops._reconcile_active_pr(rec, self._config())
         claims = [c for c in rec.resources if c.kind == "pr"]
-        assert len(claims) == 1 and claims[0].state == "active"
+        assert len(claims) == 1 and claims[0].state == "released"
+        saved = tracking.load_record(rec.yaml_path)
+        assert saved.active_pr().state == "closed"
+        assert saved.status == "active"
+        assert saved.resources[0].state == "released"
+        assert saved.resources[1].state == "active"
+        assert [e["note"] for e in claim_history.history_for_ref("o/r#7")] == ["closed"]
+        pr_ops._reconcile_active_pr(rec, self._config())
+        assert len(claim_history.history_for_ref("o/r#7")) == 1
+
+    def test_closed_claim_is_reconciled_beside_newer_open_pr(self, tmp_path, monkeypatch):
+        rec = self._record(tmp_path, monkeypatch)
+        closed = rec.active_pr()
+        closed.state = "closed"
+        tracking.add_resource_claim(
+            rec, tracking.ResourceClaim(kind="pr", ref="o/r#7", state="active"),
+            save=False,
+        )
+        rec.prs.append(tracking.PRRecord(
+            state="open", number=8, branch="pr/new", provider="gitea", repo="o/r",
+            opened_at="2026-06-02T10:00:00",
+        ))
+        tracking.save_record(rec)
+
+        from agent_worktrees.providers import PullResult
+
+        class _Provider:
+            name = "gitea"
+
+            def get_pull(self, repo, number, **kwargs):
+                return PullResult(
+                    number=number, state="closed" if number == 7 else "open",
+                    merged=False,
+                )
+
+        self._patch(monkeypatch, _Provider())
+        pr_ops._reconcile_active_pr(rec, self._config())
+        saved = tracking.load_record(rec.yaml_path)
+        assert [(p.number, p.state) for p in saved.prs] == [(7, "closed"), (8, "open")]
+        assert [(c.ref, c.state) for c in saved.resources] == [
+            ("o/r#7", "released"), ("o/r#8", "active"),
+        ]
+
+    @pytest.mark.parametrize("observed", ["open", "unknown", "unavailable"])
+    def test_cached_closed_claim_requires_confirmed_terminal_provider(
+        self, tmp_path, monkeypatch, observed,
+    ):
+        rec = self._record(tmp_path, monkeypatch)
+        rec.active_pr().state = "closed"
+        tracking.add_resource_claim(
+            rec, tracking.ResourceClaim(kind="pr", ref="o/r#7", state="active"),
+            save=False,
+        )
+        tracking.save_record(rec)
+
+        from agent_worktrees.providers import PullResult
+
+        class _Provider:
+            name = "gitea"
+
+            def get_pull(self, repo, number, **kwargs):
+                if observed == "unavailable":
+                    raise OSError("provider unavailable")
+                return PullResult(
+                    number=number, state=observed, merged=False,
+                    head_sha="abc", base_ref="master",
+                )
+
+            def head_contained_in_base(self, *args, **kwargs):
+                return True
+
+        self._patch(monkeypatch, _Provider())
+        pr_ops._reconcile_active_pr(rec, self._config())
+        assert tracking.load_record(rec.yaml_path).resources[0].state == "active"
+        assert claim_history.history_for_ref("o/r#7") == []
+
+    @pytest.mark.parametrize("intervening_state", [None, "", "unknown", "pending"])
+    def test_provider_reopen_reactivates_released_claim_and_backup_gate(
+        self, tmp_path, monkeypatch, intervening_state,
+    ):
+        from agent_worktrees.finalize_open_pr_gate import assert_no_live_pr
+        from agent_worktrees.providers import PullResult
+
+        rec = self._record(tmp_path, monkeypatch)
+        tracking.add_resource_claim(
+            rec, tracking.ResourceClaim(kind="pr", ref="o/r#7", state="active"),
+        )
+
+        class _Provider:
+            name = "gitea"
+            state = "closed"
+
+            def get_pull(self, repo, number, **kwargs):
+                return PullResult(
+                    number=number, state=self.state, merged=False,
+                    head_sha="abc", base_ref="master",
+                )
+
+            def head_contained_in_base(self, *args, **kwargs):
+                return False
+
+        provider = _Provider()
+        self._patch(monkeypatch, provider)
+        pr_ops._reconcile_active_pr(rec, self._config())
+        assert tracking.load_record(rec.yaml_path).resources[0].state == "released"
+        if intervening_state is not None:
+            before = rec.yaml_path.read_bytes()
+            provider.state = intervening_state
+            pr_ops._reconcile_active_pr(tracking.load_record(rec.yaml_path), self._config())
+            assert rec.yaml_path.read_bytes() == before
+            assert tracking.load_record(rec.yaml_path).active_pr().state == "closed"
+        provider.state = "open"
+        fresh = tracking.load_record(rec.yaml_path)
+        assert assert_no_live_pr(fresh, self._config(), rec.worktree_id) is False
+        saved = tracking.load_record(rec.yaml_path)
+        assert saved.active_pr().state == "open"
+        assert saved.active_pr().closed_at == ""
+        assert saved.resources[0].state == "active"
+        assert [e["event"] for e in claim_history.history_for_ref("o/r#7")] == [
+            "released", "claimed",
+        ]
+
+    def test_closed_release_history_requires_successful_save(self, tmp_path, monkeypatch):
+        rec = self._record(tmp_path, monkeypatch)
+        tracking.add_resource_claim(
+            rec, tracking.ResourceClaim(kind="pr", ref="o/r#7", state="active"),
+        )
+        before = rec.yaml_path.read_bytes()
+
+        from agent_worktrees.providers import PullResult
+
+        class _Provider:
+            name = "gitea"
+
+            def get_pull(self, repo, number, **kwargs):
+                return PullResult(number=number, state="closed", merged=False)
+
+        self._patch(monkeypatch, _Provider())
+
+        def fail_save(*args, **kwargs):
+            raise OSError("write refused")
+
+        monkeypatch.setattr(tracking, "save_record", fail_save)
+        with pytest.raises(OSError, match="write refused"):
+            pr_ops._reconcile_active_pr(rec, self._config())
+        assert rec.yaml_path.read_bytes() == before
+        assert claim_history.history_for_ref("o/r#7") == []
+
+    def test_cached_closed_release_refuses_changed_publication(self, tmp_path, monkeypatch):
+        rec = self._record(tmp_path, monkeypatch)
+        rec.active_pr().state = "closed"
+        tracking.add_resource_claim(
+            rec, tracking.ResourceClaim(kind="pr", ref="o/r#7", state="active"),
+        )
+
+        from agent_worktrees.providers import PullResult
+
+        class _Provider:
+            name = "gitea"
+
+            def get_pull(self, repo, number, **kwargs):
+                fresh = tracking.load_record(rec.yaml_path)
+                fresh.active_pr().number = 8
+                tracking.save_record(fresh)
+                return PullResult(number=number, state="closed", merged=False)
+
+        self._patch(monkeypatch, _Provider())
+        pr_ops._reconcile_active_pr(rec, self._config())
+        saved = tracking.load_record(rec.yaml_path)
+        assert saved.active_pr().number == 8
+        assert saved.resources[0].state == "active"
+        assert claim_history.history_for_ref("o/r#7") == []
+
+    def test_cached_closed_release_refuses_foreign_provider(self, tmp_path, monkeypatch):
+        rec = self._record(tmp_path, monkeypatch)
+        rec.active_pr().state = "closed"
+        rec.active_pr().provider = "github"
+        tracking.add_resource_claim(
+            rec, tracking.ResourceClaim(kind="pr", ref="o/r#7", state="active"),
+        )
+        self._patch(monkeypatch, self._fake_provider(merged=True, contained=None))
+        pr_ops._reconcile_active_pr(rec, self._config())
+        assert tracking.load_record(rec.yaml_path).resources[0].state == "active"
+        assert claim_history.history_for_ref("o/r#7") == []
+
+    def test_provider_reopen_preserves_owner_reopening_through_caller_save(
+        self, tmp_path, monkeypatch,
+    ):
+        rec = self._record(tmp_path, monkeypatch)
+        rec.active_pr().state = "closed"
+        rec.resources = [tracking.ResourceClaim(
+            kind="pr", ref="o/r#7", state="released",
+        )]
+        rec.status = "finalized"
+        rec.completed_at = "2026-06-02T10:00:00"
+        rec.status_note_at = "2026-06-02T10:00:00"
+        tracking.save_record(rec)
+        self._patch(monkeypatch, self._fake_provider(merged=False, contained=False))
+        pr_ops._reconcile_active_pr(rec, self._config())
+        assert rec.status == "active"
+        assert rec.completed_at is None
+        assert rec.status_note_at is None
+        assert rec.last_finalized_at == "2026-06-02T10:00:00"
+        tracking.save_record(rec)
+        saved = tracking.load_record(rec.yaml_path)
+        assert saved.status == "active"
+        assert saved.completed_at is None
+        assert saved.status_note_at is None
+        assert saved.last_finalized_at == "2026-06-02T10:00:00"
+        assert saved.resources[0].state == "active"
+
+    @pytest.mark.parametrize("entrypoint", ["local-cli", "local-data"])
+    @pytest.mark.parametrize("scenario", [
+        "cached-closed", "reopened", "contained-display", "older-closed",
+    ])
+    def test_picker_reconciles_terminal_claims_and_reopens(
+        self, tmp_path, monkeypatch, entrypoint, scenario,
+    ):
+        from agent_worktrees import picker_reconcile_cli, reclaim, sessions
+        from agent_worktrees.picker_support import data_local
+        from agent_worktrees.providers import PullResult
+
+        rec = self._record(tmp_path, monkeypatch)
+        rec.active_pr().state = "merged" if scenario == "contained-display" else "closed"
+        rec.resources = [tracking.ResourceClaim(
+            kind="pr", ref="o/r#7",
+            state="released" if scenario == "reopened" else "active",
+        )]
+        if scenario == "older-closed":
+            rec.prs.append(tracking.PRRecord(
+                state="merged", number=8, branch="pr/new", provider="gitea", repo="o/r",
+                opened_at="2026-06-02T10:00:00",
+            ))
+        tracking.save_record(rec)
+
+        class _Provider:
+            name = "gitea"
+
+            def get_pull(self, repo, number, **kwargs):
+                assert number == 7
+                return PullResult(
+                    number=number, merged=False,
+                    state="open" if scenario == "reopened" else "closed",
+                )
+
+        self._patch(monkeypatch, _Provider())
+        monkeypatch.setattr(cfg, "load_config", self._config)
+        monkeypatch.setattr(cfg, "detect_platform", lambda: "linux")
+        monkeypatch.setattr(
+            tracking, "list_records",
+            lambda *args, **kwargs: [tracking.load_record(rec.yaml_path)],
+        )
+        monkeypatch.setattr(reclaim, "resolve_bound_copilots", lambda: [])
+        monkeypatch.setattr(sessions, "mux_status_many", lambda ids: {})
+        monkeypatch.setattr(sessions, "worktree_session_lock_state", lambda record: (False, []))
+
+        def run_picker():
+            if entrypoint == "local-data":
+                return data_local.reconcile_prs()
+            return picker_reconcile_cli.build_payload()["summary"]["pr_terminal_count"]
+
+        assert run_picker() == 1
+        saved = tracking.load_record(rec.yaml_path)
+        assert saved.resources[0].state == (
+            "active" if scenario == "reopened" else "released"
+        )
+        assert next(p for p in saved.prs if p.number == 7).state == (
+            "open" if scenario == "reopened"
+            else "merged" if scenario == "contained-display" else "closed"
+        )
+        assert run_picker() == 0

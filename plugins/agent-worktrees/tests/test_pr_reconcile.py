@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 
 from agent_worktrees import config as cfg
 from agent_worktrees import pr_reconcile, reconcile_cli, tracking
@@ -128,6 +130,38 @@ class TestHealNumberlessActivePr:
 
 
 class TestReconcilePrState:
+    def test_best_effort_skips_numberless_save_but_reconciles_numbered_peer(
+        self, tmp_path, monkeypatch,
+    ):
+        from agent_worktrees.providers import PullResult
+
+        rec = _record(
+            tmp_path, monkeypatch, "wt-numberless-peer",
+            pr=tracking.PRRecord(
+                state="closed", number=7, branch="pr/older", provider="gitea", repo="o/r",
+            ),
+        )
+        rec.prs.append(tracking.PRRecord(
+            state="creating", branch="pr/newer", provider="gitea", repo="o/r",
+            opened_at="2026-06-02T10:00:00",
+        ))
+        tracking.add_resource_claim(
+            rec, tracking.ResourceClaim(kind="pr", ref="o/r#7", state="active"),
+        )
+        _patch_provider(monkeypatch, _FakeHeadSearchProvider({
+            "pr/older": PullResult(number=7, state="closed", merged=False),
+        }))
+
+        def forbidden_heal(*args, **kwargs):
+            raise AssertionError("best-effort reconciliation entered blocking numberless healing")
+
+        monkeypatch.setattr(pr_reconcile, "heal_numberless_active_pr", forbidden_heal)
+        assert pr_reconcile.reconcile_pr_state(rec, _config(), best_effort=True) is True
+        saved = tracking.load_record(rec.yaml_path)
+        assert saved.resources[0].state == "released"
+        assert saved.active_pr().number is None
+        assert saved.active_pr().state == "creating"
+
     def test_heals_and_flips_merged_on_a_finalized_worktree(self, tmp_path, monkeypatch):
         # The exact Phase-2 validation scenario: a stale-open, number-less PR
         # record on a FINALIZED worktree (the render-time reconcile, #2102,
@@ -166,6 +200,58 @@ class TestReconcilePrState:
 
 
 class TestReconcileCli:
+    def test_native_cli_releases_cached_closed_claim(self, tmp_path, monkeypatch):
+        rec = _record(
+            tmp_path, monkeypatch, "wt-closed",
+            pr=tracking.PRRecord(
+                state="closed", number=7, branch="pr/topic",
+                provider="gitea", repo="o/r",
+            ),
+        )
+        tracking.add_resource_claim(
+            rec, tracking.ResourceClaim(kind="pr", ref="o/r#7", state="active"),
+        )
+        script = """
+import sys
+from pathlib import Path
+from agent_worktrees import config as cfg, providers, tracking
+from agent_worktrees.providers import PullResult
+import agent_worktrees.__main__ as cli
+root = Path(sys.argv[1])
+cli._resolve_active_project = lambda explicit: ("ext", root)
+cfg.tracking_dir = lambda *args: root
+tracking._owning_tracking_dir = lambda *args, **kwargs: root
+cfg.load_config = lambda: cfg.Config(
+    srcroot=str(root), machine="m", platform=sys.platform, repo_name="ext",
+    repos={"ext": cfg.RepoConfig(
+        anchor=str(root), worktree_root=str(root),
+        pr=cfg.PRConfig(enabled=True, provider="gitea"),
+    )},
+)
+class Provider:
+    name = "gitea"
+    def get_pull(self, repo, number, **kwargs):
+        assert (repo, number) == ("o/r", 7)
+        return PullResult(number=7, state="closed", merged=False)
+providers.get_provider = lambda name: Provider()
+providers.account_token_for_slug = lambda *args: None
+raise SystemExit(cli.main(["reconcile", "--worktree-id", "wt-closed", "--json"]))
+"""
+        for changed in (["wt-closed"], []):
+            result = subprocess.run(
+                [sys.executable, "-c", script, str(tmp_path)],
+                capture_output=True, text=True, timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert json.loads(result.stdout) == {
+                "checked": 1, "changed": changed, "errors": [],
+            }
+        saved = tracking.load_record(rec.yaml_path)
+        assert saved.active_pr().state == "closed"
+        assert saved.resources[0].state == "released"
+        assert saved.status == "active"
+
     def test_reconcile_one_worktree_json(self, tmp_path, monkeypatch, capsys):
         from agent_worktrees.providers import PullResult
 
