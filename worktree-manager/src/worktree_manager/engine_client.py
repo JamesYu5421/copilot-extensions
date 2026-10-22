@@ -128,6 +128,11 @@ def _engine_argv_override() -> list[str] | None:
 _INHERITED_ENGINE_COMMAND: list[str] | None = None
 
 
+def inherited_engine_command() -> list[str] | None:
+    """Return the accepted provider handoff for an explicit queued update."""
+    return list(_INHERITED_ENGINE_COMMAND) if _INHERITED_ENGINE_COMMAND else None
+
+
 def accept_inherited_engine_command() -> str | None:
     """Consume the provider handoff before launching any child processes.
 
@@ -335,10 +340,13 @@ def run_engine_passthrough(project: str | None, args: list[str], *,
     if project:
         cmd += ["--project", project]
     cmd += args
+    from .update_driver_cli import handoff_environment, handoff_launch_options
+
+    handoff = handoff_environment(args)
     try:
         return subprocess.run(
             cmd, timeout=timeout, check=False,
-            env=_engine_environment(),
+            **handoff_launch_options(_engine_environment(), handoff),
         ).returncode
     except subprocess.TimeoutExpired as e:
         raise EngineError(f"{ENGINE_BIN} {' '.join(args)} timed out") from e
