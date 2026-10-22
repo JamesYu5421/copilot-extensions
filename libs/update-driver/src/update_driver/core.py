@@ -14,16 +14,18 @@ import sys
 import time
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence, TextIO
 
 from single_instance_lease.operation import OperationLock, OperationLockedError
-from . import boot
+from . import boot, foundation_state
 from ._directory import create_queue_directory
 
 SCHEMA = 2
 STATES = frozenset({"pending", "running", "completed", "interrupted", "blocked"})
+_active_transaction = ContextVar("update_driver_active_transaction", default=None)
 
 
 class DriverError(RuntimeError):
@@ -337,6 +339,7 @@ def enqueue(spec: RequestSpec, *, runner: TrustedRunner, root: Path | None = Non
     spec_json, runner_json = _json(asdict(spec)), _json(asdict(runner))
     identity = hashlib.sha256((spec_json + "\n" + runner_json).encode()).hexdigest()
     _reconcile_lost_owner(root)
+    _assert_foundation_clear(root)
     with _database(root, create=True) as db:
         db.execute("BEGIN IMMEDIATE")
         if _has_fence(db):
@@ -390,9 +393,36 @@ def _has_fence(db: sqlite3.Connection) -> bool:
     ).fetchone() is not None
 
 
+def foundation_status(*, root: Path | None = None) -> foundation_state.FoundationOperation | None:
+    """Read native foundation progress independently of the plugin request queue."""
+    return _foundation_operation(_root(root))
+
+
+def _foundation_operation(root: Path) -> foundation_state.FoundationOperation | None:
+    try:
+        return foundation_state.read(root)
+    except foundation_state.FoundationStateError as error:
+        raise StateError(str(error)) from error
+
+
+def _assert_foundation_clear(root: Path) -> None:
+    operation = _foundation_operation(root)
+    if operation is not None and operation.state == "interrupted" and operation.fenced:
+        raise InterruptedError("installation queue fenced by unsettled foundation construction")
+
+
+def _reconcile_foundation(root: Path, custody: OperationLock) -> None:
+    try:
+        foundation_state.reconcile_lost(root, custody)
+    except foundation_state.FoundationStateError as error:
+        raise StateError(str(error)) from error
+    _assert_foundation_clear(root)
+
+
 def _reconcile_lost_owner(root: Path) -> None:
     """Observation only: free kernel custody proves no transaction owner remains."""
-    if not (root / "queue.sqlite3").exists():
+    queue_exists = (root / "queue.sqlite3").exists()
+    if not queue_exists and _foundation_operation(root) is None:
         return
     lock = OperationLock(root / "execution.lock")
     try:
@@ -400,6 +430,9 @@ def _reconcile_lost_owner(root: Path) -> None:
     except OperationLockedError:
         return
     try:
+        _reconcile_foundation(root, lock)
+        if not queue_exists:
+            return
         with _database(root, create=True) as db:
             with db:
                 db.execute(
@@ -427,6 +460,7 @@ def ensure_worker(
         raise InvalidRequestError("startup timeout must be finite and positive")
     create_queue_directory(root)
     _reconcile_lost_owner(root)
+    _assert_foundation_clear(root)
     if any(
         row.state in {"interrupted", "blocked"} and row.settled_at is None
         for row in status(root=root)
@@ -573,6 +607,7 @@ def drain(
         except OperationLockedError:
             time.sleep(.05)
     try:
+        _reconcile_foundation(root, lock)
         with _database(root, create=True) as db:
             with db:
                 db.execute(
@@ -587,6 +622,7 @@ def drain(
                 raise InterruptedError("installation queue fenced by unsettled prior transaction")
         while True:
             lock.assert_owned()
+            _reconcile_foundation(root, lock)
             with _database(root, create=True) as db:
                 db.execute("BEGIN IMMEDIATE")
                 row = db.execute(
@@ -605,10 +641,12 @@ def drain(
                 )
                 db.commit()
             transaction = Transaction(request, root, lock)
+            scope = _active_transaction.set(transaction)
             try:
                 code = (executor or _execute)(transaction)
                 transaction._close()
                 transaction.assert_owned()
+                _reconcile_foundation(root, lock)
                 if type(code) is not int:
                     raise StateError("executor did not return an integer exit status")
                 if request.log_path.exists():
@@ -630,6 +668,8 @@ def drain(
                         error=f"executor interrupted: {type(error).__name__}; settlement required",
                     )
                 raise
+            finally:
+                _active_transaction.reset(scope)
     finally:
         lock.release()
 
@@ -664,6 +704,7 @@ def wait(
                 output.flush()
             return request
         _reconcile_lost_owner(_root(root))
+        _assert_foundation_clear(_root(root))
         if status(request_id, root=root).state != request.state:
             continue
         if request.state == "pending" and request.error:
@@ -692,6 +733,7 @@ def _observe_pending_worker_exit(root: Path, request_id: str, code: int) -> None
     except OperationLockedError:
         return
     try:
+        _reconcile_foundation(root, lock)
         with _database(root, writable=True) as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM requests WHERE id=?", (request_id,)).fetchone()
