@@ -4161,7 +4161,7 @@ def _elect_monitor_for_one_iteration(monkeypatch):
     monkeypatch.setattr(self_retire, "is_superseded", lambda *args: next(retired))
 
 
-@pytest.mark.parametrize("first_failure", ["sqlite", "election"])
+@pytest.mark.parametrize("first_failure", ["sqlite", "election", "persistent"])
 def test_status_monitor_does_not_acknowledge_failed_authority_and_retries_before_sweep(
     tmp_path, monkeypatch, first_failure,
 ):
@@ -4189,7 +4189,7 @@ def test_status_monitor_does_not_acknowledge_failed_authority_and_retries_before
 
     def fail_once(store, **kwargs):
         attempts.append(store.generation)
-        if len(attempts) == 1 and first_failure == "sqlite":
+        if first_failure == "persistent" or (len(attempts) == 1 and first_failure == "sqlite"):
             raise sqlite3.OperationalError("fixture authority locked")
         return activate(store, **kwargs)
 
@@ -4228,11 +4228,122 @@ def test_status_monitor_does_not_acknowledge_failed_authority_and_retries_before
         return 1
 
     monkeypatch.setattr(m, "_monitor_sweep", sweep)
+    waits = []
+    if first_failure == "persistent":
+        def wait(event, interval):
+            waits.append(event.is_set())
+            event.clear()
+            if len(waits) == 2:
+                handles[0]("shutdown", {})
+
+        monkeypatch.setattr(m.status_monitor_cli, "_wake_interruptible_wait", wait)
     assert m.cmd_status_monitor(argparse.Namespace(interval=2, passive=True)) == 0
+    if first_failure == "persistent":
+        assert swept == []
+        assert len(attempts) == 3
+        assert waits == [True, False]
+        return
     assert replies == [
         {"adopted": False, "error": "current-roster authority unavailable"}, {"adopted": True},
     ]
     assert swept == [True]
+
+
+@pytest.mark.parametrize("shutdown_mode", ["requested", "interrupted"])
+def test_status_monitor_shutdown_cannot_recover_or_promote_admission(
+    tmp_path, monkeypatch, shutdown_mode,
+):
+    from agent_worktrees import self_retire, status_monitor_cutover as smc
+    from agent_worktrees.worktrees_runtime import WorktreesRuntime
+
+    monkeypatch.setattr(m, "_monitor_lock_path", lambda: tmp_path / "status-monitor.lock")
+    monkeypatch.setattr(m, "_aw_runtime_home", lambda: tmp_path)
+    monkeypatch.setattr(m, "_load_hook_client_module", lambda: None)
+    monkeypatch.setattr(m.locks, "write_lock", lambda _path, extra=None: True)
+    elected = [42]
+    monkeypatch.setattr(smc, "active_generation_for_pid", lambda pid: elected[0])
+    monkeypatch.setattr(smc, "clear_route_if_owner", lambda pid: False)
+    monkeypatch.setattr(self_retire, "is_superseded", lambda *args: False)
+    monkeypatch.setattr(m.status_monitor_cli, "sweep_mux_pane_args", lambda: None)
+    monkeypatch.setattr(
+        m.loop_governance_mod, "LoopGovernance",
+        lambda: type("Governance", (), {"recheck": lambda self, checkpoint: {"status": "ready"}})(),
+    )
+    handles = []
+    activations = []
+    activate = WorktreesRuntime.activate
+
+    def record_activate(owner):
+        activations.append(True)
+        return activate(owner)
+
+    monkeypatch.setattr(WorktreesRuntime, "activate", record_activate)
+
+    class Control:
+        port = 12345
+
+        def __init__(self, handle, **kwargs):
+            handles.append(handle)
+
+        def start(self):
+            assert handles[0]("promote", {})["adopted"]
+
+        def current_read_count(self):
+            return int(len(waits) < 2)
+
+        def close(self):
+            elected[0] = None
+            assert handles[0](
+                "worktrees-read", {"contract_version": 1, "project": "test"},
+            )["ok"] is False
+            assert handles[0]("health", {})["worktrees"]["status"] == "shutdown"
+            assert smc._predecessor_health_check("127.0.0.1", 12345) is False
+
+    monkeypatch.setattr(smc, "ControlServer", Control)
+
+    class Client:
+        def __init__(self, url):
+            pass
+
+        def health(self):
+            return handles[0]("health", {})
+
+    monkeypatch.setattr(smc, "ControlClient", Client)
+    sweeps = []
+
+    def sweep(*args, **kwargs):
+        sweeps.append(True)
+        if shutdown_mode == "interrupted":
+            return 1
+        assert handles[0]("shutdown", {}) == {"shutdown": True}
+        elected[0] = None
+        assert handles[0]("worktrees-read", {"contract_version": 1, "project": "test"})["ok"] is False
+        assert handles[0]("health", {})["worktrees"]["status"] == "shutdown"
+        assert smc._predecessor_health_check("127.0.0.1", 12345) is False
+        assert handles[0]("promote", {})["adopted"] is False
+        assert handles[0]("undrain", {})["draining"] is True
+        return 1
+
+    monkeypatch.setattr(m, "_monitor_sweep", sweep)
+    waits = []
+
+    def wait(*args, **kwargs):
+        waits.append(True)
+        if shutdown_mode == "interrupted":
+            raise KeyboardInterrupt
+        assert handles[0]("health", {})["published"] is False
+        assert len(activations) == 2
+        assert len(sweeps) == 1
+        assert len(waits) <= 2
+
+    monkeypatch.setattr(m.status_monitor_cli, "_wake_interruptible_wait", wait)
+    if shutdown_mode == "interrupted":
+        with pytest.raises(KeyboardInterrupt):
+            m.cmd_status_monitor(argparse.Namespace(interval=2, passive=True))
+        return
+    assert m.cmd_status_monitor(argparse.Namespace(interval=2, passive=True)) == 0
+    assert len(waits) == 2
+    assert len(activations) == 2
 
 
 def test_status_monitor_expires_orphaned_pane_args_before_eligible_sweep(

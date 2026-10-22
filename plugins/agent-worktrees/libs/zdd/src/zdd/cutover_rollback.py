@@ -14,6 +14,25 @@ if TYPE_CHECKING:
 log = logging.getLogger("zdd")
 
 
+def _await_exit(
+    self: CutoverOrchestrator, handle: _Handle, timeout: float = 10.0, poll: float = 0.2,
+) -> bool:
+    """True once ``handle`` has provably exited; False on timeout or no ``poll()``."""
+    poll_fn = getattr(handle, "poll", None)
+    if not callable(poll_fn):
+        return False
+    deadline = self.clock() + timeout
+    while True:
+        try:
+            if poll_fn() is not None:
+                return True
+        except Exception:  # noqa: BLE001 -- an unreadable handle is unconfirmed
+            return False
+        if self.clock() >= deadline:
+            return False
+        self.sleep(poll)
+
+
 def _undrain(self: CutoverOrchestrator, old: Endpoint, result: CutoverResult) -> bool:
     """Best-effort release of the old daemon's drain gate (#1756).
 
@@ -55,10 +74,12 @@ def _rollback(
     guarded = self.drain_before_publish or self.expected_old is not None
     successor_stopped = False
     old_live: bool | None = None
+    predecessor_health_check = self.predecessor_health_check or self.health_check
     if guarded:
         try:
             old_live = bool(
-                (flipped or drain_started) and old and self.health_check(old.client_host, old.port)
+                (flipped or drain_started) and old
+                and predecessor_health_check(old.client_host, old.port)
             )
         except Exception:
             old_live = False
@@ -87,7 +108,7 @@ def _rollback(
         and (not guarded or successor_stopped)
     ):
         try:
-            predecessor_live = self.health_check(old.client_host, old.port)
+            predecessor_live = predecessor_health_check(old.client_host, old.port)
             if predecessor_live:
                 if guarded:
                     table = self.routing.read_table(self.config_dir) or {}

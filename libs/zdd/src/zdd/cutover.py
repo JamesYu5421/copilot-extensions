@@ -148,6 +148,7 @@ class CutoverOrchestrator:
         drain_before_publish: bool = False,
         expected_old: Endpoint | None = None,
         on_published: Callable[[Endpoint], None] | None = None,
+        predecessor_health_check: Callable[[str, int], bool] | None = None,
     ) -> None:
         if expected_old is not None and refuse_old is None:
             raise ValueError("an expected predecessor also requires a publication refusal guard")
@@ -158,6 +159,7 @@ class CutoverOrchestrator:
         self.version = version
         self.spawn_passive = spawn_passive
         self.health_check = health_check
+        self.predecessor_health_check = predecessor_health_check
         self.make_client = make_client
         self.pick_free_port = pick_free_port
         self.refuse_old = refuse_old
@@ -237,20 +239,9 @@ class CutoverOrchestrator:
             return False
 
     def _await_exit(self, handle: _Handle, timeout: float = 10.0, poll: float = 0.2) -> bool:
-        """True once ``handle`` has provably exited; False on timeout or no ``poll()``."""
-        poll_fn = getattr(handle, "poll", None)
-        if not callable(poll_fn):
-            return False
-        deadline = self.clock() + timeout
-        while True:
-            try:
-                if poll_fn() is not None:
-                    return True
-            except Exception:  # noqa: BLE001 -- an unreadable handle is unconfirmed
-                return False
-            if self.clock() >= deadline:
-                return False
-            self.sleep(poll)
+        from .cutover_rollback import _await_exit
+
+        return _await_exit(self, handle, timeout=timeout, poll=poll)
 
     def _raw_active(self) -> dict | None:
         """The routing table's own ``active`` row -- never healed to ``previous``."""

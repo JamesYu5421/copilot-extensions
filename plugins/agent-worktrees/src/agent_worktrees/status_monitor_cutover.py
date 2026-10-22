@@ -444,13 +444,32 @@ def _monitor_lock_is_live() -> bool:
 def _health_check(host: str, port: int) -> bool:
     try:
         status = ControlClient(f"http://{host}:{port}").health()
-        return status.get("status") != "draining"
+        if status.get("status") != "ready":
+            return False
+        roster = status.get("worktrees")
+        if not isinstance(roster, dict):
+            return True
+        return roster.get("status") == "ready" or (
+            status.get("published") is False and roster.get("status") == "unready"
+        )
     except Exception:
         return False
 
 
 def _make_client(base_url: str) -> ControlClient:
     return ControlClient(base_url, config_dir=routing_dir(), timeout=65.0)
+
+
+def _predecessor_health_check(host: str, port: int) -> bool:
+    """A fenced resident can recover only after rollback restores its election."""
+    try:
+        status = ControlClient(f"http://{host}:{port}").health()
+        roster = status.get("worktrees")
+        return status.get("status") in {"ready", "draining", "unavailable"} and (
+            not isinstance(roster, dict) or roster.get("status") not in {"shutdown", "closed"}
+        )
+    except Exception:
+        return False
 
 
 def _is_status_monitor_cmdline(cmdline: str) -> bool:
@@ -624,6 +643,7 @@ def activate_after_update(
             version=None,
             spawn_passive=spawn,
             health_check=_health_check,
+            predecessor_health_check=_predecessor_health_check,
             make_client=make_client,
             pick_free_port=pick_free_port,
         )
