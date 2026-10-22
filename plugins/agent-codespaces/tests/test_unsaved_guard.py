@@ -8,6 +8,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -132,6 +133,41 @@ def _repo(path, remotes):
     _git("push", "-q", "origin", "main", cwd=path)
 
 
+def _prints_ok(argv) -> bool:
+    # Bytes, not text: an unusable WSL launcher writes a (possibly localized)
+    # UTF-16 diagnostic, and decoding it must not break module collection.
+    try:
+        probe = subprocess.run(
+            argv, capture_output=True,
+            timeout=60, creationflags=no_window_flags(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return probe.returncode == 0 and probe.stdout.strip() == b"ok"
+
+
+def _bash_runs() -> bool:
+    # Windows keeps the WSL launcher (System32\bash.exe) on PATH even when no
+    # distribution is installed; it then fails every script instead of running it.
+    bash = shutil.which("bash")
+    return bash is not None and _prints_ok([bash, "-c", "echo ok"])
+
+
+needs_git_and_bash = pytest.mark.skipif(
+    not (shutil.which("git") and _bash_runs()), reason="needs git + a working bash",
+)
+
+
+def test_bash_probe_rejects_failing_launcher_with_utf16_diagnostic():
+    diagnostic = (
+        "import sys; sys.stdout.buffer.write("
+        "'Le Sous-syst\\u00e8me Windows pour Linux \\u8bca\\u65ad'.encode('utf-16-le')); "
+        "sys.exit(1)"
+    )
+    assert not _prints_ok([sys.executable, "-c", diagnostic])
+    assert _prints_ok([sys.executable, "-c", "print('ok')"])
+
+
 def _run_audit(root, extra=()):
     cmd = unsaved_guard.audit_command(workspace_root=root.as_posix(), extra_dirs=extra)
     argv = shlex.split(cmd)
@@ -146,8 +182,7 @@ def _run_audit(root, extra=()):
     return unsaved_guard.parse_audit(out.stdout)
 
 
-@pytest.mark.skipif(not (shutil.which("git") and shutil.which("bash")),
-                    reason="needs git + bash")
+@needs_git_and_bash
 def test_audit_script_covers_nested_repos_and_linked_worktrees(tmp_path):
     remote = tmp_path / "remotes"
     root = tmp_path / "workspaces"
@@ -179,8 +214,7 @@ def test_audit_script_covers_nested_repos_and_linked_worktrees(tmp_path):
     assert not any(Path(c.path) == main_repo for c in audit.dirty_checkouts)
 
 
-@pytest.mark.skipif(not (shutil.which("git") and shutil.which("bash")),
-                    reason="needs git + bash")
+@needs_git_and_bash
 def test_audit_script_fails_closed_on_git_errors_and_odd_paths(tmp_path):
     remote = tmp_path / "remotes"
     root = tmp_path / "work space"
@@ -211,8 +245,7 @@ def test_audit_script_fails_closed_on_git_errors_and_odd_paths(tmp_path):
     assert not audit.all_clean
 
 
-@pytest.mark.skipif(not (shutil.which("git") and shutil.which("bash")),
-                    reason="needs git + bash")
+@needs_git_and_bash
 @pytest.mark.skipif(os.name == "nt" or os.geteuid() == 0,
                     reason="needs POSIX permissions enforced (non-root)")
 def test_audit_script_blocks_on_missing_or_unreadable_checkouts(tmp_path):
@@ -243,8 +276,7 @@ def test_audit_script_blocks_on_missing_or_unreadable_checkouts(tmp_path):
     assert not audit.all_clean
 
 
-@pytest.mark.skipif(not (shutil.which("git") and shutil.which("bash")),
-                    reason="needs git + bash")
+@needs_git_and_bash
 def test_audit_script_finds_deep_and_dot_dir_repos(tmp_path):
     remotes = tmp_path / "remotes"
     root = tmp_path / "ws"
