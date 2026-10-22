@@ -37,8 +37,11 @@ or readiness baseline in place of the previous observation.
 
 The core accepts no callback argv, delivery URL, shell expression or credential.
 This library neither advertises health capabilities nor extends the existing
-watch daemon's register/unregister wire contract. The Gateway, service role,
-coordinator consumer and installation/cutover integrations remain separate work.
+watch daemon's register/unregister wire contract. The optional
+[Gateway adapter](watch-gateway.md) supplies configured scope mapping, bounded
+operations and disk transaction custody around this core. Service activation,
+authorized provider observation, coordinator consumption and
+installation/cutover integration remain separate work.
 
 ## Reconciliation and retention
 
@@ -49,6 +52,9 @@ be no more than 24 hours old and not in the future. Repeating the same request
 returns its existing registration/outcome without resetting its deadline or
 replacing pending delivery. Different criteria or deadline return `conflict`.
 A new timestamp or request ID is a new request, not a reconciliation attempt.
+Integer timestamps/deadlines must be exactly representable as finite floats,
+matching registry persistence. Inputs that would round or overflow are rejected
+before committing, not accepted into an envelope that cannot reload.
 
 `inspect` returns only that scope/request's receipt. Unknown records return
 `uncertain`, never evidence of nonacceptance or permission for process fallback.
