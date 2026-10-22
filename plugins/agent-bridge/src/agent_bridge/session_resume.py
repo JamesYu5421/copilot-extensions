@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from .session_preferences import client_preferences
 from .models import SessionStatus
 from .transport import SpawnTarget
+from .privileged_plugins import CONTEXT_KEY, PrivilegedLaunchRefused, relay_agent, start_client
 from .session_manager import (
     _MAX_RESUME_ROUNDS,
     _default_cwd,
@@ -168,6 +169,8 @@ class _SessionResumeMixin:
         async with session._lifecycle_lock:
             from .acquisition_gates import assert_resume_allowed
             assert_resume_allowed(self._db, session)
+            if relay_agent(session.target) is not None or CONTEXT_KEY in (session.target.venue or {}):
+                allow_recreate = False
             worktree_id = session.target.worktree_id
             owner_native_resume = owner_native_resume or (
                 worktree_id is not None
@@ -271,7 +274,7 @@ class _SessionResumeMixin:
                         # "Resuming…"/extension-reload race, #1468) fails fast and
                         # we re-roll, rather than hanging in STARTING.
                         await asyncio.wait_for(
-                            client.start(agent_proc.proc),
+                            start_client(client, agent_proc.proc, session),
                             timeout=self._timeouts.session_start,
                         )
                         if session.acp_session_id:
@@ -368,6 +371,18 @@ class _SessionResumeMixin:
                         with contextlib.suppress(Exception):
                             await client.shutdown()
                     session.client = None
+                    if isinstance(exc, PrivilegedLaunchRefused):
+                        session.status = SessionStatus.STOPPED
+                        self._db.update_session_status(
+                            session_id, SessionStatus.STOPPED.value, time.time(),
+                        )
+                        if session.event_log:
+                            session.event_log.append("error", {"message": str(exc)})
+                            session.event_log.append("session_state_changed", {
+                                "status": SessionStatus.STOPPED.value,
+                                "reason": "privileged_preparation_refused",
+                            })
+                        raise
                     if session.event_log:
                         session.event_log.append("acp_resume_retry", {
                             "attempt": attempt,
@@ -444,7 +459,7 @@ class _SessionResumeMixin:
                         if permission_callback:
                             recreate_client.auto_approve = False
                         await asyncio.wait_for(
-                            recreate_client.start(agent_proc.proc),
+                            start_client(recreate_client, agent_proc.proc, session),
                             timeout=self._timeouts.session_start,
                         )
                         new_acp = await asyncio.wait_for(
@@ -615,7 +630,7 @@ class _SessionResumeMixin:
                     effort_override=session.effort_override,
                     **client_preferences(session.target, self._db, session_id),
                 )
-                await client.start(agent_proc.proc)
+                await start_client(client, agent_proc.proc, session)
                 # suppress_replay=False -> the replayed history is captured.
                 await client.load_session(
                     cwd=session.target.cwd or _default_cwd(session.target),

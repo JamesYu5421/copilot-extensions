@@ -39,6 +39,7 @@ from .session_manager import (
 from .transport import AgentProcess, SpawnTarget
 from .session_preferences import client_preferences
 from .venue_launch_policy import LaunchRefusedError
+from .privileged_plugins import relay_agent, start_client
 
 if TYPE_CHECKING:
     from .acp_client import AcpClient
@@ -156,14 +157,17 @@ class _SessionStartMixin:
                 target,
                 copilot_args=[*target.copilot_args, *copilot_args],
             )
-        if self._provider_backed_target(target):
+        privileged_relay = relay_agent(target) is not None
+        if self._provider_backed_target(target) or privileged_relay:
             target = replace(
                 target,
                 venue={
                     **(target.venue or {}),
                     _REQUEST_OVERRIDES_KEY: {
+                        **(existing_overrides if isinstance(existing_overrides, dict) else {}),
                         "env": request_env,
                         "copilot_args": request_copilot_args,
+                        **({"mcp_servers": mcp_servers} if privileged_relay else {}),
                     },
                 },
             )
@@ -274,14 +278,15 @@ class _SessionStartMixin:
         def on_acp_event(event_type: str, data: dict[str, Any]) -> None:
             self._route_acp_event(session, event_type, data)
 
-        # Persist to DB. `config_json` carries `mcp_servers` -- otherwise a
-        # session's declared per-session MCP toolset (e.g. a reviewer's
-        # dedicated, credential-bound tools) lives ONLY in this in-memory
-        # Session object and is silently lost on any daemon restart, not just
-        # a resume within the same process (the downstream tracker).
+        # Rehydration must reconstruct request-owned toolsets and model/effort
+        # inputs, not substitute defaults from a restarted frontend.
         config_json = (
-            json.dumps({"mcp_servers": session.mcp_servers})
-            if session.mcp_servers else None
+            json.dumps({
+                "mcp_servers": session.mcp_servers,
+                **({"model_override": model} if model is not None else {}),
+                **({"effort_override": effort} if effort is not None else {}),
+            })
+            if session.mcp_servers or model is not None or effort is not None else None
         )
         self._db.create_session(
             session_id=session_id,
@@ -356,7 +361,7 @@ class _SessionStartMixin:
             )
             if (
                 cs_target is not None or container_target is not None or target.local_plugin_preparation
-                or (target.type == "ssh" and target.static_plugin_args is not None)
+                or (target.type == "ssh" and target.static_plugin_args is not None) or privileged_relay
             ):
                 from .venue_plugins import with_controller_origin
                 target = with_controller_origin(
@@ -685,7 +690,7 @@ class _SessionStartMixin:
                     try:
                         step_started = time.monotonic()
                         await asyncio.wait_for(
-                            client.start(agent_proc.proc),
+                            start_client(client, agent_proc.proc, session),
                             timeout=self._timeouts.session_start,
                         )
                         timing.add("acp_initialize", time.monotonic() - step_started)

@@ -206,15 +206,15 @@
         },
         {
           "path": "plugins/agent-bridge/src/agent_bridge/session_resume.py",
-          "sha256": "bc62b07c43e8b0e702433398bd24871891ac963ba6406b8b34e1bff54b3628f4",
-          "semantic": true,
-          "non_semantic_reason": null
+          "sha256": "ebb74fa2d20ac9230e1415265b664ad330fab3f53b984b69cffa9aa8d62a0e9e",
+          "semantic": false,
+          "non_semantic_reason": "Privileged ACP relay initialization carries its separately negotiated version-1 launch context. Both primary relay and persisted receiver binding forbid fresh-conversation fallback, including prompt auto-resume and missing native IDs. HTTP-45 fields, response shapes, negotiation floors and existing ordinary session behavior are unchanged; focused SDK, receiver-preparation and actual SessionManager retry-exhaustion tests cover this internal continuity contract."
         },
         {
           "path": "plugins/agent-bridge/src/agent_bridge/session_core.py",
-          "sha256": "d5e10c0357f6a64995948d9ad63b2c9b03fcf69cf3b6c2a4155713265ac94741",
-          "semantic": true,
-          "non_semantic_reason": null
+          "sha256": "7a35c617f01ed3789ab4887006b54d12ee99d968c803c354bb43351d2a623323",
+          "semantic": false,
+          "non_semantic_reason": "Restore internal model/effort inputs, exclude privileged binding metadata from namespace-provider classification, and retain verified preference updates in the original host-bound privileged launch witness. HTTP-45 schemas, event payloads and negotiation floors are unchanged; full frontend rehydration, cold resume and authenticated same-host reattachment regressions cover internal continuity without recapturing frozen packets."
         },
         {
           "path": "plugins/agent-bridge/src/agent_bridge/routes/worktrees.py",
