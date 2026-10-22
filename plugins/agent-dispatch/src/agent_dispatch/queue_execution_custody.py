@@ -9,10 +9,15 @@ from typing import Literal
 
 from .execution_effect_adapter import ExecutionScope, _token
 from .queue_execution_handoff import _scope_key, require_execution_admission
+from .queue_execution_lineage import execution_lineage_match_sql
 from .queue_records import TaskError
 
 SendKind = Literal["launch", "resume", "deliver", "redrive"]
 SendOutcome = Literal["sent", "not_sent", "unknown"]
+
+
+class ExecutionSendUnresolved(TaskError):
+    """Admission is deferred until an earlier transport outcome is reconciled."""
 
 
 @dataclass(frozen=True)
@@ -47,6 +52,20 @@ class ExecutionSend:
     replayed: bool
 
 
+def execution_scope_qualified(conn: sqlite3.Connection, repo: str, source: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM execution_scope_bindings WHERE repo = ? AND source = ?"
+        " UNION ALL SELECT 1 FROM execution_runtime_enrollments WHERE repo = ? AND source = ?"
+        " UNION ALL SELECT 1 FROM execution_send_custody WHERE repo = ? AND source = ?"
+        " UNION ALL SELECT 1 FROM execution_admission_closures WHERE repo = ? AND source = ?"
+        " UNION ALL SELECT 1 FROM wake_outbox w JOIN tasks t ON t.id = w.task_id"
+        " WHERE t.repo = ? AND t.source = ? AND w.execution_scope_key IS NOT NULL"
+        " UNION ALL SELECT 1 FROM run_waiter_wakes w JOIN tasks t ON t.id = w.task_id"
+        " WHERE t.repo = ? AND t.source = ? AND w.execution_scope_key IS NOT NULL LIMIT 1",
+        (repo, source) * 6,
+    ).fetchone() is not None
+
+
 def require_custody_scope(conn: sqlite3.Connection, key: str, repo: str, source: str) -> None:
     rows = conn.execute(
         "SELECT scope_key, repo, source"
@@ -60,11 +79,38 @@ def require_custody_scope(conn: sqlite3.Connection, key: str, repo: str, source:
         " WHERE scope_key = ? OR (repo = ? AND source = ?)"
         " UNION SELECT scope_key, repo, source"
         " FROM execution_scope_bindings"
-        " WHERE scope_key = ? OR (repo = ? AND source = ?)",
-        (key, repo, source, key, repo, source, key, repo, source, key, repo, source),
+        " WHERE scope_key = ? OR (repo = ? AND source = ?)"
+        " UNION SELECT w.execution_scope_key AS scope_key, t.repo, t.source"
+        " FROM wake_outbox w JOIN tasks t ON t.id = w.task_id"
+        " WHERE w.execution_scope_key IS NOT NULL"
+        " AND (w.execution_scope_key = ? OR (t.repo = ? AND t.source = ?))"
+        " UNION SELECT w.execution_scope_key AS scope_key, t.repo, t.source"
+        " FROM run_waiter_wakes w JOIN tasks t ON t.id = w.task_id"
+        " WHERE w.execution_scope_key IS NOT NULL"
+        " AND (w.execution_scope_key = ? OR (t.repo = ? AND t.source = ?))",
+        (key, repo, source) * 6,
     ).fetchall()
     if any((row["scope_key"], row["repo"], row["source"]) != (key, repo, source) for row in rows):
         raise TaskError("execution custody conflicts with the qualified producer scope")
+
+
+def require_execution_wake_reconciliation(
+    conn: sqlite3.Connection,
+    task_id: str,
+    *,
+    exclusive_key: str | None,
+    creation_prefix: str | None = None,
+) -> None:
+    from .queue_execution_wakes import unresolved_wake_send
+
+    wake = unresolved_wake_send(
+        conn, task_id, exclusive_key=exclusive_key, creation_prefix=creation_prefix
+    )
+    if wake is not None:
+        raise ExecutionSendUnresolved(
+            f"unresolved execution wake send {wake['id']!r} has unresolved transport custody;"
+            " reconcile its transport outcome"
+        )
 
 
 def require_execution_send_reconciliation(
@@ -75,12 +121,18 @@ def require_execution_send_reconciliation(
     creation_prefix: str | None = None,
 ) -> None:
     """Do not turn terminal reservation bookkeeping into transport absence."""
+    require_execution_wake_reconciliation(
+        conn, task_id, exclusive_key=exclusive_key, creation_prefix=creation_prefix
+    )
     row = conn.execute(
         "SELECT c.send_id, c.state, c.reservation_key"
         " FROM execution_send_custody c"
         " JOIN spawn_reservations r ON r.key = c.reservation_key"
+        " JOIN tasks retained ON retained.id = c.task_id"
+        " JOIN tasks current ON current.id = ?"
         " WHERE c.state IN ('pending', 'unknown')"
-        " AND (c.task_id = ? OR r.exclusive_key = ?"
+        " AND (" + execution_lineage_match_sql("retained", "current")
+        + " OR r.exclusive_key = ?"
         " OR (? IS NOT NULL AND r.creation_key LIKE ?))"
         " LIMIT 1",
         (
@@ -91,7 +143,7 @@ def require_execution_send_reconciliation(
         ),
     ).fetchone()
     if row is not None:
-        raise TaskError(
+        raise ExecutionSendUnresolved(
             f"unresolved execution send {row['send_id']!r} ({row['state']})"
             f" on reservation {row['reservation_key']!r};"
             " reconcile its transport outcome before retrying execution"
@@ -180,6 +232,13 @@ class QueueExecutionCustodyMixin:
             ):
                 raise TaskError("execution send requires the current retained reservation")
             require_execution_admission(conn, reservation["task_id"])
+            require_execution_wake_reconciliation(
+                conn, reservation["task_id"], exclusive_key=reservation["exclusive_key"],
+                creation_prefix=(
+                    reservation["creation_key"].rsplit(":", 1)[0] + ":"
+                    if reservation["creation_key"] is not None else None
+                ),
+            )
             prior = conn.execute(
                 "SELECT send_id FROM execution_send_custody"
                 " WHERE reservation_key = ? AND task_generation = ? AND kind = ?",

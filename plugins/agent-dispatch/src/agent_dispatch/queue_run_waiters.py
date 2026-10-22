@@ -9,6 +9,7 @@ from typing import Any
 
 from .queue_common import PROGRESS_SUMMARY_MAX, RunWaiterWakeOperation, Task, _clip
 from .queue_records import Status, TaskError
+from .queue_execution_wakes import wake_custody_clear_sql
 from .queue_run_waiter_transition_cleanup import CLAIM_RELEASE_SENDER
 from .queue_delegated_waiters import DelegatedWaiterBindingMixin
 from .queue_run_waiter_records import run_waiter_from_row, select_waiter_row
@@ -700,6 +701,7 @@ class QueueRunWaitersMixin(DelegatedWaiterBindingMixin):
             conn.execute("BEGIN IMMEDIATE")
             rows = conn.execute(
                 "SELECT * FROM run_waiter_wakes WHERE status = 'delivering'"
+                " AND COALESCE(execution_send_state, '') NOT IN ('pending', 'unknown')"
                 " AND COALESCE(delivery_expires_at, updated_at + ?) <= ?",
                 (max(0.01, lease_seconds), ts),
             ).fetchall()
@@ -726,9 +728,11 @@ class QueueRunWaitersMixin(DelegatedWaiterBindingMixin):
             while True:
                 row = conn.execute(
                     "SELECT * FROM run_waiter_wakes WHERE status = 'pending' AND not_before <= ?"
-                    " AND (sender = ? OR NOT EXISTS (SELECT 1 FROM execution_admission_closures c"
+                    " AND (sender = ? OR execution_send_state = 'sent' OR ("
+                    + wake_custody_clear_sql("run_waiter_wakes") +
+                    " AND NOT EXISTS (SELECT 1 FROM execution_admission_closures c"
                     " JOIN tasks t ON t.repo = c.repo AND t.source = c.source"
-                    " WHERE t.id = run_waiter_wakes.task_id))"
+                    " WHERE t.id = run_waiter_wakes.task_id)))"
                     " ORDER BY created_at ASC, id ASC LIMIT 1",
                     (ts, CLAIM_RELEASE_SENDER),
                 ).fetchone()
@@ -782,6 +786,9 @@ class QueueRunWaitersMixin(DelegatedWaiterBindingMixin):
             if wake.status != "delivering" or wake.delivery_token != delivery_token:
                 conn.execute("COMMIT")
                 raise TaskError(f"run waiter wake {wake_id!r} is not held by this delivery")
+            if row["execution_send_state"] in {"pending", "unknown"}:
+                conn.execute("COMMIT")
+                return wake
             task = self._fetch(conn, wake.task_id)
             if not self._run_waiter_wake_is_current(conn, task, wake):
                 conn.execute(
