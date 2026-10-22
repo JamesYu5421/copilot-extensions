@@ -92,6 +92,8 @@ def candidate(root, fixture, primitive):
 
 @pytest.mark.client_distribution_full
 def test_owned_wheel_snapshot_stability(tmp_path, signed_wheel):
+    from fleet_manager import artifacts
+
     staging = construction.artifact_staging
     source = Path(signed_wheel["sources"]["components"]["cli"])
     expected = source.read_bytes()
@@ -101,6 +103,9 @@ def test_owned_wheel_snapshot_stability(tmp_path, signed_wheel):
         before = staging._file_stat(target)
         try:
             assert staging._bytes(target, staging.MAX_ARTIFACT_BYTES) == expected
+            assert artifacts._artifact(target, artifacts.MAX_ARTIFACT_BYTES) == (
+                hashlib.sha256(expected).hexdigest(), len(expected),
+            )
         except PlanError:
             after = staging._file_stat(target)
             print("CLIENT_SNAPSHOT_CONTROL " + json.dumps({
@@ -116,7 +121,7 @@ def test_owned_wheel_snapshot_stability(tmp_path, signed_wheel):
 @pytest.fixture(scope="module")
 def built_client(tmp_path_factory, signed_wheel):
     fixture = signed_wheel
-    area = tmp_path_factory.mktemp("client lifecycle")
+    area = tmp_path_factory.mktemp("client lifecycle \u00e9\u4e2d")
     root = root_at(area)
     start = time.monotonic()
     with retained(fixture, area) as (staged, trusted):
@@ -442,7 +447,7 @@ def test_sanitized_child_environment_preserves_native_custody_tools_without_host
         assert set(os.defpath.split(os.pathsep)) <= set(environment["PATH"].split(os.pathsep))
 
 
-@pytest.mark.parametrize("member", ["_installer_process.py", "_construction_procutil.py"])
+@pytest.mark.parametrize("member", ["_installer_process.py", "_construction_procutil.py", "_runtime_launcher.py"])
 def test_installed_process_resource_replacement_refuses_execution(tmp_path, monkeypatch, member):
     resource = tmp_path / member
     resource.write_bytes(b"raise AssertionError('changed resource executed')\n")

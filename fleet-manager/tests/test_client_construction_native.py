@@ -118,9 +118,9 @@ def request(root, fixture, area):
 
 
 @pytest.mark.timeout(110)
-@pytest.mark.parametrize("activate_runtime", [False, True])
+@pytest.mark.parametrize("transition", ["construct", "activate-runtime", "register-commands"])
 def test_actual_installed_console_client_state_transitions(
-    tmp_path, primitive, signed_wheel, activate_runtime,
+    tmp_path, primitive, signed_wheel, transition,
 ):
     fixture = copy.deepcopy(signed_wheel)
     now = int(time.time())
@@ -130,7 +130,11 @@ def test_actual_installed_console_client_state_transitions(
     signed = independently_sign([fixture["proof"]["payload"]], tmp_path)
     fixture["proof"] = {**fixture["proof"], **signed["proofs"][0]}
     fixture["policy"]["keys"][0]["public_key"] = signed["public_key"]
-    root = root_at(tmp_path)
+    client_home = tmp_path
+    if transition == "register-commands":
+        client_home = tmp_path / "client \u00e9\u4e2d"
+        client_home.mkdir(mode=0o700)
+    root = root_at(client_home)
     staging = tmp_path / "cli-stage"
     staging.mkdir(mode=0o700)
     values = {
@@ -168,7 +172,7 @@ def test_actual_installed_console_client_state_transitions(
     assert reports[2]["target_digest"] == digest(target(fixture))
     assert reports[2]["admitted"] == reports[1]["admitted"]
     assert not primitive.current_version(root / construction.NAMESPACE)
-    if activate_runtime:
+    if transition != "construct":
         result = subprocess.run(
             [str(console), "client-state", "activate-runtime", *base, *inputs,
              "--target", str(paths["target"])], cwd=tmp_path,
@@ -179,6 +183,21 @@ def test_actual_installed_console_client_state_transitions(
         assert activated["active"] and activated["health"]["status"] == "installed"
         assert not activated["frontdoor_registered"] and not activated["live_readiness_verified"]
         assert primitive.current_version(root / construction.NAMESPACE) == reports[2]["candidate"]
+        if transition == "register-commands":
+            directory = tmp_path / "registered commands \u00e9\u4e2d"
+            directory.mkdir(mode=0o700)
+            floor = database_bytes(root)
+            result = subprocess.run(
+                [str(console), "client-state", "register-commands", *base, *inputs,
+                 "--target", str(paths["target"]), "--command-directory", str(directory)],
+                cwd=tmp_path, capture_output=True, text=True, timeout=90, **FLAGS,
+            )
+            assert result.returncode == 0, result.stderr
+            registered = json.loads(result.stdout)
+            assert registered["frontdoor_registered"] and not registered["path_modified"]
+            assert not registered["live_readiness_verified"]
+            assert registered["candidate"] == reports[2]["candidate"]
+            assert database_bytes(root) == floor
 
 
 @pytest.mark.timeout(110)
