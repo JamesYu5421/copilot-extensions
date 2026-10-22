@@ -27,6 +27,11 @@ from pathlib import Path
 from worktree_identity import parse_machine_identity
 
 from . import agent_plugin_runtime
+from .engine_environment import (
+    _PYTHON_PARENT_ENV as _PYTHON_PARENT_ENV,
+    _engine_environment as _engine_environment,
+    _is_parent_python_variable as _is_parent_python_variable,
+)
 
 #: The engine binstub name (the self-provisioning agent-worktrees tool CLI).
 ENGINE_BIN = "agent-worktrees"
@@ -47,34 +52,6 @@ ENGINE_ARGV_ENV = "WORKTREE_MANAGER_ENGINE_ARGV"
 #: pass can enumerate many worktrees. Kept bounded so the Manager never hangs.
 _DEFAULT_TIMEOUT = 120
 _REMOTE_ADMISSION_TIMEOUT = 240
-_PYTHON_PARENT_ENV = {
-    "PYTHONHOME",
-    "PYTHONPATH",
-    "PYTHONEXECUTABLE",
-    "VIRTUAL_ENV",
-    "UV_INTERNAL__PYTHONHOME",
-    "__PYVENV_LAUNCHER__",
-}
-
-
-def _is_parent_python_variable(name: str, *, windows: bool) -> bool:
-    candidate = name.upper() if windows else name
-    return candidate in _PYTHON_PARENT_ENV
-
-
-def _engine_environment(environment: dict[str, str] | None = None) -> dict[str, str]:
-    """Build a clean environment for the independently installed engine."""
-    windows = os.name == "nt"
-    env = {
-        key: value
-        for key, value in (os.environ if environment is None else environment).items()
-        if not _is_parent_python_variable(key, windows=windows)
-    }
-    env["PYTHONUTF8"] = "1"
-    env["PYTHONSAFEPATH"] = "1"
-    return env
-
-
 class EngineError(RuntimeError):
     """The agent-worktrees engine is absent, failed, or returned no valid JSON.
 
@@ -160,18 +137,15 @@ def accept_inherited_engine_command() -> str | None:
     return None
 
 
-def installed_engine_command() -> list[str] | None:
-    """Resolve the exact marker-selected agent-worktrees runtime.
+def installed_engine_command(environment: dict[str, str] | None = None) -> list[str] | None:
+    """Resolve the marker-selected runtime under ordinary or call-scoped ownership.
 
-    Delegates to the generic, plugin-name-parameterized resolver in
-    ``agent_plugin_runtime`` (Phase 3b/4 follow-on) so every agent-* peer is
-    located the same way agent-worktrees is here: the attributable install
-    receipt (legacy ``deploy-manifest.json``, or a namespaced ``install.json``
-    when the shared installation-mode policy has marketplace cells enabled
-    and an explicit context names this exact plugin) selects the immutable
-    runtime slot. A bare command name or PATH lookup is never accepted.
+    The shared receipt resolver never accepts PATH or a bare command name.
+    An explicit recovery environment must not reuse an inherited stale command.
     """
-    return agent_plugin_runtime.resolve_installed_plugin_command(ENGINE_BIN)
+    return agent_plugin_runtime.resolve_installed_plugin_command(
+        ENGINE_BIN, **({"environment": environment} if environment is not None else {}),
+    )
 
 
 #: In-process base-command override (wins over the env). Set by the Picker's
@@ -322,7 +296,8 @@ def run_json(project: str | None, args: list[str], *,
 
 
 def run_engine_passthrough(project: str | None, args: list[str], *,
-                           timeout: int | None = None) -> int:
+                           timeout: int | None = None,
+                           environment: dict[str, str] | None = None) -> int:
     """Run an engine verb with **inherited stdio**, returning its exit code.
 
     Unlike :func:`run_json` (which captures + parses), this streams the engine's
@@ -331,8 +306,10 @@ def run_engine_passthrough(project: str | None, args: list[str], *,
     ``agent-worktrees update --no-manager`` (the seam bypass the Manager re-enters
     through). Raises :class:`EngineError` with ``install_hint`` when the engine
     binstub is absent.
+    A supplied environment is the complete call-scoped selection and child
+    environment; it bypasses stale inherited command handles.
     """
-    base = engine_base_command()
+    base = engine_base_command() if environment is None else installed_engine_command(environment)
     if base is None:
         raise EngineError(
             f"the {ENGINE_BIN} engine is not installed", install_hint=True)
@@ -343,10 +320,11 @@ def run_engine_passthrough(project: str | None, args: list[str], *,
     from .update_driver_cli import handoff_environment, handoff_launch_options
 
     handoff = handoff_environment(args)
+    child_environment = _engine_environment() if environment is None else _engine_environment(environment)
     try:
         return subprocess.run(
             cmd, timeout=timeout, check=False,
-            **handoff_launch_options(_engine_environment(), handoff),
+            **handoff_launch_options(child_environment, handoff),
         ).returncode
     except subprocess.TimeoutExpired as e:
         raise EngineError(f"{ENGINE_BIN} {' '.join(args)} timed out") from e

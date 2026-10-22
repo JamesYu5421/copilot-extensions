@@ -19,10 +19,10 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 
-import installer_engine as engine
-from installer_engine_process import _settle
-import versioned_runtime as runtime
-import versioned_runtime_source as runtime_source
+import installer_engine as engine  # noqa: E402
+from installer_engine_process import _settle  # noqa: E402
+import versioned_runtime as runtime  # noqa: E402
+import versioned_runtime_source as runtime_source  # noqa: E402
 
 
 def base_python() -> Path:
@@ -180,12 +180,40 @@ def activate(root: Path, version: str, *, expected: str | None, after_publish=No
                     raise
 
 
+def _activate_after_bootstrap_update(root: Path, slot: Path) -> None:
+    python = runtime.slot_python(root, slot.name)
+    if python is None:
+        raise RuntimeError("Constructed Manager has no activation interpreter")
+    command = [
+        str(python), "-I", "-S", "-B", "-X", "utf8",
+        str(slot / ".runtime-bootstrap" / "runtime_launcher.py"),
+        "-m", "worktree_manager.bootstrap_activation", "--root", str(root),
+    ]
+    process = subprocess.Popen(
+        command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8",
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    try:
+        stdout, stderr = process.communicate()
+    except BaseException:
+        _settle(process.communicate)
+        raise
+    if stdout:
+        print(stdout, end="", flush=True)
+    if stderr:
+        print(stderr, end="", file=sys.stderr, flush=True)
+    if process.returncode:
+        raise RuntimeError(f"Constructed Manager daemon activation failed ({process.returncode})")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path)
     parser.add_argument("--payload", type=Path, default=SCRIPTS.parent)
     parser.add_argument("--recover-adopted", type=Path)
     parser.add_argument("--describe-recovery", action="store_true")
+    parser.add_argument("--repair-update", action="store_true")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     if args.describe_recovery:
@@ -196,8 +224,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.root is None:
         parser.error("--root is required for installation")
+    command = args.command[1:] if args.command[:1] == ["--"] else args.command
+    if args.repair_update and command[:1] != ["update"]:
+        parser.error("Bootstrap repair is only valid for update")
     os.environ.pop("__PYVENV_LAUNCHER__", None)
     os.environ["WORKTREE_MANAGER_ROOT"] = str(args.root.resolve())
+    if args.repair_update:
+        from update_entry import validate_manager_ownership
+
+        validate_manager_ownership(args.root, args.payload)
     # Only bootstrap installer modules are read from source. Application execution
     # happens below under the constructed interpreter and retention bootstrap.
     sys.path.insert(0, str(args.payload / "src"))
@@ -242,12 +277,21 @@ def main(argv: list[str] | None = None) -> int:
             if process.returncode:
                 return process.returncode
     else:
-        result = self_install(args.payload, root=args.root, dry_run=False)
+        if args.repair_update:
+            result = self_install(
+                args.payload, root=args.root, dry_run=False,
+                _before_publish=lambda: validate_manager_ownership(args.root, args.payload),
+                _after_activate=lambda slot: _activate_after_bootstrap_update(args.root, slot),
+                _transactional_activation=True,
+            )
+        else:
+            result = self_install(args.payload, root=args.root, dry_run=False)
         if result.action == "error":
             print(result.reason, file=sys.stderr)
             return 1
         slot = Path(result.slot)
-    command = args.command[1:] if args.command[:1] == ["--"] else args.command
+    if args.repair_update:
+        command = ["update", "--repair-engine", str(args.payload.parent), *command[1:]]
     python = runtime.slot_python(args.root, slot.name)
     if python is None:
         raise RuntimeError("Constructed Manager has no interpreter")
