@@ -60,7 +60,7 @@ command reuses that route instead of trying to bind the same remote port again.
 the caller terminal and prints a JSON handle with `status`, `observe`, `nudge`,
 `attach`, and `stop` commands; `--stop` verifies the detached session is gone and
 releases its bridge forward. The remote machine must already have `bash`, `tmux`,
-`copilot`, `agent-worktrees`, and the `agent-bridge` Copilot plugin installed.
+Python 3.10 or newer, `copilot`, `agent-worktrees`, and the `agent-bridge` Copilot plugin installed.
 Windows SSH targets are not supported yet; run the orchestrator on that machine
 and use local `agent-worktrees embody` there.
 
@@ -79,6 +79,99 @@ out.
 `--ref-file PATH` (repeatable) copies an operator file outside the checkout to
 `~/.agent-bridge/refs/<batch>/` and names it to the worker (seed for a new
 session, a message on rejoin).
+
+Both attached and detached launches use the existing shared native launch
+owner. Before starting Copilot, the SSH channel streams repository-scoped
+plugin preparation into the actual anchor checkout. Repeatable
+`--stage-plugin <name@marketplace>`, `--stage-plugin-disabled`, and
+`--plugin-root` inputs preserve controller selection, target-native sources and
+explicit target disables. Local sources are reflected, Git origins remain Git
+declarations, and registered target-owned absolute sources rebind to the
+receiver checkout. Plugin registration writes repository `settings.local.json`,
+not user-global enablement. CLI loads the merged repository settings without
+repeating those identities as `--plugin-dir`.
+
+The host Bridge must be reachable for either launch mode. Seeds are never
+typed into a pane: the owner requires a native deferred-seed receipt, then
+admits the seed through Bridge's complete prepared-plugin readiness gate.
+Attached mode only attaches the existing tmux session after that admission.
+A rejoin does not replay the original launch task. An unknown admission keeps
+the native session, forward hold and separate durable delivery journal; repeat
+the same command to reconcile the original operation before submitting new
+work. Keeper replacement does not discard that journal. Older owners without
+the receipt and installed-only payloads without native marketplace origins
+fail explicitly, without an ACP fallback or plugin reload.
+
+On POSIX, the delivery directory is made owner-only before every journal
+access, including existing directories. A verified `--stop` archives the exact
+pending operation under its private `retired` directory before removing its
+active entry; failed stop or changed ownership retains the journal. A later
+launch can start fresh without losing the stopped operation's evidence.
+Before terminating a pending launch, stop captures its original hold and
+timestamp. After verified termination it conditionally releases that hold
+before retiring the journal, so startup grace cannot carry an orphan hold
+into an immediate fresh attachment. Unrelated or subsequently refreshed holds
+are preserved; hold-cleanup failure leaves the active journal recoverable.
+Recovery updates and clears compare the complete original entry under the
+journal lock, so a concurrent retry cannot overwrite or erase a newer operation.
+The full expected-repository fence runs before recovery as well as preparation.
+The forward stays tied to the live launcher throughout preparation, then
+transfers to mux liveness; an attached client subsequently transfers its hold
+to that client's PID and releases the refreshed hold when attach exits.
+The delivery journal retains that hold's identity: recovery reacquires the
+same hold instead of creating an additional attached hold, including across
+repeated unknown admissions. The eventual attached exit releases the original
+hold while preserving unrelated sessions. A journal without its original hold
+identity is refused rather than guessing which hold to retire.
+An existing, probe-confirmed live mux hold stays mux-backed during rejoin, so
+a failed reservation or preparation cannot leave it tied to an exiting caller.
+If the old mux probe is indeterminate, acquisition may temporarily use the
+launcher PID; a pre-handoff failure restores the exact original mux hold and
+its confirmation history under lock, only while the caller still owns that
+transition. A changed owner is never overwritten.
+Stop refuses a scope that still has a launcher-PID hold rather than treating
+that liveness token as a tmux target or releasing native ownership.
+Launch, recovery and stop also share a controller-local, cross-process lock
+for the resolved native scope. A competing operation fails promptly without
+changing holds or reservations, including while attached preparation is active.
+The lock covers final cleanup and journal retirement but not the interactive
+attach lifetime; unrelated scopes and the keeper's monitoring lock stay independent.
+Graceful Ctrl+C is deferred from before receiver-thread startup until the
+bounded receiver returns, then the previous signal handler is restored and
+the interruption propagates. POSIX preparation transports start in a separate
+session so the terminal's signal group cannot independently kill SSH while
+the caller is waiting for receiver cleanup. This is not a forced-process-kill
+or lost-host recovery guarantee.
+
+`namespace-target-repo <ssh-target>` is the read-only query Bridge uses to
+select related plugins from the actual remote workspace's configured Git
+remote. The native owner's `get git-remote` query supplies the remote name
+(default `origin`), including upstream-only checkouts; an owner that lacks this
+query fails explicitly rather than silently selecting no related plugins.
+Filesystem origins use distinct, case-sensitive keys, not GitHub slug keys.
+The query does not infer a repository from the SSH alias. Bridge forwards that selection and
+the controller's current checkout before its fallback roots, and fences the
+launch against a changed repository. SSH CLI remains anchor-only:
+`--worktree-id` is not silently redirected to an anchor.
+Machine-only related entries are matched through the registered project's
+full Git remote, never a basename guess; the full remote coordinate still
+fences launch, and ambiguous project mappings are refused.
+An explicit expected-repository fence also applies to stop. The native anchor
+directory is resolved on the target before checkout comparison, so equivalent
+symlink/trailing-slash spellings retain the canonical execution root without
+accepting a genuinely different anchor.
+The original reservation includes the checkout-probe and preparation budgets,
+including both transport grace periods, in addition to upload, native launch
+and registration. This lengthens only the ownership lease, not any execution
+timeout or test cap.
+
+Repository discovery uses one bounded receiver, not the launch-time native
+anchor resolution or a second checkout probe. Its 60-second receiver budget
+and 20-second transport/cleanup allowance fit within Bridge's unchanged
+90-second discovery deadline. Launch still independently resolves and fences
+the actual native anchor before reservation and preparation. Network remote
+keys reuse the same parser as Bridge's plugin activation, including userless
+SCP notation and URL path decoding; filesystem keys remain type-distinct.
 
 `restore-host` exposes transport-owned host setup to declarative orchestrators
 without requiring them to know installed payload paths:

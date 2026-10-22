@@ -13,9 +13,12 @@ from pathlib import Path
 
 import pytest
 from ssh_manager import keeper_holds as shared_keeper_holds
+from agent_procutil import no_window_flags
 from venue_copilot import detached as venue_detached
 
 from agent_ssh import copilot_detach as detach
+from agent_ssh.copilot_detach import ensure_keeper as real_ensure_keeper, stop_keeper as real_stop_keeper
+from agent_ssh.copilot_plugins import resolve_launch as real_resolve_launch
 from agent_ssh.__main__ import main
 
 
@@ -37,11 +40,20 @@ def _args(**kw):
     return argparse.Namespace(**base)
 
 
+@pytest.fixture(autouse=True)
+def native_owner(monkeypatch):
+    monkeypatch.setattr("agent_ssh.copilot_plugins.resolve_launch", lambda *a: None)
+
+
 @pytest.fixture
-def seams(monkeypatch):
+def seams(monkeypatch, tmp_path):
     # Hermetic: never read the developer's own ~/.copilot/settings.json model.
     monkeypatch.setattr(detach, "with_supervisor", lambda venue, ref=None: dict(venue))
     monkeypatch.setattr(detach, "model_copilot_args", lambda existing: [])
+    monkeypatch.setattr(detach, "_STORE", detach.KeeperStore(tmp_path / "keepers"))
+    context = {"version": 1, "cwd": "/workspaces/repo", "plugins": [], "logical_payloads": {}}
+    monkeypatch.setattr("agent_ssh.copilot_plugins.prepare", lambda *a: dict(context))
+    monkeypatch.setattr("venue_copilot.refs.deliver_note", lambda *a, **kw: True)
     calls = types.SimpleNamespace(
         remote=[],
         reserve=[],
@@ -88,7 +100,8 @@ def seams(monkeypatch):
         "ok": True,
         "created": True,
         "resumed": False,
-        "seed_submitted": True,
+        "seed_submitted": False,
+        "bridge_seed_deferred": True,
         "session": "wt-anchor-repo",
     })
 
@@ -139,7 +152,123 @@ def test_detach_success_reserves_ssh_venue_and_reports_handle(seams, capsys):
     assert seams.release == [("anchor-repo@devbox", "r1")]
 
 
-def test_attached_default_uses_venue_copilot_over_ssh(seams, monkeypatch):
+def test_streamed_receiver_transport_is_isolated_from_terminal_signals(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(detach, "build_remote_exec_args", lambda *a, **kw: ["ssh", "synthetic"])
+    def run(argv, **kwargs):
+        seen.update(kwargs)
+        return types.SimpleNamespace(returncode=0, stdout=b"ready", stderr=b"")
+    monkeypatch.setattr(detach.subprocess, "run", run)
+    assert detach._remote_input(object(), "prepare", b"program", timeout=30) == (0, "ready", "")
+    assert seen["start_new_session"] is (os.name != "nt")
+    assert seen["creationflags"] == no_window_flags()
+    assert seen["input"] == b"program"
+
+
+def test_stop_checks_explicit_repository_fence_before_termination(seams, monkeypatch):
+    monkeypatch.setattr("agent_ssh.copilot_plugins.resolve_launch", real_resolve_launch)
+    monkeypatch.setattr("agent_ssh.copilot_plugins.probe_checkout", lambda *a: {
+        "cwd": "/workspaces/repo", "root": "/workspaces/repo", "repository": "other/project",
+    })
+    assert detach.cmd_stop(_args(stop=True, detach=False, expected_repository="example/project")) == 1
+    assert seams.release == [] and seams.deregister == [] and seams.stop_keeper == []
+    assert not any("tmux kill-session" in command for command in seams.remote)
+    assert not any("agent-worktrees embody" in command for command in seams.remote)
+
+
+def test_reservation_covers_preparation_and_supported_native_launch_budgets(seams, monkeypatch, capsys):
+    clock = [1000.0]
+    def prepare(*a):
+        clock[0] += 750.0  # Probe + preparation + both transport grace periods.
+        return {"version": 1, "cwd": "/workspaces/repo", "plugins": [], "logical_payloads": {}}
+    monkeypatch.setattr("agent_ssh.copilot_plugins.prepare", prepare)
+    remote = detach._remote
+    def launch(_cfg, command, **kwargs):
+        if "agent-worktrees embody" in command:
+            clock[0] += venue_detached._SEEDED_LAUNCH_TIMEOUT
+        return remote(_cfg, command, **kwargs)
+    monkeypatch.setattr(detach, "_remote", launch)
+    def claim(*a):
+        assert clock[0] < 1000.0 + seams.reserve[0][2]["ttl_seconds"]
+        return "sid-42"
+    monkeypatch.setattr(venue_detached, "await_claim", claim)
+    assert detach.cmd_detach(_args()) == 0
+    assert seams.reserve[0][2]["ttl_seconds"] >= 750.0 + venue_detached._SEEDED_LAUNCH_TIMEOUT + 120.0
+    assert "preparation_reservation_budget" not in json.loads(capsys.readouterr().out)
+
+
+@pytest.mark.parametrize("attached", [False, True])
+def test_preparation_failure_prevents_native_launch_and_attach(seams, monkeypatch, attached):
+    def refuse(*a):
+        raise RuntimeError("required plugin absent")
+    monkeypatch.setattr("agent_ssh.copilot_plugins.prepare", refuse)
+    monkeypatch.setattr(detach.subprocess, "Popen", lambda *a, **kw: pytest.fail("must not attach"))
+    args = _args(detach=not attached, copilot_args=[] if attached else ["--no-ask-user"])
+    assert (detach.cmd_attached(args) if attached else detach.cmd_detach(args)) == 1
+    assert not any("agent-worktrees embody" in command for command in seams.remote)
+    assert seams.stop_keeper
+
+
+@pytest.mark.parametrize("attached", [False, True])
+def test_unknown_seed_admission_retains_session_keeper_and_journal(seams, monkeypatch, attached):
+    from agent_ssh import copilot_delivery
+    monkeypatch.setattr("venue_copilot.refs.deliver_note", lambda *a, **kw: False)
+    monkeypatch.setattr(detach.subprocess, "Popen", lambda *a, **kw: pytest.fail("must not attach"))
+    args = _args(detach=not attached, copilot_args=[] if attached else ["--no-ask-user"])
+    assert (detach.cmd_attached(args) if attached else detach.cmd_detach(args)) == 75
+    assert seams.stop_keeper == [] and seams.release == []
+    assert not any("tmux kill-session" in command for command in seams.remote)
+    pending = copilot_delivery.read("devbox", "anchor-repo@devbox")
+    assert pending["status"] == "unknown"
+    assert pending["envelope"]["prompt"] == "do the task"
+    assert pending["requested_workspace"] == "/workspaces/repo"
+    assert pending["keeper_hold_id"] == seams.keeper[0][1]["hold_id"]
+
+
+@pytest.mark.parametrize("stopped", [False, True])
+def test_unknown_delivery_verified_stop_retires_evidence_and_allows_fresh_launch(
+    seams, monkeypatch, stopped,
+):
+    from agent_ssh import copilot_delivery
+
+    monkeypatch.setattr("venue_copilot.refs.deliver_note", lambda *a, **kw: False)
+    assert detach.cmd_detach(_args()) == 75
+    pending = copilot_delivery.read("devbox", "anchor-repo@devbox")
+    remote = detach._remote
+    def stop(_cfg, command, **kwargs):
+        if "tmux kill-session" in command and not stopped:
+            return 3, "STILL_RUNNING", ""
+        return remote(_cfg, command, **kwargs)
+    monkeypatch.setattr(detach, "_remote", stop)
+    assert detach.cmd_stop(_args(stop=True, detach=False)) == (0 if stopped else 1)
+    current = copilot_delivery.read("devbox", "anchor-repo@devbox")
+    archives = list((copilot_delivery._store().state_dir / "retired").glob("*.json"))
+    if not stopped:
+        assert current == pending and archives == []
+        assert seams.release == [] and seams.stop_keeper == [] and seams.deregister == []
+        return
+    assert current is None and len(archives) == 1
+    assert json.loads(archives[0].read_text()) == {
+        "version": 1, "status": "verified_stopped", "target": "devbox", "delivery": pending,
+    }
+    monkeypatch.setattr("venue_copilot.refs.deliver_note", lambda *a, **kw: True)
+    assert detach.cmd_detach(_args(seed="fresh task")) == 0
+    assert len(seams.reserve) == 2
+    assert json.loads(archives[0].read_text())["delivery"] == pending
+
+
+def test_legacy_worktrees_receipt_refuses_unproven_typed_seed(seams, monkeypatch):
+    def remote(_cfg, command, *, timeout=60):
+        seams.remote.append(command)
+        if "agent-worktrees embody" in command:
+            return 0, json.dumps({"ok": True, "created": True, "seed_submitted": True}), ""
+        return 0, "", ""
+    monkeypatch.setattr(detach, "_remote", remote)
+    assert detach.cmd_detach(_args()) == 1
+    assert any("tmux kill-session" in command for command in seams.remote)
+
+
+def test_attached_prepares_and_admits_before_mux_attach(seams, monkeypatch):
     monkeypatch.setattr(
         detach,
         "_ssh_config",
@@ -154,13 +283,7 @@ def test_attached_default_uses_venue_copilot_over_ssh(seams, monkeypatch):
     monkeypatch.setattr(detach, "_ensure_posix", lambda _cfg: None)
     monkeypatch.setattr(detach, "_ensure_remote_tooling", lambda _cfg: None)
     monkeypatch.setattr(detach, "resolve_daemon_port", lambda: 41234)
-    monkeypatch.setattr(detach, "resolve_local_auth_token", lambda: "tok")
     seen = {}
-
-    def fake_run_venue(identity, *, connect, **kwargs):
-        seen["identity"] = identity
-        seen["kwargs"] = kwargs
-        return connect("agent-worktrees copilot --anchor")
 
     class FakeProcess:
         pid = 999
@@ -173,7 +296,6 @@ def test_attached_default_uses_venue_copilot_over_ssh(seams, monkeypatch):
         seen["subprocess_kwargs"] = kwargs
         return FakeProcess()
 
-    monkeypatch.setattr(detach, "run_venue_copilot", fake_run_venue)
     monkeypatch.setattr(detach.subprocess, "Popen", fake_popen)
 
     rc = detach.cmd_attached(
@@ -181,32 +303,24 @@ def test_attached_default_uses_venue_copilot_over_ssh(seams, monkeypatch):
     )
 
     assert rc == 0
-    assert seen["identity"] == "anchor-repo"
-    assert seen["kwargs"] == {
-        "anchor": True,
-        "ttl_seconds": 300.0,
-        "driver": "orchestrator",
-        "seed": "do the task",
-        "ensure_mux": True,
-    }
+    assert seams.reserve[0][0] == "anchor-repo@devbox"
     argv = seen["ssh_argv"]
     assert "-t" in argv
     assert "-R" not in argv
     assert seams.keeper[0][1].items() >= {
         "venue_port": 41234,
         "mux": "wt-anchor-repo",
-        "hold_pid": os.getpid(),
     }.items()
     assert seams.keeper[0][1]["hold_id"].startswith(f"attached:{os.getpid()}:")
     assert seams.stop_keeper == [("devbox", seams.keeper[0][1]["hold_id"])]
     remote_command = argv[-1]
     assert remote_command.startswith("bash -lc ")
-    assert "cd /workspaces/repo" in remote_command
-    assert "trustedFolders" in remote_command
-    assert "agent-worktrees copilot --anchor" in remote_command
-    assert remote_command.index("cd /workspaces/repo") < remote_command.index(
-        "agent-worktrees copilot --anchor"
-    )
+    assert "tmux attach-session -t" in remote_command
+    launch = next(command for command in seams.remote if "agent-worktrees embody" in command)
+    assert "cd /workspaces/repo" in launch
+    assert "trustedFolders" in launch
+    assert "--bridge-seed-pending" in launch
+    assert "do the task" not in launch
     assert "auth.yaml" not in remote_command
     assert any("auth.yaml" in command for command in seams.remote)
 
@@ -221,25 +335,18 @@ def test_attached_releases_its_keeper_hold_when_launch_fails(seams, monkeypatch,
     monkeypatch.setattr(detach, "_ensure_posix", lambda _cfg: None)
     monkeypatch.setattr(detach, "_ensure_remote_tooling", lambda _cfg: None)
     monkeypatch.setattr(detach, "resolve_daemon_port", lambda: 41234)
-    monkeypatch.setattr(detach, "resolve_local_auth_token", lambda: "tok")
-
-    def fake_run_venue(identity, *, connect, **kwargs):
-        if failure == "reservation":
+    if failure == "reservation":
+        def refuse(*a, **kw):
             raise detach.VenueCopilotError("reservation refused")
-        return connect("agent-worktrees copilot --anchor")
+        monkeypatch.setattr(venue_detached, "reserve_with_retry", refuse)
 
     def failing_popen(argv, **kwargs):
         raise OSError("ssh could not start")
 
-    monkeypatch.setattr(detach, "run_venue_copilot", fake_run_venue)
     monkeypatch.setattr(detach.subprocess, "Popen", failing_popen)
 
     args = _args(detach=False, workspace="/workspaces/repo", copilot_args=[])
-    if failure == "reservation":
-        assert detach.cmd_attached(args) == 1
-    else:
-        with pytest.raises(OSError):
-            detach.cmd_attached(args)
+    assert detach.cmd_attached(args) == 1
     assert seams.stop_keeper == [("devbox", seams.keeper[0][1]["hold_id"])]
 
 
@@ -258,17 +365,10 @@ def test_attached_skips_reverse_forward_when_live_keeper_holds_route(seams, monk
     monkeypatch.setattr(detach, "_ensure_posix", lambda _cfg: None)
     monkeypatch.setattr(detach, "_ensure_remote_tooling", lambda _cfg: None)
     monkeypatch.setattr(detach, "resolve_daemon_port", lambda: 41234)
-    monkeypatch.setattr(detach, "resolve_local_auth_token", lambda: "tok")
     monkeypatch.setattr(detach, "read_keeper_state", lambda target: {"venue_port": 41234})
     monkeypatch.setattr(detach._STORE, "alive", lambda key: True)
     monkeypatch.setattr(detach, "_update_keeper_hold_pid", lambda *a, **k: None)
     seen = {}
-
-    monkeypatch.setattr(
-        detach,
-        "run_venue_copilot",
-        lambda _identity, *, connect, **_kwargs: connect("agent-worktrees copilot --anchor"),
-    )
 
     class FakeProcess:
         pid = 999
@@ -436,6 +536,312 @@ def test_stale_launch_cleanup_does_not_remove_refreshed_keeper_hold(
     assert "anchor-repo@devbox" in state["holds"]
     assert detach._STORE.alive(detach._state_key("devbox")) is True
 
+
+@pytest.fixture
+def real_keeper(seams, monkeypatch):
+    store = detach._STORE
+    monkeypatch.setattr(detach, "ensure_keeper", real_ensure_keeper)
+    monkeypatch.setattr(detach, "stop_keeper", real_stop_keeper)
+    monkeypatch.setattr(detach, "read_keeper_state", lambda target: store.read(target))
+    monkeypatch.setattr(store, "alive", lambda key: store.read(key) is not None)
+    monkeypatch.setattr(store, "stop", lambda key: store.remove(key) or False)
+    monkeypatch.setattr(detach, "process_identity", lambda pid: f"synthetic-{pid}")
+    monkeypatch.setattr(detach, "spawn_keeper", lambda _argv, _env, state, **_kw: {
+        **state, "pid": 99999, "pid_identity": "synthetic-99999",
+    })
+    return store
+
+
+@pytest.mark.parametrize("other_hold", [False, True])
+def test_attached_recovery_reuses_and_releases_original_hold(
+    real_keeper, monkeypatch, other_hold,
+):
+    from agent_ssh import copilot_delivery
+    from venue_copilot.refs import owned_result
+
+    monkeypatch.setattr(detach, "_mux_exists", lambda *a: True)
+    monkeypatch.setattr(detach, "build_remote_exec_args", lambda *a, **kw: ["ssh", "synthetic"])
+    monkeypatch.setattr("venue_copilot.refs.deliver_note", lambda *a, **kw: False)
+    monkeypatch.setattr("venue_copilot.release_cli_mode", lambda *a, **kw: 1)
+    monkeypatch.setattr(detach.subprocess, "Popen", lambda *a, **kw: pytest.fail("must not attach"))
+    args = _args(detach=False, copilot_args=[])
+    assert detach.cmd_attached(args) == 75
+    pending = copilot_delivery.read("devbox", "anchor-repo@devbox")
+    original_hold = pending["keeper_hold_id"]
+    assert set(real_keeper.read("devbox")["holds"]) == {original_hold}
+    if other_hold:
+        detach.ensure_keeper(
+            "devbox", venue_port=41234, mux="wt-other", hold_id="other-scope",
+            probe=lambda mux: True,
+        )
+    admitted = [False]
+    def reconcile(entry):
+        assert entry["operation"] == pending["operation"]
+        assert entry["keeper_hold_id"] == original_hold
+        assert set(real_keeper.read("devbox")["holds"]) == (
+            {original_hold, "other-scope"} if other_hold else {original_hold}
+        )
+        envelope = entry["envelope"]
+        return owned_result(
+            admitted[0], session_id=entry["session_id"], operation=entry["operation"],
+            note=envelope["prompt"], context=envelope["plugin_context"],
+        )
+    monkeypatch.setattr(copilot_delivery, "reconcile_owned_delivery", reconcile)
+    assert detach.cmd_attached(args) == 75
+    admitted[0] = True
+    monkeypatch.setattr(copilot_delivery, "settle_deferred_seed", lambda *a: True)
+    class Child:
+        pid = 12345
+        def wait(self):
+            hold = real_keeper.read("devbox")["holds"][original_hold]
+            assert hold["mux"] == detach._attached_hold_mux(self.pid)
+            return 0
+    monkeypatch.setattr(detach.subprocess, "Popen", lambda *a, **kw: Child())
+    assert detach.cmd_attached(args) == 0
+    assert copilot_delivery.read("devbox", "anchor-repo@devbox") is None
+    state = real_keeper.read("devbox")
+    if other_hold:
+        assert set(state["holds"]) == {"other-scope"}
+    else:
+        assert state is None
+
+
+def test_attached_pid_handoff_releases_with_refreshed_timestamp(real_keeper, monkeypatch):
+    stamps = itertools.count(1000.0)
+    monkeypatch.setattr(shared_keeper_holds.time, "time", lambda: next(stamps))
+    monkeypatch.setattr(detach, "_mux_exists", lambda *a: True)
+    monkeypatch.setattr(detach, "_ssh_config", lambda target: types.SimpleNamespace(
+        config_file=None, port=None, identity_file=None, extra_options={}, ssh_target=target,
+    ))
+    seen = {}
+    class Child:
+        pid = 12345
+        def wait(self):
+            state = real_keeper.read("devbox")
+            hold_id, hold = next(iter(state["holds"].items()))
+            seen["hold_id"] = hold_id
+            assert hold["mux"] == detach._attached_hold_mux(self.pid)
+            seen["timestamp"] = hold["updated_at"]
+            return 0
+    monkeypatch.setattr(detach.subprocess, "Popen", lambda *a, **kw: Child())
+    assert detach.cmd_attached(_args(detach=False, copilot_args=[])) == 0
+    assert seen["timestamp"] > 1000.0
+    state = real_keeper.read("devbox")
+    assert state is None or seen["hold_id"] not in state["holds"]
+
+
+@pytest.mark.parametrize("retained", ["none", "peer", "refreshed"])
+def test_pending_attached_stop_retires_original_hold_before_immediate_fresh_attach(
+    real_keeper, monkeypatch, retained,
+):
+    from agent_ssh import copilot_delivery
+
+    clock, live = [1000.0], [True]
+    monkeypatch.setattr(shared_keeper_holds.time, "time", lambda: clock[0])
+    monkeypatch.setattr(detach, "_mux_exists", lambda _cfg, mux: mux == "wt-peer" or live[0])
+    monkeypatch.setattr(detach, "build_remote_exec_args", lambda *a, **kw: ["ssh", "synthetic"])
+    monkeypatch.setattr("venue_copilot.refs.deliver_note", lambda *a, **kw: False)
+    monkeypatch.setattr(detach.subprocess, "Popen", lambda *a, **kw: pytest.fail("must not attach"))
+    args = _args(detach=False, copilot_args=[])
+    assert detach.cmd_attached(args) == 75
+    pending = copilot_delivery.read("devbox", "anchor-repo@devbox")
+    original = pending["keeper_hold_id"]
+    if retained == "peer":
+        detach.ensure_keeper("devbox", venue_port=41234, mux="wt-peer", hold_id="peer", probe=lambda mux: True)
+    remote = detach._remote
+    def terminate(_cfg, command, **kwargs):
+        if "tmux kill-session" in command:
+            live[0] = False
+            if retained == "refreshed":
+                clock[0] += 1
+                detach._update_keeper_hold_mux("devbox", original, pending["mux_session"])
+        elif "agent-worktrees embody" in command:
+            live[0] = True
+        return remote(_cfg, command, **kwargs)
+    monkeypatch.setattr(detach, "_remote", terminate)
+    assert detach.cmd_stop(_args(stop=True, detach=False, copilot_args=[])) == 0
+    assert copilot_delivery.read("devbox", "anchor-repo@devbox") is None
+    expected = {"peer"} if retained == "peer" else {original} if retained == "refreshed" else set()
+    state = real_keeper.read("devbox")
+    assert set(state["holds"] if state else {}) == expected
+    monkeypatch.setattr("venue_copilot.refs.deliver_note", lambda *a, **kw: True)
+    class Child:
+        pid = 12345
+        def wait(self):
+            holds = real_keeper.read("devbox")["holds"]
+            assert len(holds) == len(expected) + 1
+            assert original in holds if retained == "refreshed" else original not in holds
+            return 0
+    monkeypatch.setattr(detach.subprocess, "Popen", lambda *a, **kw: Child())
+    assert detach.cmd_attached(args) == 0
+    state = real_keeper.read("devbox")
+    assert set(state["holds"] if state else {}) == expected
+    if retained == "refreshed":
+        assert state["holds"][original]["updated_at"] == 1001.0
+
+
+def test_launcher_hold_survives_preparation_beyond_mux_startup_grace(real_keeper, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(shared_keeper_holds.time, "time", lambda: clock[0])
+    monkeypatch.setattr(detach, "_mux_exists", lambda *a: False)
+    def prepare(*a):
+        clock[0] += 400.0  # No mux exists; the real launcher process is still alive.
+        _state, holds, _live = detach._holds().prune_snapshot(
+            "devbox", probe=lambda mux: detach._probe_hold(object(), mux),
+        )
+        hold = holds["anchor-repo@devbox"]
+        assert hold["mux"] == detach._attached_hold_mux(os.getpid())
+        assert real_keeper.alive("devbox")
+        return {"version": 1, "cwd": "/workspaces/repo", "plugins": [], "logical_payloads": {}}
+    monkeypatch.setattr("agent_ssh.copilot_plugins.prepare", prepare)
+    assert detach.cmd_detach(_args()) == 0
+    state = real_keeper.read("devbox")
+    assert state["holds"]["anchor-repo@devbox"]["mux"] == "wt-anchor-repo"
+    assert state["holds"]["anchor-repo@devbox"]["updated_at"] == 1400.0
+
+
+@pytest.mark.parametrize("failure", ["reservation", "preparation"])
+def test_failed_rejoin_preserves_existing_live_mux_hold(real_keeper, monkeypatch, failure):
+    clock = [1000.0]
+    monkeypatch.setattr(shared_keeper_holds.time, "time", lambda: clock[0])
+    monkeypatch.setattr(detach, "_mux_exists", lambda *a: True)
+    detach.ensure_keeper(
+        "devbox", venue_port=41234, mux="wt-anchor-repo", hold_id="anchor-repo@devbox",
+        probe=lambda mux: detach._probe_hold(object(), mux),
+    )
+    def refuse(*a, **kw):
+        state = real_keeper.read("devbox")
+        assert state["holds"]["anchor-repo@devbox"]["mux"] == "wt-anchor-repo"
+        raise RuntimeError("required plugin unavailable")
+    monkeypatch.setattr(
+        "venue_copilot.detached.reserve_with_retry" if failure == "reservation"
+        else "agent_ssh.copilot_plugins.prepare", refuse,
+    )
+    assert detach.cmd_detach(_args()) == 1
+    # The launcher's PID is now gone; only the original native mux is live.
+    monkeypatch.setattr(detach, "process_identity", lambda pid: None)
+    clock[0] += 400.0
+    _state, holds, live_muxes = detach._holds().prune_snapshot(
+        "devbox", probe=lambda mux: detach._probe_hold(object(), mux),
+    )
+    assert holds["anchor-repo@devbox"]["mux"] == "wt-anchor-repo"
+    assert "wt-anchor-repo" in live_muxes and real_keeper.alive("devbox")
+
+
+@pytest.mark.parametrize("failure", ["reservation", "preparation"])
+def test_failed_rejoin_restores_mux_hold_after_indeterminate_probe(real_keeper, monkeypatch, failure):
+    clock = [1000.0]
+    scope = "anchor-repo@devbox"
+    monkeypatch.setattr(shared_keeper_holds.time, "time", lambda: clock[0])
+    detach.ensure_keeper("devbox", venue_port=41234, mux="wt-anchor-repo", hold_id=scope)
+    _state, holds, _live = detach._holds().prune_snapshot("devbox", probe=lambda mux: True)
+    original = dict(holds[scope])
+    clock[0] += 30
+    monkeypatch.setattr(detach, "_mux_exists", lambda *a: None)
+    def refuse(*a, **kw):
+        assert real_keeper.read("devbox")["holds"][scope]["mux"] == detach._attached_hold_mux(os.getpid())
+        raise RuntimeError("required plugin unavailable")
+    monkeypatch.setattr(
+        "venue_copilot.detached.reserve_with_retry" if failure == "reservation"
+        else "agent_ssh.copilot_plugins.prepare", refuse,
+    )
+    assert detach.cmd_detach(_args()) == 1
+    assert real_keeper.read("devbox")["holds"][scope] == original
+    monkeypatch.setattr(detach, "process_identity", lambda pid: None)
+    clock[0] += 400
+    _state, retained, _live = detach._holds().prune_snapshot(
+        "devbox", probe=lambda mux: detach._probe_hold(object(), mux),
+    )
+    assert retained[scope] == original and real_keeper.alive("devbox")
+
+
+def test_original_mux_restoration_cannot_overwrite_a_newer_owner(real_keeper):
+    scope = "anchor-repo@devbox"
+    current = {"mux": "wt-new-owner", "updated_at": 30.0, "confirmed_at": 30.0}
+    real_keeper.write("devbox", {"holds": {scope: current}})
+    adapter = detach._SshAdapter(target="devbox", ssh_config=object(), hold_id=scope)
+    adapter._launch_pending = True
+    adapter._hold_updated_at = 20.0
+    adapter._previous_hold = {"mux": "wt-original", "updated_at": 10.0}
+    with pytest.raises(RuntimeError, match="hold changed"):
+        adapter.restore_keeper_hold()
+    assert real_keeper.read("devbox")["holds"][scope] == current
+
+
+def test_stop_during_preparation_refuses_pid_hold_without_releasing_native_ownership(
+    real_keeper, seams, monkeypatch,
+):
+    def prepare(*a):
+        hold = real_keeper.read("devbox")["holds"]["anchor-repo@devbox"]
+        assert hold["mux"] == detach._attached_hold_mux(os.getpid())
+        assert detach.cmd_stop(_args(stop=True, detach=False)) == 1
+        assert seams.release == [] and seams.deregister == []
+        assert not any("tmux kill-session" in command for command in seams.remote)
+        return {"version": 1, "cwd": "/workspaces/repo", "plugins": [], "logical_payloads": {}}
+    monkeypatch.setattr("agent_ssh.copilot_plugins.prepare", prepare)
+    assert detach.cmd_detach(_args()) == 0
+    assert real_keeper.read("devbox")["holds"]["anchor-repo@devbox"]["mux"] == "wt-anchor-repo"
+
+
+@pytest.mark.parametrize("attached", [False, True])
+def test_active_preparation_excludes_stop_even_without_a_scoped_keeper_hold(seams, monkeypatch, attached):
+    def prepare(*a):
+        assert detach.cmd_stop(_args(stop=True, detach=False)) == 1
+        assert seams.release == [] and seams.deregister == []
+        assert not any("tmux kill-session" in command for command in seams.remote)
+        raise RuntimeError("required plugin unavailable")
+    monkeypatch.setattr("agent_ssh.copilot_plugins.prepare", prepare)
+    args = _args(detach=not attached, copilot_args=[] if attached else ["--no-ask-user"])
+    assert (detach.cmd_attached(args) if attached else detach.cmd_detach(args)) == 1
+
+
+def test_competing_launch_cannot_mutate_an_active_scope(seams, monkeypatch):
+    context = {"version": 1, "cwd": "/workspaces/repo", "plugins": [], "logical_payloads": {}}
+    def prepare(*a):
+        if len(seams.reserve) == 1:
+            assert detach.cmd_detach(_args(seed="competing task")) == 1
+            assert len(seams.reserve) == len(seams.keeper) == 1
+        return dict(context)
+    monkeypatch.setattr("agent_ssh.copilot_plugins.prepare", prepare)
+    assert detach.cmd_detach(_args()) == 0
+
+
+def test_lifecycle_lock_is_cross_process_and_scoped(tmp_path, monkeypatch):
+    monkeypatch.setattr(detach, "_STORE", detach.KeeperStore(tmp_path))
+    program = """
+import sys
+from pathlib import Path
+from agent_ssh import copilot_detach as owner
+owner._STORE = owner.KeeperStore(Path(sys.argv[1]))
+try:
+    with owner._lifecycle_lock(sys.argv[2]):
+        print("ACQUIRED")
+except RuntimeError:
+    print("BUSY")
+    raise SystemExit(3)
+"""
+    def attempt(scope):
+        return subprocess.run(
+            [sys.executable, "-c", program, str(tmp_path), scope],
+            capture_output=True, text=True, timeout=15, creationflags=no_window_flags(),
+        )
+    with detach._lifecycle_lock("anchor-repo@host"):
+        blocked = attempt("anchor-repo@host")
+        assert blocked.returncode == 3 and blocked.stdout.strip() == "BUSY", blocked.stderr
+        other = attempt("anchor-other@host")
+        assert other.returncode == 0 and other.stdout.strip() == "ACQUIRED", other.stderr
+    released = attempt("anchor-repo@host")
+    assert released.returncode == 0 and released.stdout.strip() == "ACQUIRED", released.stderr
+
+
+def test_failed_keeper_handoff_cleans_up_native_session(seams, monkeypatch):
+    def fail(*a):
+        raise RuntimeError("keeper handoff failed")
+    monkeypatch.setattr(detach._SshAdapter, "handoff_keeper", fail)
+    assert detach.cmd_detach(_args()) == 1
+    assert any("tmux kill-session" in command for command in seams.remote)
+    assert seams.stop_keeper == [("devbox", "anchor-repo@devbox")]
+    assert seams.release == [("anchor-repo@devbox", "r1")]
 
 def test_stop_uses_detached_hold_mux_when_attached_hold_is_aggregate_mux(
     tmp_path: Path, monkeypatch, capsys,
@@ -761,7 +1167,9 @@ def test_missing_agent_worktrees_message(seams, monkeypatch, capsys):
 def test_unsubmitted_seed_on_registered_session_is_delivered_over_bridge(seams, monkeypatch, capsys):
     from venue_copilot import refs as venue_refs
 
-    unseeded = json.dumps({"ok": True, "created": True, "seed_submitted": False})
+    unseeded = json.dumps({
+        "ok": True, "created": True, "seed_submitted": False, "bridge_seed_deferred": True,
+    })
     sent = []
     monkeypatch.setattr(venue_refs, "deliver_note", lambda sid, note, **kw: sent.append((sid, note)) or True)
 
@@ -784,7 +1192,9 @@ def test_unsubmitted_seed_on_registered_session_is_delivered_over_bridge(seams, 
 
 
 def test_unsubmitted_seed_without_registration_kills_mux_and_stops_keeper(seams, monkeypatch):
-    unseeded = json.dumps({"ok": True, "created": True, "seed_submitted": False})
+    unseeded = json.dumps({
+        "ok": True, "created": True, "seed_submitted": False, "bridge_seed_deferred": True,
+    })
     monkeypatch.setattr(venue_detached, "await_claim", lambda scope, rid, timeout: None)
 
     def remote(_cfg, command, *, timeout=60.0):
@@ -807,7 +1217,9 @@ def test_rejoin_reuses_keeper_and_does_not_stop_it(seams, monkeypatch, capsys):
         "ensure_keeper",
         lambda *a, **k: {"started": False, "state": {"pid": 123}},
     )
-    resumed = json.dumps({"ok": True, "created": False, "resumed": True})
+    resumed = json.dumps({
+        "ok": True, "created": False, "resumed": True, "bridge_seed_deferred": True,
+    })
 
     def remote(_cfg, command, *, timeout=60.0):
         if "agent-worktrees embody" in command:
@@ -826,7 +1238,9 @@ def test_rejoin_launch_failure_does_not_release_existing_keeper_hold(seams, monk
         "ensure_keeper",
         lambda *a, **k: {"started": False, "state": {"pid": 123}},
     )
-    unseeded = json.dumps({"ok": True, "created": True, "seed_submitted": False})
+    unseeded = json.dumps({
+        "ok": True, "created": True, "seed_submitted": False, "bridge_seed_deferred": True,
+    })
 
     def remote(_cfg, command, *, timeout=60.0):
         seams.remote.append(command)
@@ -981,11 +1395,6 @@ def test_attached_reaps_ssh_child_when_hold_bookkeeping_fails(seams, monkeypatch
     monkeypatch.setattr(detach, "_ensure_posix", lambda _cfg: None)
     monkeypatch.setattr(detach, "_ensure_remote_tooling", lambda _cfg: None)
     monkeypatch.setattr(detach, "resolve_daemon_port", lambda: 41234)
-    monkeypatch.setattr(detach, "resolve_local_auth_token", lambda: "tok")
-    monkeypatch.setattr(
-        detach, "run_venue_copilot",
-        lambda _identity, *, connect, **_kwargs: connect("agent-worktrees copilot --anchor"),
-    )
     events = []
 
     class FakeProcess:
@@ -1005,8 +1414,7 @@ def test_attached_reaps_ssh_child_when_hold_bookkeeping_fails(seams, monkeypatch
 
     monkeypatch.setattr(detach, "_update_keeper_hold_pid", failing_update)
 
-    with pytest.raises(RuntimeError):
-        detach.cmd_attached(_args(detach=False, workspace="/workspaces/repo", copilot_args=[]))
+    assert detach.cmd_attached(_args(detach=False, workspace="/workspaces/repo", copilot_args=[])) == 1
     assert events == ["terminate", "wait"]
     assert seams.stop_keeper == [("devbox", seams.keeper[0][1]["hold_id"])]
 
@@ -1020,11 +1428,6 @@ def test_attached_result_survives_a_failed_final_hold_release(seams, monkeypatch
     monkeypatch.setattr(detach, "_ensure_posix", lambda _cfg: None)
     monkeypatch.setattr(detach, "_ensure_remote_tooling", lambda _cfg: None)
     monkeypatch.setattr(detach, "resolve_daemon_port", lambda: 41234)
-    monkeypatch.setattr(detach, "resolve_local_auth_token", lambda: "tok")
-    monkeypatch.setattr(
-        detach, "run_venue_copilot",
-        lambda _identity, *, connect, **_kwargs: connect("agent-worktrees copilot --anchor"),
-    )
     monkeypatch.setattr(
         detach.subprocess, "Popen",
         lambda argv, **kw: types.SimpleNamespace(pid=999, wait=lambda timeout=None: 7),

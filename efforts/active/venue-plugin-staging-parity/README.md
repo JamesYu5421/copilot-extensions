@@ -209,7 +209,7 @@ release or authorized-rollout gates.
   stdio. Native cross-machine skill acceptance remains in the matrix below.
 - [ ] Close supported headed static-SSH CLI integration through its existing
   owner, without introducing another launcher.
-- [ ] Resolve the privileged launch's real identity/filesystem context and
+- [x] Resolve the privileged launch's real identity/filesystem context and
   prepare through its supported channel; do not assume it shares the
   unprivileged account's home.
 - [x] Preserve loopback account/platform locality checks and existing binding
@@ -224,6 +224,16 @@ the exact `2057089fd9880843d254f3a3650f9535419f1863` Dev snapshot promoted at
 match the merged source byte-for-byte. This includes #7841 and supersedes the
 earlier publication observation, not the requirement to verify subsequent
 slices, perform only authorized rollout or prove the effective running version.
+
+The latest verified Main is `c02050ae353fee8d36fb37f4531c9037b009e2cd`,
+whose unpaused state records Dev `258a4dd71b4f667bb24f6abb921ea276b633d32f`
+promoted at `2026-10-22T20:49:07Z`. Promotion PR #7957 merged that snapshot;
+the earlier retained promotion #7905 has also merged. Privileged source #7899
+and the independent CI repair #7907 are both ancestors of the recorded Dev
+snapshot, and all 21 changed source paths outside their effort/changefile
+records have identical Git blobs in that Dev snapshot and Main. The released
+agent-bridge version is `0.9.111-dev1`. This proves publication, not authorized
+rollout or the effective running version; those obligations remain open.
 
 - [ ] Verify publication from `dev` to `main`; perform only authorized rollout
   through the unified update path and record the effective running version.
@@ -325,6 +335,255 @@ on malformed configuration. These are reliability details, not new authority
 or a reason to create a daemon.
 
 ## Journal
+
+### 2026-10-22 - Retire the original pending attachment hold on verified stop
+
+- Current-head full review found a retained-hold leak in the stop path:
+  attached unknown admission used a unique hold, but stop released the scope
+  hold and retired the journal. Startup grace could retain the original hold
+  until an immediate fresh launch reused the same mux, keeping it alive after
+  the fresh attachment exited.
+- Stop now validates and captures the pending operation's original mux-backed
+  hold and timestamp before termination. Only after verified stop does it
+  conditionally release that captured hold, then archive and retire the
+  active journal. Unrelated or refreshed holds are not removed.
+- Real hold bookkeeping covers unknown attached admission, verified stop,
+  immediate fresh attachment and exit, with no peer, an unrelated peer, and
+  an interleaved refreshed owner. SSH discovery/recovery coverage passes
+  115 cases with three POSIX-only skips; lint and module caps pass. The prior
+  exact-head hosted Linux unit packet is green after the narrow import
+  readmission, but the new source head still owes review and required CI.
+
+### 2026-10-22 - Coordinate discovery deadlines and canonical network keys
+
+- Full review's remaining summary concerns were reproducible: discovery
+  repeated checkout/anchor resolution beyond its caller deadline, and userless
+  SCP remotes were parsed as URI schemes. Discovery now uses one receiver
+  with 60 seconds for its work and 20 seconds for transport/cleanup, below
+  Bridge's unchanged 90-second limit. Native anchor validation remains at
+  launch; no caller, preparation, test or runtime cap was widened.
+- SSH and Bridge activation now share the existing network identity parser,
+  moved to the lower-level plugin-resolution library with the activation
+  import retained as a compatibility export. SCP parsing precedes URI scheme
+  interpretation except for file URIs. URL path decoding and path case agree
+  across both consumers, and typed filesystem keys cannot become network
+  hostnames. No new dependency or version override was introduced.
+- Validation: SSH discovery/recovery 112 passed with three explicit POSIX
+  skips; Bridge dispatch/namespace/own-plugin consumers 128 passed; existing
+  activation library contracts 82 passed. The isolated first-touch Windows
+  snapshot test also passes in 89 seconds after removing the original source
+  and dependency trees; it explicitly imports the installed SSH module and
+  executes the installed shared parser, not a cached source substitute.
+  Vendoring, install closure, module caps, lint and the unchanged protocol
+  fixtures pass. Live SSH/native acceptance and authorized rollout remain
+  unperformed, and the parent remains Active.
+- Dev advanced during review and enrolled activation-preservation's import
+  closure in the exact unit packet. The managed branch sync retained a recovery
+  checkpoint; the manifest now binds only the changed compatibility export
+  and its new canonical parser, without changing nodes, targets, effects or
+  budgets. A bounded Windows packet attempt reached 839 passes before the
+  already documented Linux-only activation cohort attempted native Windows
+  loading and was refused by the unchanged observer. That is not a passing
+  packet or native qualification; the required hosted Linux packet must pass.
+
+### 2026-10-22 - Correct configured remote identity and attached recovery
+
+- Full review identified two distinct repository identity defects. The SSH
+  probe now asks the existing native Worktrees owner for `get git-remote`
+  before reading that remote's URL; upstream-only checkouts no longer report
+  an empty repository. Discovery, preparation and launch checks share the same
+  probe. Filesystem origins have case-sensitive, type-qualified keys so a
+  relative path cannot alias a GitHub coordinate.
+- Recovery retains and reacquires the original keeper hold identity from the
+  pending operation. Repeated unknown admission does not accumulate attached
+  holds, and a later successful attachment releases that original hold on
+  exit without removing another session's forward. Missing or unrelated hold
+  metadata is refused rather than guessed.
+- Targeted source validation: SSH 103 passed with three explicit POSIX-only
+  skips; native Worktrees context/query and routing coverage 227 passed; Bridge dispatch
+  and namespace coverage 98 passed. Lint and both contracts with all 456
+  frozen fixtures pass. The configured-remote tests execute the generated
+  probe against actual Git and exercise the public repository-discovery entry
+  point, but substitute the native owner response; they are not live SSH or
+  genuine POSIX acceptance evidence.
+- CI caught the context CLI crossing its module-size cap after the new scalar.
+  Its existing read-only key descriptions/dependencies now live in a separate
+  metadata module, without changing the cap or baseline. Wider routing tests
+  also exposed a stale updater fixture; it now intercepts the current request
+  boundary instead of entering the isolated test updater.
+- Main publication is independently confirmed for privileged source #7899
+  and CI repair #7907: the recorded promoted Dev contains both commits and
+  its 21 affected source blobs exactly match Main. No updater, native launch,
+  second account, elevation or productive deployment was invoked. The headed
+  SSH source row remains open until its PR actually merges, and the parent
+  acceptance and effective-running obligations remain open.
+
+### 2026-10-22 - Qualify the existing headed SSH CLI owner
+
+- Bridge's supported `ssh:<alias> --cli` dispatch now forwards the current
+  controller's qualified selections and roots through `agent-ssh copilot`.
+  Its read-only repository query uses the actual remote checkout, and launch
+  refuses changed repository selection or an unsupported explicit worktree
+  selector instead of silently choosing an anchor.
+- The existing Worktrees anchor owner's dry-run resolves the actual native
+  identity, mux and checkout before reservation or preparation. Its root must
+  match the configured workspace's Git root; a managed child is not silently
+  redirected to a parent anchor. A nested workspace retains the existing
+  anchor-root execution behavior.
+- Attached and detached modes share the existing native launch and owned-seed
+  runner. Shared preparation registers effective repository settings before
+  startup; child-native sources and disables win, Git origins remain Git,
+  unrelated absolute local sources reflect and registered target-owned
+  absolute sources rebind. No duplicate automatic CLI directory flags are
+  added. Tasks wait for the compiled loadout, not merely registration or a
+  visible pane; attached mode then joins the same mux.
+- Unknown seed admission retains the exact operation and native session in a
+  separate delivery journal that survives disposable keeper replacement.
+  Recovery does not prepare, reload or recreate the session, and changed native
+  identity or checkout refuses a fresh fallback. Both SSH consumers reuse the
+  same existing bounded stdlib receiver supervisor, now library-owned.
+- Source validation: the complete SSH suite passes 652 cases with 123 explicit
+  skips in smaller file groups under the unchanged item/group limits. Bridge
+  guards pass 351 with eight skips; dispatch/shared-receiver coverage passes
+  69 with two skips. Final streamed preparation coverage passes 23 with one
+  POSIX-only skip. Both contracts and all 456 frozen HTTP fixtures pass without
+  packet or capture-provenance rewrites.
+- First-touch validation explicitly opts into the existing isolated Windows
+  snapshot test: stamp, remove the original payload and dependency trees,
+  provision through the public binstub, and import the installed SSH package
+  with its new shared helper. It passes in 93 seconds without native Copilot,
+  authentication, elevation or productive rollout. The opt-in first-use
+  tests previously allowed less than 25 seconds despite the installer's
+  documented 30-120-second contract; their own bounded provisioning allowance
+  now matches that contract on both platforms. Default unit/group budgets
+  remain unchanged. Two extracted installer fixtures also now supply their
+  actual directory and logging prerequisites.
+- Documentation impact: updated both plugin READMEs, the worked settings
+  table, the HTML host/child atlas and the shared-library contract. This closes
+  the existing venue-agnostic-launch intent through established owners; no new
+  launcher, broker or standing policy is introduced. Docker is unavailable on
+  this host, so the isolated first-touch test is not a Docker clean-room claim.
+  Native cross-machine skill acceptance, the simultaneous target-user/staged
+  union, privileged/container lifecycle and authorized running-version proof
+  remain open. Review, required CI and merge still gate this source candidate.
+- Published #7920 through managed source reconciliation onto current `dev`.
+  The source candidate is open, not merged or deployed; current-head review and
+  every required check remain its completion gate. The all-ecosystem local
+  dependency audit could not read four unchanged npm declarations because
+  secure public-registry TLS failed on this host; the changed Python ecosystem
+  passes all 329 declarations. No certificate-verification bypass or global
+  package-manager configuration change was made.
+- Required CI correctly identified the shared-library publication closure:
+  every consumer shipping `plugin-resolve` needs a changefile even though
+  the extracted supervisor is only invoked by Bridge and SSH. Extended the
+  same changefile to those consumers instead of bypassing the gate or
+  hand-editing versions; their runtime behavior remains unchanged.
+  Synchronized the sole remaining checked-in `plugin-resolve` consumer copy
+  from the verified canonical extraction; the library-copy, headless and
+  publication-closure guards now pass locally.
+- Addressing #7920's five blocking review findings before another review:
+  harden even existing POSIX delivery directories before access; archive the
+  exact unknown operation only after verified stop; match machine-only
+  related entries through full registered remotes; retain the attached PID
+  handoff's new timestamp; and keep the real launcher hold alive beyond the
+  mux startup grace during preparation. The post-launch transfer runs after
+  native creation is recorded so transfer failure still cleans up that
+  session. Original-operation evidence, concurrent ownership guards and
+  unrelated holds remain intact.
+- Focused SSH validation passes 77 with three explicit POSIX-only skips on
+  Windows, including real refresh/release, clock-controlled preparation past
+  300 seconds, stop failure retention and unknown-stop-fresh-launch.
+  CodeSpace and container detached consumers pass 123 and 62 respectively;
+  the optional shared handoff does not change their existing lifecycle.
+  POSIX mode assertions must run on Linux CI; no Windows permission result is
+  presented as POSIX proof. No native inference, elevation or installed
+  rollout was used. Current-head review and required CI still gate merge.
+- A further current-head review added concurrent recovery and pre-recovery
+  repository fencing findings (plus a duplicate of the long-preparation hold).
+  Recovery now conditionally writes and clears the exact original journal
+  entry under lock, preserving a newer operation or an already-cleared entry;
+  deterministic interleavings cover both update and clear. The checkout probe
+  checks the full expected coordinate before native resolution or recovery,
+  retaining the later preparation fence. The complete SSH suite passed 658
+  with 125 explicit skips before these final two fixes; their changed files
+  pass the 77-case focused rerun. Bridge guards pass 351 with eight skips,
+  dispatch/real-selector tests pass 57, and both contracts with all 456 frozen
+  fixtures still pass without packet, provenance or protocol-floor changes.
+- Review of exact remediation head `084b619656` confirmed those eight findings
+  resolved, but found two further hold-transition defects. Rejoin now
+  preserves a probe-confirmed live mux backing rather than replacing it with
+  the caller's PID; reservation/preparation failure and pruning after the
+  caller exits therefore leave the original session's forward intact. Stop
+  explicitly refuses a still-preparing scope before a PID liveness token can
+  replace its native mux target. Real hold refresh/pruning and stop-during-
+  preparation regressions cover both paths. Current-head review and required
+  CI remain prerequisites; no source slice is treated as parent completion.
+- The next exact-head review marked both inline findings resolved but retained
+  a launch/stop concurrency warning in its summary. Three deterministic
+  public-CLI regressions reproduced the warning before any merge: stop could
+  release an actively preparing scope (including attached mode), and a second
+  launch could mutate that scope before the first completed. Launch/recovery
+  and stop now hold one controller-local OS lock for the resolved native scope
+  through cleanup or verified retirement, separate from keeper monitoring.
+  Contenders fail promptly before changing ownership; unrelated scopes remain
+  independent, and interactive attachment is outside the critical section.
+  All 84 focused SSH cases pass with three explicit POSIX-only skips; the new
+  real cross-process test proves same-scope exclusion, other-scope admission
+  and lock release/reacquisition. This uses the existing lock primitive, not
+  a new launcher, broker, global service or distributed-lock claim.
+- A further exact-head review identified the indeterminate-probe variant:
+  an existing mux hold retained under the normal unknown-liveness grace was
+  not a positive live probe, so failed acquisition could still leave it
+  PID-backed. Before releasing the lifecycle lock, a pre-handoff failure now
+  restores the captured original mux hold and its original confirmation
+  history, conditionally on the exact launcher PID and update stamp still
+  owning the transition. It never overwrites a newer owner, and successful
+  handoff does not roll back. Both reservation and preparation failures now
+  exercise unknown probes, caller exit and 400-second pruning; the focused
+  suite passes 87 with the same three explicit POSIX-only skips.
+- The next exact-head review's graceful-interruption warning reproduced with
+  a real SIGINT delivered immediately after worker startup: the old wait-only
+  handler returned before the receiver finished. SIGINT is now deferred across
+  startup and completion, the prior handler is restored, and POSIX streamed
+  transports use a separate terminal session. The real signal/handler-restore
+  regression and transport-isolation contract pass with all 89 focused cases
+  (three POSIX-only skips). This closes graceful Ctrl+C ownership release, not
+  forced termination, a dead host or unknown remote transport failure; those
+  native lifecycle acceptance boundaries remain explicit.
+- Requested an explicit full-PR re-review when a subsequent summary named
+  budget/discovery defects without locations. That review supplied two
+  actionable findings: stop now passes its explicit expected repository into
+  the resolving adapter, and differently spelled native anchor paths are
+  canonicalized on the target before checkout comparison. Canonical execution
+  roots are retained; a genuinely different anchor still refuses. The separate
+  reservation-budget observation is also addressed: its original lease now
+  includes the existing 90-second checkout probe, 540-second preparation and
+  both 60-second transport grace periods, rather than silently consuming the
+  native launch's allowance. No execution timeout or default test cap changed.
+  A clock-controlled regression spends the full preparation and supported
+  native launch budgets before claiming the original reservation. All 93
+  focused SSH cases pass with three explicit POSIX-only skips; unchanged
+  CodeSpace/container detached consumers still pass 123/62.
+
+### 2026-10-22 - Land privileged receiver source and continue the parent
+
+- #7899 merged at `f850d0be2540c35046d2ea80d8066e370141cdb1` after Copilot
+  approved exact head `8129431579a37c2dc791fb5757fc342448f6a149`, every required
+  check passed and all six inline findings plus the surviving-host body
+  finding were addressed. Credited the privileged source integration only.
+- Final targeted receiver/batch/host validation passes 170 cases with four
+  existing optional skips, including 51 privileged cases. Earlier expanded
+  preference/rehydration and host/preference sets passed 396 and 234 cases;
+  both wire contracts and all 456 frozen fixtures remain unchanged.
+- The required attribution gate passed on the actual final parity head.
+  The narrow infrastructure repair #7907 remains a separate merged source
+  change until trusted Main publishes it and its actual failure-path execution
+  is qualified; a passing old-policy check does not prove that new fallback.
+- Re-read the parent Plan and Validation Plan after merge. Supported headed
+  static SSH CLI is the next source-owner slice. Privileged native elevation,
+  different-account access, combined target-user/repository capabilities,
+  trusted-container/cross-machine lifecycle and authorized installed-version
+  proof remain open. No updater, service restart or live elevation was run.
 
 ### 2026-10-22 - Integrate the actual privileged receiver in source
 

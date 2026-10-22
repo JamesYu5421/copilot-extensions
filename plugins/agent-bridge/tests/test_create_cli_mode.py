@@ -40,7 +40,76 @@ def _ns(**kw):
 
 
 class TestCmdCreateCliDispatch:
-    @pytest.mark.parametrize("prefix", ["codespace", "container"])
+    def test_ssh_ambiguous_registered_remote_refuses_before_native_launch(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+        from agent_bridge import related_plugins
+
+        registry = tmp_path / "repos.yaml"
+        registry.write_text(
+            "repos:\n  first: {remote: 'https://github.com/example/project.git'}\n"
+            "  second: {remote: 'git@github.com:example/project.git'}\n",
+        )
+        monkeypatch.setattr(related_plugins, "_REPOS_YAML", registry)
+        monkeypatch.setattr(related_plugins, "control_plane_anchors", lambda: [tmp_path])
+        monkeypatch.setattr(targeting.shutil, "which", lambda name: f"/bin/{name}")
+        calls = []
+        def run(argv, **kwargs):
+            calls.append(argv)
+            return SimpleNamespace(returncode=0, stdout="example/project")
+        monkeypatch.setattr(targeting.subprocess, "run", run)
+        with pytest.raises(RuntimeError, match="multiple registered projects"):
+            targeting._cmd_create_cli("ssh:host", None, None)
+        assert len(calls) == 1 and calls[0][1] == "namespace-target-repo"
+
+    @pytest.mark.parametrize("detach", [False, True])
+    @pytest.mark.parametrize("remote", [
+        "git@github.com:Example/Project.git", "https://github.com/example/project.git",
+        "https://github.com/other/project.git",
+        "github.com:example/project.git", "ssh://operator@github.com/example/project.git",
+    ])
+    def test_ssh_git_remote_selects_machine_only_registered_project(
+        self, monkeypatch, tmp_path, detach, remote,
+    ):
+        from types import SimpleNamespace
+        from agent_bridge import related_plugins
+
+        registry = tmp_path / "repos.yaml"
+        registry.write_text(f"repos:\n  unique-project-key:\n    remote: {remote}\n")
+        monkeypatch.setattr(related_plugins, "_REPOS_YAML", registry)
+        related = tmp_path / ".agent-worktrees"
+        related.mkdir()
+        (related / "related.yaml").write_text(
+            "related:\n  unique-project-key:\n"
+            "    locus: {preferred: local, machines: [dev6]}\n"
+            "    plugins:\n      - only@mkt\n      - {source: disabled@mkt, enable: false}\n"
+            "  project:\n    locus: {machines: [dev6]}\n    plugins: [wrong@mkt]\n",
+        )
+        monkeypatch.setattr(related_plugins, "control_plane_anchors", lambda: [tmp_path])
+        monkeypatch.setattr(targeting.shutil, "which", lambda name: f"/bin/{name}")
+        calls = []
+        def run(argv, **kwargs):
+            calls.append(argv)
+            return SimpleNamespace(returncode=0, stdout="example/project")
+        monkeypatch.setattr(targeting.subprocess, "run", run)
+        with pytest.raises(SystemExit) as result:
+            targeting._cmd_create_cli("ssh:host", None, None, detach=detach)
+        assert result.value.code == 0
+        launch = calls[1]
+        assert launch[3:5] == ["--expected-repository", "example/project"]
+        assert ("--stage-plugin" in launch) is ("other/project" not in remote)
+        if "other/project" not in remote:
+            assert launch[5:9] == ["--stage-plugin", "only@mkt", "--stage-plugin-disabled", "disabled@mkt"]
+        assert "wrong@mkt" not in launch
+
+    def test_filesystem_key_is_not_reparsed_as_a_network_host(self, monkeypatch):
+        from agent_bridge import related_plugins
+
+        monkeypatch.setattr(
+            related_plugins, "_load_yaml", lambda *a: pytest.fail("filesystem key is not a network coordinate"),
+        )
+        assert related_plugins._registered_project("filesystem:example/project") is None
+
+    @pytest.mark.parametrize("prefix", ["codespace", "container", "ssh"])
     @pytest.mark.parametrize("detach", [False, True])
     def test_related_enablement_reaches_native_provider(self, monkeypatch, prefix, detach):
         from types import SimpleNamespace
@@ -51,7 +120,7 @@ class TestCmdCreateCliDispatch:
         monkeypatch.setattr("agent_bridge.related_plugins.control_plane_anchors", lambda: ["/controller"])
         monkeypatch.setattr(
             "agent_bridge.related_plugins.related_plugins_for_repo",
-            lambda repo, anchors=None: [
+            lambda repo, anchors=None, **kw: [
                 PluginRef("disabled@synthetic", enable=False), PluginRef("enabled@synthetic"),
             ],
         )
@@ -65,13 +134,16 @@ class TestCmdCreateCliDispatch:
             targeting._cmd_create_cli(f"{prefix}:example", None, None, detach=detach)
         assert result.value.code == 0
         assert calls[0][1:] == ["namespace-target-repo", "example"]
-        assert calls[1][3:9] == [
+        offset = 5 if prefix == "ssh" else 3
+        if prefix == "ssh":
+            assert calls[1][3:5] == ["--expected-repository", "example/project"]
+        assert calls[1][offset:offset + 6] == [
             "--stage-plugin-disabled", "disabled@synthetic",
             "--stage-plugin", "enabled@synthetic", "--plugin-root", "/controller",
         ]
         assert ("--detach" in calls[1]) is detach
 
-    @pytest.mark.parametrize("prefix", ["codespace", "container"])
+    @pytest.mark.parametrize("prefix", ["codespace", "container", "ssh"])
     @pytest.mark.parametrize("configured_anchor", [False, True])
     @pytest.mark.parametrize("detach", [False, True])
     def test_controller_repository_precedes_anchor_for_native_payloads(
@@ -130,9 +202,10 @@ class TestCmdCreateCliDispatch:
             roots = [Path(argv[i + 1]) for i, arg in enumerate(argv) if arg == "--plugin-root"]
             assert roots == [controller, *([anchor] if configured_anchor else [])]
             assert "--stage-plugin" not in argv
-            assert argv[3:5] == ["--stage-plugin-disabled", "sample@synthetic"]
+            offset = 5 if prefix == "ssh" else 3
+            assert argv[offset:offset + 2] == ["--stage-plugin-disabled", "sample@synthetic"]
             assert ("--detach" in argv) is detach
-            plan = build_plan([{"source": argv[4], "enable": False}], roots)
+            plan = build_plan([{"source": argv[offset + 1], "enable": False}], roots)
             plans.append(plan)
             item = plan["plugins"][0]
             with tarfile.open(fileobj=io.BytesIO(base64.b64decode(item["archive"]))) as archive:
