@@ -60,6 +60,11 @@ class Exchange:
     task: asyncio.Task[None] | None = None
     ack: asyncio.Future[None] | None = None
     sequence: int = 0
+    request: ServiceRequest | None = None
+
+    def disconnect(self) -> None:
+        if self.request is not None:
+            self.request.lifetime.close()
 
 
 class ServiceConnector:
@@ -150,12 +155,14 @@ class ServiceConnector:
         try:
             await self._exchange(ws, session, exchange, request)
         except (aiohttp.ClientError, OSError, asyncio.TimeoutError):
+            exchange.disconnect()
             LOG.warning("service-connector-closed code=response-writer-failed")
             await close_socket(ws, code=1011, message=b"response-writer-failed")
         finally:
             self._retire(exchange)
 
     def _retire(self, exchange: Exchange) -> None:
+        exchange.disconnect()
         if self.active.get(exchange.id) is exchange:
             del self.active[exchange.id]
             self.retired.append(exchange.id)
@@ -170,14 +177,27 @@ class ServiceConnector:
                 response = respond(ws, exchange, self.handler, admitted)
             else:
                 response = self._response(ws, session, exchange, method, path, selected, body)
-            await asyncio.wait_for(
-                response, timeout)
+            response_task = asyncio.create_task(response)
+            try:
+                done, _ = await asyncio.wait({response_task}, timeout=timeout)
+                if not done:
+                    raise asyncio.TimeoutError
+                await response_task
+            finally:
+                exchange.disconnect()
+                if not response_task.done():
+                    response_task.cancel()
+                await asyncio.gather(response_task, return_exceptions=True)
         except asyncio.TimeoutError:
+            exchange.disconnect()
             await send(ws, {"type": "error", "id": exchange.id, "code": "backend-timeout"})
         except (aiohttp.ClientError, OSError):
+            exchange.disconnect()
             await send(ws, {"type": "error", "id": exchange.id, "code": "backend-unavailable"})
         except TransportError as exc:
-            code = (exc.code if exc.code in {"response-limit", "caller-context-expired"}
+            exchange.disconnect()
+            code = (exc.code if exc.code in {
+                "response-limit", "caller-context-expired", "request-disconnected"}
                     else "invalid-backend-response")
             await send(ws, {"type": "error", "id": exchange.id, "code": code})
     async def _response(
@@ -259,7 +279,7 @@ class ServiceConnector:
                             request = self._request(value)
                             check(correlation not in self.active and correlation not in self.retired
                                   and len(self.active) < CHANNEL_REQUESTS)
-                            exchange = Exchange(correlation)
+                            exchange = Exchange(correlation, request=request[-1])
                             self.active[correlation] = exchange
                             exchange.task = asyncio.create_task(
                                 self._proxy(ws, session, exchange, request))
@@ -278,6 +298,7 @@ class ServiceConnector:
                             shape(value, {"type", "id"})
                             exchange = self.active.get(correlation)
                             if exchange and exchange.task:
+                                exchange.disconnect()
                                 exchange.task.cancel()
                                 await asyncio.gather(exchange.task, return_exceptions=True)
                                 self._retire(exchange)
@@ -286,6 +307,8 @@ class ServiceConnector:
                 finally:
                     self._attached_lifetime = asyncio.get_running_loop().time() - attached_at
                     self.connected.clear()
+                    for exchange in self.active.values():
+                        exchange.disconnect()
                     tasks = [e.task for e in self.active.values() if e.task is not None]
                     for task in tasks:
                         task.cancel()
