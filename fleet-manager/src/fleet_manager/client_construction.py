@@ -23,6 +23,12 @@ NAMESPACE = "client-runtime"
 OWNER = "client-owner.json"
 COMPLETION = "client-constructed.json"
 BOOTSTRAP = "runtime-bootstrap"
+REMOVING = "client-runtime-removing.json"
+
+
+def _not_removing(namespace):
+    if os.path.lexists(namespace / REMOVING):
+        raise PlanError("client runtime removal is unsettled; exact owned removal retry is required")
 
 
 def _write(path, value):
@@ -304,6 +310,20 @@ def _completed_intent(namespace, version, binding):
     return intent
 
 
+def _invalidate_removed_outcome(namespace, version, identity):
+    directory = namespace / "client-runtime-removed"
+    if not os.path.lexists(directory):
+        return
+    artifact_staging._directory(directory)
+    path = directory / (version + ".json")
+    if os.path.lexists(path):
+        from .client_runtime_removal import _outcome
+
+        _outcome(_read(path), identity, version)
+        path.unlink()
+        client_admission._sync_directory(directory)
+
+
 def _discard(primitive, namespace, version, intent, binding):
     primitive.discard_failed_candidate(
         namespace, version, validate=lambda candidate: _unfinished(candidate, intent, binding),
@@ -400,6 +420,7 @@ def construct_client_release(root, identity, selection, staged, *,
             policy, _, _ = checkpoint()
             filename, content = _wheel(staged, staged.read_artifacts(policy, clock=clock))
             namespace = _namespace(path, identity)
+            _not_removing(namespace)
             version = f"client-{selection['sequence']}-{selection['release_digest']}"
             with artifact_staging._primitive() as primitive, ExitStack() as retained:
                 previous = {primitive.current_version(namespace)}
@@ -426,6 +447,7 @@ def construct_client_release(root, identity, selection, staged, *,
                         ) != primitive.ADMIT_CONSTRUCT:
                             raise PlanError("client candidate construction admission refused")
                         intent = _construction_intent(namespace, version, slot, binding)
+                        _invalidate_removed_outcome(namespace, version, identity)
                         if os.path.lexists(slot):
                             _unfinished(slot, intent, binding)
                             _discard(primitive, namespace, version, intent, binding)

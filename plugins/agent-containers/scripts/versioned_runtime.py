@@ -970,6 +970,13 @@ def _remove_slot(d: Path, *, label: str) -> bool:
     return _rmtree_deferrable(d, label=label)
 
 
+def remove_owned_candidate(root: Path, version: str, *, remove,
+                           link_name: str = CURRENT_LINK) -> None:
+    """Run the installation owner's exact deletion under canonical cleanup custody."""
+    component, runtime = _candidate_cleanup_operations()
+    component.remove_owned_candidate(runtime, root, version, remove=remove, link_name=link_name)
+
+
 def gc(root: Path, keep: list[str] | None = None,
        protect_pids: bool = False, link_name: str = CURRENT_LINK,
        min_age_days: float = DEFAULT_GC_MIN_AGE_DAYS) -> list[str]:
@@ -1492,35 +1499,23 @@ def construction_shell_helpers(shell: str) -> str:
     return _runtime_component("versioned_runtime_construction").construction_shell_helpers(shell)
 
 
+def _candidate_cleanup_operations():
+    component = _runtime_component("versioned_runtime_construction")
+    return component, component.CleanupOperations(
+        version_dir=version_dir, marker_path=marker_path, _is_link=_is_link,
+        _cleanup_lease=_cleanup_lease, _gc_protected_versions=_gc_protected_versions,
+        _ownership_key=_ownership_key, _construction_owners=_construction_owners,
+        _remove_slot=_remove_slot,
+    )
+
+
 def discard_failed_candidate(root: Path, version: str, *,
                              link_name: str = CURRENT_LINK, validate=None) -> bool:
-    """Delete only an unfinished candidate held by this construction owner.
-
-    ``validate`` can enforce an installation-cell ownership receipt while all
-    cleanup guards are held. It must raise on changed or unowned evidence.
-    This operation never removes completion evidence or recreates an empty slot.
-    """
-    if _ownership_key(root, version) not in getattr(_construction_owners, "keys", ()):
-        raise RuntimeError("failed candidate cleanup requires held construction ownership")
-    with _cleanup_lease(root, version, allow_construction_owner=True) as admitted:
-        if not admitted:
-            raise RuntimeError(f"failed candidate cleanup is busy: {version}")
-        vdir = version_dir(root, version)
-        if not os.path.lexists(vdir):
-            return False
-        if not vdir.is_dir() or _is_link(vdir):
-            raise RuntimeError(f"failed candidate is not an ordinary directory: {vdir}")
-        # Malformed/linked completion evidence is also immutable evidence, not
-        # permission to reclaim a candidate under a failed-build label.
-        if os.path.lexists(marker_path(root, version)):
-            raise RuntimeError(f"failed candidate has completion evidence: {version}")
-        if version.lower() in _gc_protected_versions(root, None, True, link_name):
-            raise RuntimeError(f"failed candidate is selected or in use: {version}")
-        if validate is not None:
-            validate(vdir)
-        if not _remove_slot(vdir, label="failed construction"):
-            raise RuntimeError(f"could not remove failed candidate: {vdir}")
-        return True
+    """Discard an unfinished, construction-owned slot; never completion evidence."""
+    component, runtime = _candidate_cleanup_operations()
+    return component.discard_failed_candidate(
+        runtime, root, version, link_name=link_name, validate=validate,
+    )
 
 
 #: Admission decision states. A caller branches on these, never guesses from
