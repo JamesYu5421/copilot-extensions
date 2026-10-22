@@ -2,10 +2,16 @@
 # Executed into installation_context.py's shared module globals.
 from __future__ import annotations
 
+def _lock_openprocess_failure_means_live(last_error: int) -> bool:
+    return last_error != 87  # ERROR_INVALID_PARAMETER is the absent-PID result.
+
+
 def _pid_is_live(pid: int) -> bool:
     if pid < 1:
         return False
     if os.name == "nt":
+        if pid > 0xFFFFFFFF:
+            return True
         import ctypes
         from ctypes import wintypes
 
@@ -30,7 +36,7 @@ def _pid_is_live(pid: int) -> bool:
             pid,
         )
         if not handle:
-            return _openprocess_denied_means_live(ctypes.get_last_error())
+            return _lock_openprocess_failure_means_live(ctypes.get_last_error())
         try:
             wait_result = kernel32.WaitForSingleObject(handle, 0)
             if wait_result == wait_object_0:
@@ -47,7 +53,7 @@ def _pid_is_live(pid: int) -> bool:
     except PermissionError:
         return True
     except OSError:
-        return False
+        return True
     return True
 
 
@@ -96,7 +102,35 @@ class _DirectoryLock(AbstractContextManager["_DirectoryLock"]):
             _fail(f"Installation lock owner receipt '{self.owner_path}' is incomplete.")
         return owner
 
+    def _create(self, deadline: float) -> None:
+        with _lock_mutation_guard(self.path, deadline=deadline):
+            self.path.mkdir()
+            owner = {
+                "schema": LOCK_SCHEMA,
+                "version": LOCK_VERSION,
+                "kind": self.kind,
+                "marketplaceId": self.marketplace_id,
+                "pluginId": self.plugin_id or "",
+                "token": self.token,
+                "host": self.host,
+                "pid": os.getpid(),
+                "acquiredAt": _utc_now(),
+            }
+            birth = _runtime_publication_process_identity(os.getpid())
+            if birth is not None:
+                owner["processIdentity"] = birth
+            try:
+                _atomic_write_json(self.owner_path, owner)
+            except BaseException:
+                if self.owner_path.exists():
+                    self.owner_path.unlink()
+                self.path.rmdir()
+                raise
+            self.acquired = True
+
     def acquire(self) -> None:
+        self.path = _lock_path(self.path)
+        self.owner_path = self.path / "owner.json"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         deadline = time.monotonic() + self.timeout_seconds
         while True:
@@ -113,7 +147,7 @@ class _DirectoryLock(AbstractContextManager["_DirectoryLock"]):
                         )
                 _fail(f"Installation lock '{self.path}' remained busy.")
             try:
-                self.path.mkdir()
+                self._create(deadline)
             except FileExistsError:
                 if not self.owner_path.exists():
                     try:
@@ -142,25 +176,25 @@ class _DirectoryLock(AbstractContextManager["_DirectoryLock"]):
                 owner_host = _string_property(owner, "host")
                 owner_pid = _property(owner, "pid")
                 if owner_host == self.host:
-                    if not _pid_is_live(owner_pid):
-                        time.sleep(LOCK_POLL_SECONDS)
-                        try:
-                            current_owner = self._owner()
-                        except _FileIdentityChanged:
-                            time.sleep(LOCK_POLL_SECONDS)
-                            continue
-                        except InstallationContextError:
-                            if not self.path.exists() or not self.owner_path.exists():
+                    if _lock_owner_state(owner) == "stale":
+                        with _lock_mutation_guard(self.path, deadline=deadline):
+                            try:
+                                current_owner = self._owner()
+                            except _FileIdentityChanged:
                                 continue
-                            raise
-                        if _string_property(current_owner, "token") != _string_property(
-                            owner, "token"
-                        ):
-                            continue
-                        _fail(
-                            f"Installation lock '{self.path}' has a stale owner "
-                            f"(host={owner_host}, pid={owner_pid}); explicit repair is required."
-                        )
+                            except InstallationContextError:
+                                if not self.path.exists() or not self.owner_path.exists():
+                                    continue
+                                raise
+                            if current_owner != owner or _lock_owner_state(current_owner) != "stale":
+                                continue
+                            _fail(
+                                f"Installation lock '{self.path}' has a stale owner; "
+                                "the owner's descendants must be independently confirmed inactive. "
+                                "Use installation_context.py lock-inspect, then lock-repair with "
+                                "--expected-evidence and --inactive-owner-evidence; "
+                                "see recovering-operational-locks."
+                            )
                     if time.monotonic() >= deadline:
                         _fail(f"Installation lock '{self.path}' remained busy.")
                     time.sleep(LOCK_POLL_SECONDS)
@@ -170,25 +204,6 @@ class _DirectoryLock(AbstractContextManager["_DirectoryLock"]):
                     f"(host={owner_host}, pid={owner_pid})."
                 )
             else:
-                owner = {
-                    "schema": LOCK_SCHEMA,
-                    "version": LOCK_VERSION,
-                    "kind": self.kind,
-                    "marketplaceId": self.marketplace_id,
-                    "pluginId": self.plugin_id or "",
-                    "token": self.token,
-                    "host": self.host,
-                    "pid": os.getpid(),
-                    "acquiredAt": _utc_now(),
-                }
-                try:
-                    _atomic_write_json(self.owner_path, owner)
-                except BaseException:
-                    if self.owner_path.exists():
-                        self.owner_path.unlink()
-                    self.path.rmdir()
-                    raise
-                self.acquired = True
                 return
 
     def assert_owned(self) -> None:
@@ -201,6 +216,10 @@ class _DirectoryLock(AbstractContextManager["_DirectoryLock"]):
     def release(self) -> None:
         if not self.acquired:
             return
+        with _lock_mutation_guard(self.path, deadline=time.monotonic() + 1):
+            self._release_directory()
+
+    def _release_directory(self) -> None:
         self.assert_owned()
         deadline = time.monotonic() + 1.0
         while True:
