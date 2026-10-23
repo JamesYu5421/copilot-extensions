@@ -1,0 +1,13 @@
+{
+  "comment": "Submit optional launch maintenance through the existing execution driver without joining acquisition or installers; preserve authenticated long-path participation and fence unconfirmed borrowed execution",
+  "changes": [
+    {
+      "plugin": "agent-worktrees",
+      "type": "patch"
+    },
+    {
+      "plugin": "worktree-manager",
+      "type": "patch"
+    }
+  ]
+}
