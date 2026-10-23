@@ -73,7 +73,7 @@ def verify_attestation_subject(
 def verify_attestations(
     directory: Path, *, repository: str, signer_digest: str, source_digest: str,
     source_ref: str, repo: Path | None = None,
-) -> None:
+) -> dict:
     """Require the pinned hosted promotion workflow, never repo-write authority."""
     identity = dict(
         repository=repository, signer_digest=signer_digest,
@@ -119,6 +119,7 @@ def verify_attestations(
 
     with ThreadPoolExecutor(max_workers=4) as workers:
         list(workers.map(verify, validated["artifacts"]))
+    return validated
 
 
 def _tag_commit(repository: str, tag: str) -> str | None:
@@ -251,7 +252,7 @@ def publish_artifacts(
     candidate_commit: str | None = None,
     admission_cache: dict[tuple[str, str], dict] | None = None,
 ) -> None:
-    """Publish only after verifying the actual merged candidate's exact composition."""
+    """Verify the source-owned set, or publish legacy version-1 assets."""
     if candidate_commit is not None:
         import promote_release as promotion
 
@@ -264,6 +265,14 @@ def publish_artifacts(
     index = validate_commit_artifacts(
         directory, commit=merged_commit, dev_head=dev_head, repo=repo,
     )
+    if index["schema_version"] == 2:
+        from promotion_artifact_readiness import verify_ready_artifacts
+
+        verify_ready_artifacts(
+            directory, repository=repository, candidate_commit=merged_commit,
+            dev_head=dev_head, repo=repo,
+        )
+        return
     if admission_cache is None:
         admission_cache = {}
     for entry in index["artifacts"]:
@@ -314,6 +323,14 @@ def verify_published_artifacts(
 ) -> dict:
     """Read every required final asset with consumer authority before Main moves."""
     index = validate_commit_artifacts(directory, commit=candidate_commit, dev_head=dev_head, repo=repo)
+    if index["schema_version"] == 2:
+        from promotion_artifact_readiness import verify_ready_artifacts
+
+        verify_ready_artifacts(
+            directory, repository=repository, candidate_commit=candidate_commit,
+            dev_head=dev_head, repo=repo,
+        )
+        return index
     if admission_cache is None:
         admission_cache = {}
     downloads = []
@@ -423,12 +440,23 @@ def main(argv: list[str] | None = None) -> int:
                 candidate_root=args.candidate_root,
                 expected_profile=args.qualification_profile, **unit_arguments,
             )
-        verify_attestations(
+        signed_index = verify_attestations(
             args.directory, repository=args.repository, signer_digest=args.signer_digest,
             source_digest=args.source_digest, source_ref=args.source_ref, repo=args.repo,
         )
         repo = args.repo
-        if args.operation == "prepare" or (
+        source_candidate = (
+            args.operation == "publish-candidate" and signed_index["schema_version"] == 2
+        )
+        if source_candidate:
+            from promotion_artifact_readiness import verify_ready_artifact_set
+
+            tag, index = verify_ready_artifact_set(
+                args.directory, repository=args.repository, candidate_commit=args.candidate_commit,
+                dev_head=args.dev_head, repo=repo,
+            )
+            print(f"artifact-ready: {tag}")
+        elif args.operation == "prepare" or (
             args.operation in ("publish", "publish-candidate") and args.candidate_commit
         ):
             from promotion_artifact_readiness import prepare_artifacts, verify_ready_artifacts
@@ -445,17 +473,18 @@ def main(argv: list[str] | None = None) -> int:
                 dev_head=args.dev_head, repo=repo, candidate_commit=args.candidate_commit,
             )
         if args.operation == "publish-candidate":
-            admission_cache: dict[tuple[str, str], dict] = {}
-            publish_artifacts(
-                args.directory, repository=args.repository, merged_commit=args.candidate_commit,
-                dev_head=args.dev_head, repo=repo, candidate_commit=args.candidate_commit,
-                admission_cache=admission_cache,
-            )
-            index = verify_published_artifacts(
-                args.directory, repository=args.repository, candidate_commit=args.candidate_commit,
-                dev_head=args.dev_head, repo=repo,
-                admission_cache=admission_cache,
-            )
+            if not source_candidate:
+                admission_cache: dict[tuple[str, str], dict] = {}
+                publish_artifacts(
+                    args.directory, repository=args.repository, merged_commit=args.candidate_commit,
+                    dev_head=args.dev_head, repo=repo, candidate_commit=args.candidate_commit,
+                    admission_cache=admission_cache,
+                )
+                index = verify_published_artifacts(
+                    args.directory, repository=args.repository, candidate_commit=args.candidate_commit,
+                    dev_head=args.dev_head, repo=repo,
+                    admission_cache=admission_cache,
+                )
             publication = {
                 "dev_head": args.dev_head, "candidate": args.candidate_commit,
                 "qualification": qualification_digest,

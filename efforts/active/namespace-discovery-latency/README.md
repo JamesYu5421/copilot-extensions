@@ -20,6 +20,7 @@ actual process ownership and compatibility with callers' total budgets.
 | Participant | Role in this effort | Reached via |
 |-------------|---------------------|-------------|
 | Discovery repair owner | Plan, profiling, implementation, review and qualification | Managed worktree `rattling-circuit`; coordination on #5761 |
+| Release-blocker repair owner | Bounded source-publication repair, not live control activation | Managed worktree `tinkling-toolbox`; coordination on #8033 |
 
 ## Coordination
 
@@ -68,6 +69,33 @@ Subsequent operator selection, captured verbatim:
 complete cold discovery within eight seconds rather than substituting later
 background completion.
 
+Subsequent operator selection:
+
+> repair-release-gate
+
+**Selection summary:** Diagnose and repair the release blocker through the
+normal reviewed source flow. Live Main-control changes, guard bypasses and
+installed rollout remain separately authorized.
+
+Source-publication clarification, captured verbatim:
+
+> Wait... we don't care about published artifacts, though, we only care about what is in main; update and consumption is based on what main says, and then we check for matching published artifacts for main's tagged dev source commit.
+
+The bounded repair follows the existing source-owned release identity. It does
+not introduce version reservation, move publication after merge, or enable the
+separately owned installer artifact-consumption lane.
+
+After comparison with the independently merged reservation repair, the
+operator explicitly selected:
+
+> Great. Switch to the source-owned model
+
+**Selection summary:** Remove the now-unneeded tag-reservation dependency
+introduced by #8110 while retaining ordinary version bumps from landed Main,
+the complete source-keyed artifact set and all current-source verification.
+This supersedes the reservation approach for this repair; it does not
+authorize live Main-control activation or installed rollout.
+
 ## Plan
 
 ### Phase 1 - Review the bounded repair plan
@@ -102,8 +130,14 @@ background completion.
 - [x] Exercise real command and Bridge discovery boundaries on Windows with
   cross-account enumeration, cold and warm paths, and representative failure
   cases, within unchanged caller budgets.
-- [ ] Land the implementation through review and required CI; confirm qualified
-  promotion to `main` separately from the `dev` merge.
+- [x] Land the implementation through review and required CI. #7998 merged to
+  `dev`; that merge is not a qualified Main release.
+- [ ] Repair the blocking source-publication failure on #8033 through normal
+  Dev review. Use the current source's complete signed artifact set rather
+  than another source's per-plugin version aliases; preserve source binding,
+  immutable bytes, consumer readback and legacy publication compatibility.
+  Main-control activation remains with its separately authorized owner.
+- [ ] Confirm qualified promotion to `main` separately from the `dev` merge.
 - [ ] Retain release/rollout responsibility explicitly. Apply a local rollout
   only through the unified updater with its required authorization; verify the
   actual running generation and complete target discovery before claiming live
@@ -148,6 +182,102 @@ closes a bounded reliability delta within the existing Bridge vision and
 namespace-provider pattern, without changing architectural ownership.
 
 ## Journal
+
+### 2026-10-23 - Single verified source-set readback
+
+- Review found the new schema-2 CLI still entered independent helper paths
+  repeatedly, causing five candidate validations and three complete source-set
+  transfers despite performing no publication writes.
+- The canonical readback now returns its validated index after candidate
+  validation, source-tag/metadata checks and every exact raw-byte read. The
+  schema-2 candidate CLI reuses that result for its publication receipt after
+  qualification and all signatures pass. Direct helper callers and the
+  historical landing/schema-1 flow retain their independent checks.
+- The actual CLI regression now counts exactly one candidate validation and
+  one download per index/bundle per invocation. Two pure cases cover receipt
+  reuse and readback failure without a success receipt; no network, timing or
+  effect-observer exception is introduced.
+- The focused publication/source-identity selection passed 100 cases and the
+  readiness-core selection passed 32. Its other 23 native/workflow cases were
+  outside this focused selection, not credited as passing. Canonical unit
+  execution and new-head review/CI remain pending for this correction.
+
+### 2026-10-23 - Source-owned composition selected
+
+- While this repair was under review, #8110 independently merged a
+  tag-aware allocator and its regression cohort. The operator explicitly
+  selected the source-owned model after comparing that additional dependency
+  with Main-selected Dev-source artifacts.
+- Rebased onto current Dev, preserving the peer's unrelated control mirror,
+  effort state and other changes. Removed only the reservation hook/helper
+  and its twelve selector-specific admitted units. Existing composition
+  integration tests now require unlanded aliases to have no effect, with
+  normal version advancement after Main actually lands.
+- Source publication now only verifies its already prepared complete source
+  set: it cannot repair a missing set during a final binding. Legacy version-1
+  publication and historical alias-validator refusals remain intact.
+- The reconciled publication/source-identity selection passed all 98 cases;
+  eight real-Git composition cases passed, including unchanged Main versions
+  across abandoned aliases and normal advancement after Main lands. The
+  twelve historical alias-validator/source-set integration cases also passed.
+  Exact unit admission retained every unrelated identity and the unchanged
+  300-second bound; lint, module ceilings and documentation guards passed.
+- New-head review and required CI are pending. Live helper selection and
+  installed acceptance remain separate.
+
+### 2026-10-23 - Coupled alias-regression migration
+
+- Review identified the retained real-Git alias suite as a directly coupled
+  consumer of schema-2 version aliases. Migrated its publication assertions to
+  the complete Dev-keyed sets, with both failed-Main-merge and squash-landing
+  histories. Source publication no longer reads another source's aliases.
+- Kept invalid prior-source provenance, signature, composition and payload
+  refusals by exercising the retained alias validators directly. The cache
+  regression now explicitly authenticates its input before testing reuse;
+  corrupt current-source raw bytes still refuse.
+- All twelve cases passed in their existing contained integration tier on
+  Windows. They were not added to required unit-only CI. This is native Git
+  fixture evidence, not successful historical hosted-asset verification or
+  trusted Main-control activation.
+
+### 2026-10-22 - Source-keyed publication blocker
+
+- #7998 merged to Dev as `958d3e2046bb395d54c7fe8d63280a5bd68e848b`.
+  Promotion `39884763835` passed preceding qualification but failed final
+  publication; Main did not advance and no installed rollout was performed.
+- #8033 was claimed before source edits. Its immutable artifact index and
+  bundle digests were read back. An older unmerged candidate already owned
+  Bridge `0.9.116-dev1` and Dispatch `0.18.64-dev1` aliases; the newer source
+  adds `process-telemetry` under those same plugin versions. The trusted
+  validator correctly rejects that unequal closure when asked to compare it
+  against the older alias.
+- The defect is that version-2 publication still depends on those aliases
+  despite already publishing the complete signed `python-artifacts-<dev-sha>`
+  set. The bounded source repair uses that canonical set for publication and
+  raw-byte readback, retaining current-candidate validation and all legacy
+  version-1 checks. Existing tags and assets remain untouched.
+- Source support, reviewed helper activation, actual qualified Main promotion
+  and authorized installed proof remain distinct gates. #3336/#6237 retain
+  their wider release/control ownership.
+- The changed publication and qualification selection passed all 88 focused
+  cases, including two Dev sources with different bytes and the same plugin
+  version. Four new pure units passed the canonical effect observer and
+  single-collection coverage runner. Source hashes, module ceilings and lint
+  passed without an observer exemption or widened baseline.
+- A broader historical selection was not green: old materializer fixtures
+  require Main-only state in a Dev checkout, and workflow fixtures expect
+  retired CI jobs. Keep that non-release portfolio with #1303, not as a
+  passing full-suite claim. The directly coupled raw-readback assertion now
+  expects the canonical helper's actual digest error. A separate focused run
+  passed 287 cases before one newly added fixture-construction failure; the
+  corrected fixture is included in the final 88-case result.
+- Read-only native verification of the historical published set remains
+  incomplete: local bundle verification could not initialize its public
+  verifier, and this platform's candidate checkout did not reproduce the
+  hosted payload hash. Neither failure was waived or normalized away. Those
+  attempts are not release qualification. Source review and required CI,
+  separately authorized helper activation and actual hosted publication
+  remain open.
 
 ### 2026-10-22 - Required peer-map metadata and retained Linux scope
 

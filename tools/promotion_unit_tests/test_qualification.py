@@ -101,6 +101,130 @@ def test_raw_readback_provider_refusal_never_becomes_success(monkeypatch, inline
     assert inline_readback == ["entered", "exited"]
 
 
+@pytest.mark.parametrize("operation", ["publish", "verify"])
+def test_source_owned_publication_uses_the_dev_set_not_plugin_version_aliases(
+    tmp_path, monkeypatch, operation,
+):
+    import promotion_artifact_readiness as readiness
+
+    index = {"schema_version": 2, "dev_head": DEV, "artifacts": []}
+    validated = []
+    observed = []
+
+    def validate(directory, **kwargs):
+        validated.append((directory, kwargs))
+        return index
+
+    def source_set(directory, **kwargs):
+        assert validated
+        observed.append((directory, kwargs))
+        return f"python-artifacts-{DEV}"
+
+    def refuse_alias(*args, **kwargs):
+        pytest.fail("source publication must neither consult version aliases nor repair the ready set")
+
+    monkeypatch.setattr(publisher, "validate_commit_artifacts", validate)
+    monkeypatch.setattr(publisher, "_tag_commit", refuse_alias)
+    monkeypatch.setattr(publisher, "_gh", refuse_alias)
+    monkeypatch.setattr(readiness, "prepare_artifacts", refuse_alias)
+    monkeypatch.setattr(readiness, "verify_ready_artifacts", source_set)
+    arguments = dict(repository=REPOSITORY, dev_head=DEV, repo=tmp_path)
+    if operation == "publish":
+        publisher.publish_artifacts(tmp_path, merged_commit=CANDIDATE, **arguments)
+    else:
+        assert publisher.verify_published_artifacts(
+            tmp_path, candidate_commit=CANDIDATE, **arguments,
+        ) is index
+    assert observed == [(tmp_path, {**arguments, "candidate_commit": CANDIDATE})]
+    assert validated == [(tmp_path, dict(commit=CANDIDATE, dev_head=DEV, repo=tmp_path))]
+
+
+@pytest.mark.parametrize("operation", ["publish", "verify"])
+def test_source_owned_publication_propagates_source_set_verification_failure(
+    tmp_path, monkeypatch, operation,
+):
+    import promotion_artifact_readiness as readiness
+
+    monkeypatch.setattr(
+        publisher, "validate_commit_artifacts",
+        lambda *args, **kwargs: {"schema_version": 2},
+    )
+
+    def refuse(*args, **kwargs):
+        raise publisher.PromotionArtifactError("source set has a corrupt asset")
+
+    monkeypatch.setattr(readiness, "prepare_artifacts", refuse)
+    monkeypatch.setattr(readiness, "verify_ready_artifacts", refuse)
+    arguments = dict(repository=REPOSITORY, dev_head=DEV, repo=tmp_path)
+    with pytest.raises(publisher.PromotionArtifactError, match="corrupt asset"):
+        if operation == "publish":
+            publisher.publish_artifacts(tmp_path, merged_commit=CANDIDATE, **arguments)
+        else:
+            publisher.verify_published_artifacts(
+                tmp_path, candidate_commit=CANDIDATE, **arguments,
+            )
+
+
+@pytest.mark.parametrize("failed_readback", [False, True])
+def test_source_owned_candidate_cli_uses_one_verified_set_for_its_receipt(
+    tmp_path, monkeypatch, failed_readback,
+):
+    import promotion_artifact_readiness as readiness
+
+    directory = tmp_path / "artifacts"
+    directory.mkdir()
+    index = {"schema_version": 2, "artifacts": [{"filename": "verified.zip"}]}
+    raw_index = json.dumps(index).encode()
+    (directory / publisher.INDEX_NAME).write_bytes(raw_index)
+    receipt_path, output = tmp_path / "qualification.json", tmp_path / "output"
+    receipt_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("ARTIFACT_VERIFY_TOKEN", "fixture-consumer-read")
+    monkeypatch.setattr(qualification, "verify_receipt", lambda *a, **k: "f" * 64)
+    observed = []
+
+    def attest(*args, **kwargs):
+        observed.append("attest")
+        return {"schema_version": 2}
+
+    def readback(*args, **kwargs):
+        assert observed == ["attest"]
+        assert args == (directory,)
+        assert kwargs == dict(
+            repository=REPOSITORY, candidate_commit=CANDIDATE, dev_head=DEV, repo=tmp_path,
+        )
+        observed.append("readback")
+        if failed_readback:
+            raise publisher.PromotionArtifactError("source readback failed")
+        return f"python-artifacts-{DEV}", index
+
+    def redundant(*args, **kwargs):
+        pytest.fail("schema-2 CLI repeated validation, readback or legacy publication")
+
+    monkeypatch.setattr(publisher, "verify_attestations", attest)
+    monkeypatch.setattr(readiness, "verify_ready_artifact_set", readback)
+    monkeypatch.setattr(readiness, "verify_ready_artifacts", redundant)
+    monkeypatch.setattr(publisher, "publish_artifacts", redundant)
+    monkeypatch.setattr(publisher, "verify_published_artifacts", redundant)
+    arguments = _publish_arguments(
+        {"args": {"candidate_root": tmp_path}}, directory, receipt_path,
+    )
+    assert publisher.main([
+        *arguments, "--repo", str(tmp_path), "--github-output", str(output),
+    ]) == (1 if failed_readback else 0)
+    assert observed == ["attest", "readback"]
+    if failed_readback:
+        assert not output.exists()
+    else:
+        publication = {
+            "dev_head": DEV, "candidate": CANDIDATE, "qualification": "f" * 64,
+            "index_digest": hashlib.sha256(raw_index).hexdigest(), "artifacts": index["artifacts"],
+        }
+        digest = hashlib.sha256(json.dumps(publication, sort_keys=True).encode()).hexdigest()
+        assert output.read_text("utf-8").splitlines() == [
+            f"source_release=python-artifacts-{DEV}", f"publication_digest={digest}",
+        ]
+
+
 def _producer():
     repository = {"id": 77, "full_name": REPOSITORY}
     return {
@@ -391,7 +515,7 @@ def test_v2_publisher_consumes_the_real_packet_verifier_with_explicit_profile(un
     directory.mkdir()
     (directory / publisher.INDEX_NAME).write_text('{"synthetic":"artifact-operation-boundary"}')
     monkeypatch.setenv("ARTIFACT_VERIFY_TOKEN", "synthetic-independent-read-authority")
-    monkeypatch.setattr(publisher, "verify_attestations", lambda *a, **k: None)
+    monkeypatch.setattr(publisher, "verify_attestations", lambda *a, **k: {"schema_version": 1})
     monkeypatch.setattr(readiness, "verify_ready_artifacts", lambda *a, **k: "source-tag")
     writes = []
     monkeypatch.setattr(publisher, "publish_artifacts", lambda *a, **k: writes.append(k["candidate_commit"]))

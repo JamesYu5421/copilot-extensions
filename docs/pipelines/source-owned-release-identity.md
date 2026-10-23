@@ -32,47 +32,36 @@ Authentication, signature, missing-asset, composition, governance and byte
 conflicts refuse rather than silently choosing another lock or replacing
 published objects.
 
-Version aliases may point at a prepublished candidate that later squash-landed
-or never landed. A later release retaining that plugin version does not require
-the old candidate to be a Main ancestor. For version-2 sets, the publisher
-authenticates the prior candidate's single-parent/source provenance, Dev
-ancestry and actual canonical composition against its signed frozen Dev index.
-It then checks the **current qualified manifest** against the prior candidate's
-actual plugin and vendored-source closure. Neither a Dev marker alone nor a
-cached index authorizes a different composition. This path consumes no old
-bundle bytes; current signatures, immutable-asset checks and raw readback still
-apply. Legacy version-1 aliases retain their original ancestry rules.
+For version-2 sets, publication and readback use only
+`python-artifacts-<full-dev-sha>`. They validate the current candidate's actual
+source closure and complete signed artifact set, then verify the source tag,
+immutable asset metadata and every downloaded byte. They neither publish nor
+consult per-plugin version aliases. An older failed candidate may have claimed
+the same plugin version with different content; that alias does not identify
+this development source and cannot gate its independently bound artifact set.
+Existing aliases are not moved, replaced or deleted. Legacy version-1
+publication retains its per-plugin tags, ancestry and source-binding checks.
 
-### Occupied version allocation
+Main selects the released development snapshot, recorded by its landed source
+marker and `promote-dev-<full-dev-sha>` tag. Artifact availability alone never
+selects a release for install or update: an unmerged candidate's artifact set
+may exist without becoming the selected source. This publication contract does
+not enable the separately owned installer artifact-consumption lane.
 
-Publication can reserve a `<plugin>-v<version>` alias before its candidate lands
-on Main. A later source must not allocate that version from unchanged Main
-alone: accumulating another patch changefile does not by itself advance the
-single highest-bump result.
+### Main-derived plugin versions
 
-After materialization, the composer snapshots the checkout's complete version
-tag inventory. An occupied Python-plugin version is reused only when the
-complete plugin and recursively discovered first-party source roots retain the
-same Git blobs, paths and modes, including inherited `.gitattributes`.
-This conservative pre-build comparison may allocate a new version when checkout
-policy changes; it never treats changed source as equivalent. Unrelated
-plugin/repository content does not invalidate an unchanged closure.
+The composer seeds versions from landed Main and applies the ordinary pending
+changefiles. Unlanded plugin-version aliases do not alter that computation or
+require a scan of historical reservations. Different unlanded Dev sources can
+therefore retain the same next plugin version while their Dev-keyed artifact
+sets distinguish their exact content. After Main advances, a later changed
+plugin receives the normal next version so update detection still works.
 
-An incompatible reservation advances the existing prerelease counter until a
-compatible or unused version is found. An occupied final release advances to
-the next patch prerelease rather than regressing below that final release.
-The existing accumulator writes every aligned version surface and records the
-original Main baseline in the bump summary. Tags are never moved or deleted.
-Malformed or unreadable reservations fail explicitly.
-
-Every composing release job requires the existing full-history/tag checkout.
-The existing single-flight publisher prevents another release generation from
-reserving versions between composition stages. A retry that has published its
-own aliases recomputes the same versions for unchanged payloads; immutable
-source-index reuse still refuses any conflicting composition. Allocation is
-not authentication or publication authority: prior-source attestation,
-qualification, exact manifest closure/hash validation and raw-byte readback
-remain independent mandatory gates.
+Publication verifies the already prepared source set without creating or
+repairing assets. Missing or invalid current-source evidence still refuses
+publication; unrelated aliases cannot substitute for it. Existing tags are
+neither moved nor deleted. Exact source-index reuse, qualification, signatures,
+source closure and raw-byte readback remain mandatory.
 
 ## Qualification before Main publication
 
@@ -121,10 +110,16 @@ refuses. This changes no downloaded index, archive, wheel or receipt bytes.
 
 `publish_python_artifacts.py publish-candidate` requires that receipt and
 rechecks its current provider run/attempt before publication. It verifies
-the pinned hosted signer, source-bound archives and ready set, publishes
-required final version assets without clobbering, and reads their raw bytes
-back with consumer authority before emitting publication success. A failed
+the pinned hosted signer, source-bound archives and source-owned ready set, and
+reads the index and every bundle back with consumer authority before emitting
+publication success. It does not create a second version-alias publication. A failed
 readback does not emit a success-shaped receipt.
+For schema 2, the candidate-publication CLI performs one artifact-set validation
+against the current candidate and one complete source-set readback after qualification and
+signature checks. The readback returns its validated index for the publication
+receipt; the CLI does not call the legacy publication helpers or repeat those
+transfers. Direct helper callers retain independent validation, and the
+historical `publish` landing checks and schema-1 flow remain unchanged.
 
 The trusted controller must require both bound qualification and publication
 receipts before its atomic exact-head, strict-base, non-administrator Main
