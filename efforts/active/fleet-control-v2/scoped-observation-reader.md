@@ -25,6 +25,9 @@ wire cursor, subscription, command execution or automatic activation is added.
   Policy/enrollment/revocation writers must use this same fence. The reader
   cannot authenticate an arbitrary callback or force an unrelated writer to
   participate; the eventual serving integration must prove that contract.
+  The authority must bind this exact reentrant fence at construction and acquire
+  it before its internal lock on every admission/checkpoint path, including
+  direct callers. A reader refuses unbound or differently fenced authorities.
 - While holding the fence, authorize the exact request immediately before its
   one indexed storage lookup. Check the store's authority against the permit.
   A denied principal, actor/fleet mismatch or forbidden correlated branch
@@ -52,20 +55,20 @@ result as a substitute for current execution/emission authorization.
 
 ## Validation
 
-- [ ] Denied/empty/foreign or unsupported requests perform zero entity lookups.
-- [ ] Real verifier evidence for two principals yields isolated SQLite views,
+- [x] Denied/empty/foreign or unsupported requests perform zero entity lookups.
+- [x] Real verifier evidence for two principals yields isolated SQLite views,
   with no field/entity cross-product widening.
-- [ ] Exact field projection and immutable results omit every global cursor,
+- [x] Exact field projection and immutable results omit every global cursor,
   position, sequence and unselected field; missing fields remain distinct
   from explicit nulls.
-- [ ] Missing rows, removals and stale origin generations remain explicit.
-- [ ] Real lock contention is bounded; a participating revocation writer is
+- [x] Missing rows, removals and stale origin generations remain explicit.
+- [x] Real lock contention is bounded; a participating revocation writer is
   serialized with the read. Revocation/expiry at the completion checkpoint
   withholds results.
-- [ ] Successful and failed reads release terminal permit capacity, while
+- [x] Successful and failed reads release terminal permit capacity, while
   proof replay and fabricated/foreign permits remain refused.
-- [ ] Storage and callback failures propagate; no silent retry or cached allow.
-- [ ] A fresh-process real-identity/SQLite consumer uses production modules,
+- [x] Storage and callback failures propagate; no silent retry or cached allow.
+- [x] A fresh-process real-identity/SQLite consumer uses production modules,
   and importing the adapter preserves the dependency-free client boundary.
 - [ ] Existing admission/store tests and unchanged required partition budgets
   pass; current-head review and required CI pass before implementation merge.
@@ -73,3 +76,32 @@ result as a substitute for current execution/emission authorization.
 No first-machine installer behavior changes. Clean-room role installation and
 live external provider/serving proof are not supplied by this isolated library;
 those larger Plan and Validation Plan gates remain open.
+
+## Validation evidence
+
+The owned reader/admission/store selection passes 123 tests in 48.21 seconds
+under the unchanged 120-second containment limit, including the real independent
+consumer and lock cases. The dated parent Journal records execution history,
+including failed attempts.
+
+The [implemented API](../../../fleet-manager/docs/scoped-observation-reader.md)
+keeps the trusted full-row parser distinct from selected result projection.
+Current-head hosted review and required CI remain the independent merge gate
+above, not a result inferred from this local run.
+
+The authority binds the reader's exact reentrant fence and acquires it before
+its internal lock on every admission/checkpoint path, including direct calls.
+The reader rejects an unbound or differently fenced authority. This common
+ordering prevents an opposing-lock deadlock when the snapshot callback also
+acquires the owner fence. A bounded subprocess regression
+exercises mixed direct/reader calls with a fence-acquiring callback, plus an
+inverted-order negative control that reproduces the deadlock. Existing unfenced
+callers keep their original lock semantics.
+
+Current PR CI deliberately executes eligible units and guards, not the former
+native full-Fleet matrix. Its green result is not evidence that the new
+identity/SQLite/concurrency integration ran on Linux. The available periodic
+container workflow covers plugin portfolios, not this standalone reader, and
+its native Windows lane is explicitly unenrolled. This slice therefore records
+native Windows contained integration and the independent consumers above,
+without claiming unavailable hosted integration or expanding shared CI.
