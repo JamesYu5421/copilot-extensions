@@ -131,9 +131,12 @@ It resolves user, repository and local activation settings in process and uses
 the existing vendored `plugin_resolve` marketplace/path helpers and host
 installed-root resolver. Built-in unqualified plugin settings are outside this
 marketplace projection surface. Local catalog identity uses the existing
-`source.manifestName` mapping when a registration name differs. Missing enabled
-payloads, invalid declarations and inconclusive index checks report failure
-before publication instead of treating incomplete discovery as an empty set.
+`source.manifestName` mapping when a registration name differs. Missing enabled payloads and invalid per-plugin declarations report failures
+without withholding independently resolved sources. Such a publication is
+partial, never complete readiness; it retains all old generated outputs because
+incomplete discovery is not removal authority. Invalid effective settings,
+cross-source destination ambiguity and inconclusive index/path checks still
+refuse the batch before mutation.
 Index queries include case aliases of the generated namespace and neutralize
 inherited Git pathspec flags, so caller environment cannot narrow the protection.
 Settings use the host's leading-comment and exact-duplicate JSON semantics,
@@ -169,6 +172,104 @@ untracked files and unused empty generated directories are removed before
 installing replacements, allowing file/directory destination migrations in
 either direction without manual cleanup. Tracked blockers still fail the batch
 before any of those removals.
+
+Successful publication records a versioned `prepared.json` in the checkout's
+existing Git-administrative guidance directory. It binds the canonical root and
+home, exact current settings-derived plugin identities and payload roots,
+manifest generations, captured input-file identities/timestamps/content hashes, generated
+files/directories and Git index/HEAD evidence. A subsequent unchanged boundary
+revalidates that evidence (including current file bytes) without rebuilding the desired set, running Git or
+copying files. Changed settings, payloads, template links, pairing output,
+generated files, index/HEAD or malformed receipts require preparation again.
+Ignore-file evidence includes absent repository ignore files, so creating an
+override invalidates reuse. A receipt retains the Git evidence actually checked
+by preflight; changes to that evidence before mutation or receipt creation
+refuse publication rather than certifying an unchecked newer index. Regular
+symlinked source inputs retain both link identity and target content hashes;
+output-link redirection remains refused.
+Pending paired composition always refuses reuse. Partial/failed publications
+never create reusable readiness. The receipt is disposable local evidence, not
+a source of instruction authority or a model-admission receipt.
+
+Version 2 distinguishes ready preparation from partial ownership history.
+Partial records are never reusable readiness. Their bounded source/byte
+ownership map lets healthy providers update proven slots without replacing
+guidance owned by an unresolved provider. Unknown legacy slots and structural
+overlaps remain untouched with an explicit ownership finding; a later complete
+source set can reconcile the generated namespace normally. Successful partial
+publication records ownership for newly delivered sources, so another partial
+pass can safely update them. This is a file-ownership safeguard, not a content
+selection policy; all tracked-file and path checks still apply.
+
+The complete desired set is built once inside the publication lock. Captured
+input identities and current source selection are checked again before copying,
+rather than reconstructing every desired byte a second time. All mutation-path
+Git protection remains in place. Cross-process callers use the same gate and
+resolve current inputs after acquiring it; an older waiting caller cannot
+publish its pre-lock selection over a newer generation.
+
+Bridge's local Session-Host path invokes the attributable optional Worktrees
+`knowledge compose-plugins --prepare-projections --json` owner after static
+plugin preparation and before spawn. Its successful generation is reused, not
+rendered into a competing namespace. This foreground call retains async
+cancellation/tree custody and operation-specific owner limits, without a broad
+five-second render cutoff. Without a Worktrees owner, the independent bounded
+compatibility renderer remains available; refused identity or a failed owner
+does not authorize switching to another installation.
+On POSIX the Bridge-owned command uses the existing enclosing-process-group
+contract, so foreground Git stays in the group Bridge retires on cancellation
+or owner exit. Windows retains kill-on-close Job custody. Native Linux
+qualification explicitly removes test-only detachment suppression.
+The finite command scope observes the owner's public process return code
+independently of pipe EOF, then retires descendants; inherited stdout/stderr
+handles cannot postpone cleanup indefinitely. Its observer is joined or
+cancelled before the command returns and is not a resident poller.
+If POSIX birth custody is already unavailable when spawn returns, preparation
+fails explicitly before communication starts. It closes only its owned local
+capture transport and bounds the direct-child wait; it neither signals an
+unverified group nor claims that descendant cleanup was verified.
+macOS group identity uses the public native birth-time reader from psutil,
+already supplied by Bridge's required `agent-procutil[metrics]` dependency.
+Readiness of that identity backend is checked before enabling the owner path;
+missing custody is an explicit unavailable result, not an unsafe spawn.
+Fresh identity reads retain PID-reuse and unreadable-identity refusal.
+Native Darwin descendant controls remain distinct from adapter unit tests.
+
+SessionStart verifies current readiness before queueing its bounded backup.
+An exhausted reuse-probe budget means unverified readiness, not disabled
+backup: the remaining hook budget is checked again before queueing.
+That probe budget reaches receipt, file-hash and Git-evidence validation;
+expiry cannot be converted to reused readiness or swallowed as a cache miss.
+For a late backup, the exact session retains a watch on the checkout-local
+completion status. The existing post-tool hook surfaces completion once:
+changed/removed files explicitly require restart/new context before discovery;
+partial and failed outcomes retain reviewed-fallback guidance. An idle session
+is not awakened and no restart is automatic. Written files, a successful hook
+result and an acknowledgment never assert that the running model admitted the
+new instructions.
+The watch captures an initial generated-file publication revision before its
+readiness probe. A prospective output mutation advances that revision under the
+publication lock before the first write or removal, including partial
+publications. It survives post-copy verification failure or abnormal exit;
+failed-publication counts remain explicitly unavailable. Complete readiness
+receipts also bind this revision, so failed mutation cannot reuse an older
+receipt. Completion compares revisions,
+not only the backup's own copy counts: a foreground publisher that finishes
+before the backup is still a late change requiring a restart notice. An
+unchanged backup does not invent a new publication revision. Failure after
+possible changes reports repair and restart/new-context requirements while
+retaining reviewed fallback, never a successful refresh or model-admission claim.
+The watch timestamp precedes the probe as well, so a worker finishing during
+the probe is not discarded as an older completion. Abnormal worker exits
+persist a terminal timestamp and failure result for the same post-tool
+consumer; existing completed results are preserved.
+The consumer also compares the current publication revision, not just the
+backup's returned revision, so a later foreground publication is not missed.
+It can report a provably exited worker even when the short-lived queueing
+process and its reaper thread have already exited. The resident path reuses
+the loaded identity-aware observer; the standalone hook uses read-only kernel
+exit checks and retains the watch on access denial or other uncertainty.
+It neither kills a process nor rewrites another worker's request.
 
 A third delivery tier, **worktree-scoped** rather than session-scoped or
 purely checked-in: a gitignored, locally re-rendered cache of auto-discovered

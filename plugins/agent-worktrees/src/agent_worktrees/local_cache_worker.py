@@ -83,6 +83,18 @@ def _gate(directory: Path) -> SingleInstance:
     return SingleInstance(directory, service="local-guidance")
 
 
+def _failed(state: dict, root: Path) -> None:
+    from .static_preparation import publication_revision
+
+    state.update(
+        phase="failed", completed_at=time.time(),
+        result={
+            "status": "failed", "model_admission": "unknown", "counts_known": False,
+            "publication_revision": publication_revision(root),
+        },
+    )
+
+
 def _reap(process: subprocess.Popen, root: Path, directory: Path, request_id: str) -> None:
     code = process.wait()
     if code:
@@ -93,8 +105,14 @@ def _reap(process: subprocess.Popen, root: Path, directory: Path, request_id: st
                 return
             gate.acquire()
             state = _read(directory / "request.json")
-            if state and state["request_id"] == request_id and state["phase"] != "done":
-                state["phase"] = "failed"
+            terminal = state and (
+                state["phase"] == "done" or (
+                    state["phase"] == "failed" and isinstance(state.get("result"), dict)
+                    and isinstance(state.get("completed_at"), (int, float))
+                )
+            )
+            if state and state["request_id"] == request_id and not terminal:
+                _failed(state, root)
                 _log(directory, f"[local-guidance] failed: worker exited {code} before publication")
                 _save(directory, state)
         except (OSError, ValueError, AlreadyRunningError) as exc:
@@ -137,7 +155,7 @@ def queue(root: Path, directory: Path):
             state.update(phase="queued", owner=_owner(process.pid))
             _save(directory, state)
         except (OSError, ValueError) as exc:
-            state["phase"] = "failed"
+            _failed(state, root)
             _log(directory, f"[local-guidance] failed: dispatch failed: {exc}")
             _save(directory, state)
             if process is not None:
@@ -201,7 +219,19 @@ def run(root: Path, directory: Path, request_id: str | None = None) -> int:
         if current is None or current["request_id"] != request_id:
             raise ValueError("guidance worker ownership changed before completion")
         _log(directory, result.diagnostic)
-        current.update(phase="done", result={"status": result.status, "installed": result.changed, "unchanged": result.unchanged})
+        current.update(
+            phase="done" if result.status in ("ready", "partial", "skipped") else "failed",
+            completed_at=time.time(),
+            result={
+                "status": result.status, "installed": result.changed if result.counts_known else None,
+                "unchanged": result.unchanged if result.counts_known else None,
+                "removed": result.removed if result.counts_known else None,
+                "counts_known": result.counts_known,
+                "generation": result.generation, "model_admission": "unknown",
+                "publication_revision": result.publication_revision,
+                "restart_required": bool(result.changed or result.removed) if result.counts_known else None,
+            },
+        )
         _save(directory, current)
     finally:
         gate.release()
@@ -228,6 +258,31 @@ def metadata_directory(root: str | Path) -> Path | None:
     return git_dir.resolve() / "agent-worktrees-local-guidance"
 
 
+def watch_completion(
+    root: Path, session_id: str | None, *, prepared: bool = False, initial_revision: str = "",
+    started_at: float | None = None,
+) -> None:
+    """A hook-owned watch lets the next post-tool hook surface late completion."""
+    import re
+
+    if not session_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id):
+        return
+    directory = Path.home() / ".copilot" / "session-state" / session_id
+    if not directory.is_dir() or directory.is_symlink():
+        return
+    path = directory / "local-guidance-watch.json"
+    if prepared:
+        path.unlink(missing_ok=True)
+        return
+    metadata = metadata_directory(root)
+    if metadata is not None:
+        _write(path, json.dumps({
+            "version": 1, "root": str(root), "metadata": str(metadata),
+            "started_at": time.time() if started_at is None else started_at,
+            "publication_revision": initial_revision,
+        }) + "\n")
+
+
 def is_active(root: str | Path) -> bool:
     """Cheap workspace-local liveness, including the queued handoff interval."""
     root = Path(root)
@@ -240,7 +295,12 @@ def is_active(root: str | Path) -> bool:
             if os.path.normcase(state["root"]) != os.path.normcase(str(root.resolve())):
                 raise ValueError("guidance worker workspace identity mismatch")
             return state["phase"] != "failed" and locks.lock_is_live(state["owner"])
-        owner = read_owner_pid(directory / "local-guidance.lock")
+        lock_path = directory / "local-guidance.lock"
+        try:
+            lock_path.lstat()
+        except FileNotFoundError:
+            return False
+        owner = read_owner_pid(lock_path)
         return locks.pid_alive(owner) if owner else True
     except (OSError, ValueError) as exc:
         _LOG.warning("Guidance worker liveness is unconfirmed: %s", exc)

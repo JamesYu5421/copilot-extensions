@@ -3946,7 +3946,9 @@ def _run_session_lifecycle(
 
         from . import local_cache_refresh
 
-        diagnostics += local_cache_refresh.sessionstart_diagnostic(cwd, deadline=deadline) or ""
+        diagnostics += local_cache_refresh.sessionstart_diagnostic(
+            cwd, deadline=deadline, session_id=payload.get("sessionId"),
+        ) or ""
 
         registration_args = argparse.Namespace(
             worktree_id=None,

@@ -409,6 +409,22 @@ that marker. Explicit no-pair creation does not set it. Existing worktree
 identities and checked-in guidance remain usable; pair repair is separate from
 static copying.
 
+Successful preparation is generation-bound and reused across create/resume,
+Bridge and SessionStart while settings, payload identity/inputs, generated
+outputs and Git protection evidence remain current. Unchanged reads do not
+rebuild or copy the set. An unavailable payload yields an explicit partial
+result while safe independent sources are copied; unresolved old outputs and
+reviewed fallback remain, and no complete-readiness receipt is issued.
+Partial ownership history also prevents a valid provider from overwriting an
+unresolved provider's existing slot. Proven healthy slots remain updateable;
+unknown legacy slots wait for a complete preparation rather than being guessed.
+SessionStart queues a bounded backup only when current preparation is absent.
+Its late completion is surfaced once through the next post-tool hook:
+refreshed files require restart/new context for discovery, not an assertion
+that the running model admitted them. Idle sessions are not awakened and no
+automatic restart or runtime update is introduced. See
+`docs/patterns/worktree-scoped-dynamic-guidance.md` in the source repository.
+
 ## PowerShell post-tool hook
 
 The legacy-context PowerShell `postToolUse` hook contacts an already-running

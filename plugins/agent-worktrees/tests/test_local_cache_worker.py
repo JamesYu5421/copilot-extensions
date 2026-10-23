@@ -115,7 +115,140 @@ def test_rendering_keeps_no_administrative_lease_open(tmp_path, monkeypatch):
     state = json.loads((directory / "request.json").read_text())
     assert state["phase"] == "done"
     assert state["result"]["installed"] == 3
+    assert state["result"]["restart_required"] is True
+    assert state["result"]["model_admission"] == "unknown"
     assert "3 installed" in (directory / "refresh.log").read_text()
+
+
+@pytest.mark.parametrize("status,changed,phase,restart", [
+    ("ready", 0, "done", False), ("partial", 1, "done", True),
+    ("failed", 0, "failed", False), ("timeout", 0, "failed", False),
+])
+def test_completion_status_preserves_failure_and_admission(
+    tmp_path, monkeypatch, status, changed, phase, restart,
+):
+    directory = tmp_path / "worker"
+    directory.mkdir()
+    monkeypatch.setattr(lcr, "refresh_local_cache", lambda root: lcr.RefreshResult(status, changed=changed))
+    worker.run(tmp_path, directory)
+    state = json.loads((directory / "request.json").read_text())
+    assert state["phase"] == phase
+    assert state["result"]["restart_required"] is restart
+    assert state["result"]["model_admission"] == "unknown"
+
+
+@pytest.mark.parametrize("mutation_started", [False, True])
+def test_abnormal_exit_reaches_post_tool_failure_notice(tmp_path, monkeypatch, mutation_started):
+    from pathlib import Path
+    from test_nudge_status import nudge
+
+    home, root = tmp_path / "home", tmp_path / "checkout"
+    (root / ".git").mkdir(parents=True)
+    session = home / ".copilot/session-state/reaper-session"
+    session.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(worker.activity, "log_event", lambda *a, **kw: None)
+    directory = worker.metadata_directory(root)
+    directory.mkdir()
+    worker.watch_completion(root, "reaper-session")
+    if mutation_started:
+        from agent_worktrees import static_preparation
+        static_preparation.record_publication(root, changed=True)
+    worker._save(directory, {
+        "version": 1, "root": str(root), "request_id": "admitted",
+        "phase": "running", "owner": worker._owner(os.getpid()),
+    })
+    worker._reap(SimpleNamespace(wait=lambda: 17), root, directory, "admitted")
+    payload = {"sessionId": "reaper-session", "cwd": str(root)}
+    notice = nudge.decide(
+        payload, home=home, env={"AGENT_WORKTREES_NUDGE": "off"},
+    )
+    assert "Backup refresh failed" in notice
+    if mutation_started:
+        assert "Restart/new context is required" in notice and "repair" in notice
+    else:
+        assert "Restart/new context" not in notice
+    assert nudge.decide(payload, home=home, env={"AGENT_WORKTREES_NUDGE": "off"}) is None
+    assert not (session / "local-guidance-watch.json").exists()
+
+
+def test_reaper_preserves_completed_partial_result(tmp_path, monkeypatch):
+    monkeypatch.setattr(worker.activity, "log_event", lambda *a, **kw: None)
+    state = {
+        "version": 1, "root": str(tmp_path), "request_id": "finished",
+        "phase": "done", "owner": worker._owner(os.getpid()),
+        "completed_at": 1.0, "result": {"status": "partial", "installed": 2},
+    }
+    worker._save(tmp_path, state)
+    worker._log(tmp_path, "original partial result")
+    worker._reap(SimpleNamespace(wait=lambda: 1), tmp_path, tmp_path, "finished")
+    assert worker._read(tmp_path / "request.json") == state
+    assert (tmp_path / "refresh.log").read_text() == "original partial result\n"
+
+
+@pytest.mark.portfolio_tier("T2")
+@pytest.mark.effect("process")
+@pytest.mark.effect("filesystem")
+def test_short_lived_queue_parent_does_not_hide_worker_failure(tmp_path, monkeypatch):
+    from pathlib import Path
+    from test_nudge_status import nudge
+    import subprocess
+    import sys
+    import time
+
+    home, root = tmp_path / "home", tmp_path / "checkout"
+    (root / ".git").mkdir(parents=True)
+    session = home / ".copilot/session-state/orphan-worker"
+    session.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    worker.watch_completion(root, "orphan-worker")
+    directory = worker.metadata_directory(root)
+    staged = tmp_path / "child-runtime" / "agent_worktrees"
+    staged.mkdir(parents=True)
+    (staged / "__init__.py").write_text(
+        f"__path__.append({str(Path(worker.__file__).parent)!r})\n", encoding="utf-8",
+    )
+    (staged / "local_cache_worker.py").write_text(
+        "import os,time\nfrom agent_worktrees import locks\n"
+        "parent={'pid':int(os.environ['TEST_PARENT_PID']),'start_time':os.environ['TEST_PARENT_START']}\n"
+        "until=time.monotonic()+5\n"
+        "while locks.lock_is_live(parent) and time.monotonic()<until: time.sleep(.01)\n"
+        "os._exit(17)\n",
+        encoding="utf-8",
+    )
+    driver = (
+        "import os,pathlib,sys\n"
+        "from agent_worktrees import local_cache_worker as w,status_monitor_runtime as r,locks\n"
+        "assert os.environ.get('COPILOT_EXTENSIONS_TEST_CONTAINED')=='1'\n"
+        "env=dict(os.environ,PYTHONPATH=sys.argv[3],TEST_PARENT_PID=str(os.getpid()),"
+        "TEST_PARENT_START=locks.process_start_time(os.getpid()))\n"
+        "r._daemon_environment=lambda:env\nr._daemon_cwd=lambda:sys.argv[1]\n"
+        "assert w.queue(pathlib.Path(sys.argv[1]),pathlib.Path(sys.argv[2])).status=='queued'\n"
+        "os._exit(0)\n"
+    )
+    env = dict(os.environ, HOME=str(home), USERPROFILE=str(home))
+    parent = subprocess.run(
+        [sys.executable, "-c", driver, str(root), str(directory), str(staged.parent)],
+        env=env, capture_output=True, text=True, timeout=10,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    assert parent.returncode == 0, parent.stderr
+    state = worker._read(directory / "request.json")
+    until = time.monotonic() + 6
+    while not nudge._worker_definitely_gone(state["owner"]) and time.monotonic() < until:
+        time.sleep(.02)
+    assert nudge._worker_definitely_gone(state["owner"]), "bounded worker did not exit"
+    assert worker._read(directory / "request.json")["phase"] == "queued", "parent reaper unexpectedly survived"
+    script = Path(__file__).resolve().parents[1] / "scripts/nudge_status.py"
+    result = subprocess.run(
+        [sys.executable, str(script)], env=dict(env, AGENT_WORKTREES_NUDGE="off"),
+        input=json.dumps({"sessionId": "orphan-worker", "cwd": str(root)}),
+        capture_output=True, text=True, timeout=10,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Backup refresh failed" in json.loads(result.stdout)["additionalContext"]
+    assert not (session / "local-guidance-watch.json").exists()
 
 
 def test_latest_result_is_a_bounded_utf8_snapshot(tmp_path):
@@ -201,6 +334,14 @@ def test_queued_worker_protects_finalize_and_cleanup(tmp_path, monkeypatch):
     assert main.sessions._normalize_path(str(root)) in active
     monkeypatch.setattr(worker.locks, "lock_is_live", lambda owner: False)
     assert not worker.is_active(root)
+
+
+def test_unconfirmed_admission_lock_remains_active_without_request(tmp_path):
+    root = tmp_path / "checkout"
+    directory = root / ".git" / "agent-worktrees-local-guidance"
+    directory.mkdir(parents=True)
+    (directory / "local-guidance.lock").write_text("", encoding="utf-8")
+    assert worker.is_active(root)
 
 
 def test_wrong_request_cannot_claim_an_existing_worker(tmp_path, monkeypatch):

@@ -139,6 +139,139 @@ def _nudge_text(calls: int, minutes: int) -> str:
     )
 
 
+def _worker_definitely_gone(owner: object) -> bool:
+    if (
+        not isinstance(owner, dict) or type(owner.get("pid")) is not int
+        or not 0 < owner["pid"] <= 0xFFFFFFFF or not isinstance(owner.get("start_time"), str)
+    ):
+        return False
+    try:
+        runtime = sys.modules.get("agent_worktrees.locks")
+        if runtime is not None and not runtime.lock_is_live(owner):
+            return True
+        pid = owner["pid"]
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel.WaitForSingleObject.restype = wintypes.DWORD
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel.CloseHandle.restype = wintypes.BOOL
+            handle = kernel.OpenProcess(0x100000, False, pid)  # SYNCHRONIZE, no mutation rights
+            if not handle:
+                return ctypes.get_last_error() == 87  # absent PID, not access denial
+            try:
+                return kernel.WaitForSingleObject(handle, 0) == 0
+            finally:
+                kernel.CloseHandle(handle)
+        os.kill(pid, 0)
+        if sys.platform.startswith("linux"):
+            fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            return fields[0] == "Z" or fields[19] != owner["start_time"]
+    except ProcessLookupError:
+        return True
+    except (OSError, ValueError, IndexError, AttributeError, OverflowError):
+        pass
+    return False
+
+
+def _publication_revision(directory: Path, root: str) -> str:
+    try:
+        path = directory / "publication.json"
+        if not path.is_file() or path.stat().st_size > 4096:
+            return ""
+        value = json.loads(path.read_text(encoding="utf-8"))
+        revision = value.get("revision")
+        if (
+            value.get("version") == 1 and value.get("root") == root
+            and isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{32}", revision)
+        ):
+            return revision
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return ""
+
+
+def _late_guidance_notice(payload: dict, home: Path) -> str | None:
+    session_id = payload.get("sessionId")
+    if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", session_id):
+        return None
+    watch_path = home / ".copilot" / "session-state" / session_id / "local-guidance-watch.json"
+    try:
+        if not watch_path.is_file() or watch_path.stat().st_size > 8192:
+            return None
+        watch = json.loads(watch_path.read_text(encoding="utf-8"))
+        if (
+            watch.get("version") != 1
+            or not Path(payload.get("cwd") or "").resolve().is_relative_to(Path(watch["root"]).resolve())
+        ):
+            return None
+        metadata = Path(watch["metadata"])
+        request = metadata / "request.json"
+        if not request.is_file() or request.stat().st_size > 256 * 1024:
+            return None
+        state = json.loads(request.read_text(encoding="utf-8"))
+        if state.get("version") != 1 or state.get("root") != watch["root"]:
+            return None
+        if state.get("phase") in ("spawning", "queued", "running"):
+            if not _worker_definitely_gone(state.get("owner")):
+                return None
+            result = {"status": "failed", "counts_known": False}
+        else:
+            if state.get("phase") not in ("done", "failed") or state.get("completed_at", 0) < watch["started_at"]:
+                return None
+            result = state["result"]
+        status = result.get("status")
+        if status not in ("ready", "partial", "skipped", "failed", "timeout"):
+            return None
+        watch_path.unlink()
+        latest = _publication_revision(metadata, watch["root"])
+        revision = latest or result.get("publication_revision")
+        changed = result.get("restart_required") is True or (
+            isinstance(revision, str) and revision and revision != watch.get("publication_revision", "")
+        )
+        if status in ("failed", "timeout"):
+            if changed:
+                return (
+                    "[local-guidance] Backup refresh failed after possible file changes. "
+                    "Retain reviewed fallback and repair preparation. Restart/new context is required "
+                    "before discovering refreshed guidance; file changes are not proof of model admission."
+                )
+            return "[local-guidance] Backup refresh failed; retain reviewed fallback. Model admission is unknown."
+        if changed:
+            coverage = "partially refreshed" if status == "partial" else "refreshed"
+            description = (
+                f"Static guidance files {coverage} after session discovery."
+                if result.get("restart_required") is True
+                else "Static guidance preparation is incomplete after a possible late file change."
+                if status == "partial"
+                else "Static guidance was revalidated after a possible late file change."
+            )
+            if latest and latest != result.get("publication_revision"):
+                description = (
+                    "Static guidance preparation is incomplete; files may have changed after its last validation."
+                    if status == "partial"
+                    else "Static guidance may have changed after its last validation; reprepare it first."
+                )
+            fallback = "Retain reviewed fallback for unresolved sources. " if status == "partial" else ""
+            return (
+                f"[local-guidance] {description} "
+                "Restart/new context is required to discover the refreshed guidance; "
+                "this is file publication, not proof of model admission. "
+                f"{fallback}"
+                "Do not restart automatically; preserve current work first."
+            )
+        if status == "partial":
+            return "[local-guidance] Backup refresh is incomplete; retain reviewed fallback. Model admission is unknown."
+        return "[local-guidance] Backup verified unchanged guidance; no new model admission is asserted."
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
 def decide(
     payload: dict, *, env=None, home=None, now: float | None = None,
     tracking_record=_UNSET, deadline: float | None = None,
@@ -150,11 +283,14 @@ def decide(
     (per-project) at ``<home>/.<project>/worktrees/<id>.yaml``.
     """
     env = env if env is not None else os.environ
-    if _truthy_off(env.get("AGENT_WORKTREES_NUDGE")):
-        return None
     home = Path(home) if home is not None else Path.home()
     now = time.time() if now is None else now
     if deadline is not None and time.time() >= deadline:
+        return None
+    notice = _late_guidance_notice(payload, home)
+    if notice:
+        return notice
+    if _truthy_off(env.get("AGENT_WORKTREES_NUDGE")):
         return None
 
     cwd = str(payload.get("cwd") or "") or os.getcwd()

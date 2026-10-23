@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -111,6 +112,405 @@ def provider(root, home, name="demo", *, content=b'---\r\napplyTo: "**"\r\n---\r
     current.setdefault("enabledPlugins", {})[f"{name}@market"] = True
     write_json(settings, current)
     return template, root / static.NAMESPACE / "market" / name / "fallback.local.instructions.md"
+
+
+def test_prepared_generation_reused_before_discovery_and_hook(copy_workspace, monkeypatch):
+    root, home = copy_workspace
+    _, output = provider(root, home)
+    calls = []
+    original = static._snapshot
+
+    def snapshot(*args, **kwargs):
+        calls.append("snapshot")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(static, "_snapshot", snapshot)
+    first = lcr.prepare_for_launch(root)
+    assert first.status == "ready"
+    assert first.generation
+    assert not first.reused
+    assert output.exists(), "publication precedes the consumer's first discovery"
+    monkeypatch.setattr(static, "_git", lambda *a, **kw: pytest.fail("unchanged preparation spawned Git"))
+    monkeypatch.setattr(lcr, "_queue_refresh", lambda *a: pytest.fail("current generation queued a worker"))
+    second = lcr.prepare_for_launch(root)
+    assert second.reused and second.generation == first.generation
+    assert "ready" in lcr.sessionstart_diagnostic(str(root), deadline=time.time() + 3)
+    assert calls == ["snapshot"]
+
+
+def test_prepared_cache_without_worker_is_not_live_work(copy_workspace):
+    from agent_worktrees import local_cache_worker
+
+    root, home = copy_workspace
+    provider(root, home)
+    assert lcr.prepare_for_launch(root).status == "ready"
+    assert not (lcr._worker_directory(root) / "request.json").exists()
+    assert not local_cache_worker.is_active(root)
+
+
+@pytest.mark.parametrize("change", ["payload", "settings", "missing-output", "extra-output", "receipt"])
+def test_preparation_invalidates_actual_changes(copy_workspace, change):
+    root, home = copy_workspace
+    template, output = provider(root, home)
+    first = lcr.prepare_for_launch(root)
+    if change == "payload":
+        template.write_bytes(b"next payload")
+    elif change == "settings":
+        provider(root, home, "second")
+    elif change == "missing-output":
+        output.unlink()
+    elif change == "extra-output":
+        (output.parent / "extra.local.instructions.md").write_text("stale")
+    else:
+        (lcr._worker_directory(root) / "prepared.json").write_text("{")
+    second = lcr.prepare_for_launch(root)
+    assert second.status == "ready" and not second.reused
+    assert output.read_bytes() == template.read_bytes()
+    if change in ("payload", "settings"):
+        assert second.generation != first.generation
+
+
+@pytest.mark.parametrize("failure", [
+    "missing", "declaration", "template", "dangling-template", "dangling-declaration",
+])
+def test_missing_payload_does_not_withhold_independent_guidance(copy_workspace, failure):
+    root, home = copy_workspace
+    _, old = provider(root, home, "old")
+    assert lcr.prepare_for_launch(root).status == "ready"
+    _, safe = provider(root, home, "safe")
+    if failure != "missing":
+        broken, _ = provider(root, home, "missing")
+        if failure == "template":
+            broken.unlink()
+        elif failure.startswith("dangling-"):
+            path = broken if failure == "dangling-template" else broken.parents[1] / "instruction-projections.json"
+            path.unlink()
+            try:
+                path.symlink_to("missing-target")
+            except OSError as exc:
+                if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                    pytest.skip("native file-link privilege unavailable")
+                raise
+        else:
+            (broken.parents[1] / "instruction-projections.json").write_text("{")
+    settings = root / ".github" / "copilot" / "settings.json"
+    write_json(settings, {"enabledPlugins": {"safe@market": True, "missing@market": True}})
+    result = lcr.prepare_for_launch(root)
+    assert result.status == "partial"
+    assert result.blocking == 1 and "missing@market" in result.detail
+    assert safe.is_file() and old.is_file()
+    assert not result.reused
+
+
+@pytest.mark.parametrize("initially_partial", [False, True])
+def test_partial_source_cannot_overwrite_failed_provider_output(copy_workspace, initially_partial):
+    root, home = copy_workspace
+    broken, protected = provider(root, home, "broken", content=b"retain unresolved guidance")
+    settings = root / ".github/copilot/settings.json"
+    if initially_partial:
+        data = json.loads(settings.read_text())
+        data["enabledPlugins"]["missing@market"] = True
+        write_json(settings, data)
+    assert lcr.prepare_for_launch(root).status == ("partial" if initially_partial else "ready")
+    broken.unlink()
+    replacement, _ = provider(root, home, "replacement", content=b"must not replace another provider")
+    declaration = replacement.parents[1] / "instruction-projections.json"
+    data = json.loads(declaration.read_text())
+    data["projections"][0]["destination"] = ".github/instructions/broken/fallback.instructions.md"
+    write_json(declaration, data)
+    _, independent = provider(root, home, "independent", content=b"safe independent guidance")
+    result = lcr.prepare_for_launch(root)
+    assert result.status == "partial", result.diagnostic
+    assert protected.read_bytes() == b"retain unresolved guidance"
+    assert independent.read_bytes() == b"safe independent guidance"
+    assert "ownership" in result.detail
+
+
+def test_partial_publication_preserves_legacy_unknown_slot_until_complete(copy_workspace):
+    root, home = copy_workspace
+    _, protected = provider(root, home, content=b"current canonical guidance")
+    protected.parent.mkdir(parents=True)
+    protected.write_bytes(b"unknown unresolved owner")
+    _, independent = provider(root, home, "independent")
+    settings = root / ".github/copilot/settings.json"
+    data = json.loads(settings.read_text())
+    data["enabledPlugins"]["missing@market"] = True
+    write_json(settings, data)
+    assert lcr.prepare_for_launch(root).status == "partial"
+    assert protected.read_bytes() == b"unknown unresolved owner"
+    assert independent.exists()
+    data["enabledPlugins"]["missing@market"] = False
+    write_json(settings, data)
+    assert lcr.prepare_for_launch(root).status == "ready"
+    assert protected.read_bytes() == b"current canonical guidance"
+
+
+def test_partial_publication_can_update_its_proven_existing_source(copy_workspace):
+    root, home = copy_workspace
+    template, output = provider(root, home, content=b"first safe version")
+    settings = root / ".github/copilot/settings.json"
+    data = json.loads(settings.read_text())
+    data["enabledPlugins"]["missing@market"] = True
+    write_json(settings, data)
+    assert lcr.prepare_for_launch(root).status == "partial"
+    template.write_bytes(b"second safe version")
+    result = lcr.prepare_for_launch(root)
+    assert result.status == "partial" and result.changed == 1
+    assert output.read_bytes() == b"second safe version"
+
+
+@pytest.mark.parametrize("publisher", [
+    "backup", "foreground", "foreground-partial", "during-probe", "post-copy-failure",
+])
+def test_late_worker_completion_reaches_actual_post_tool_hook(copy_workspace, monkeypatch, publisher):
+    from agent_worktrees import local_cache_worker
+
+    root, home = copy_workspace
+    _, output = provider(root, home, content=b"fresh guidance")
+    session = home / ".copilot" / "session-state" / "example-session"
+    session.mkdir(parents=True)
+    monkeypatch.setattr(lcr, "_queue_refresh", lambda *a: lcr.RefreshResult("queued"))
+    if publisher == "during-probe":
+        original = static.current
+        began = time.time()
+        monkeypatch.setattr(lcr, "time", SimpleNamespace(
+            time=lambda: began, monotonic=time.monotonic, monotonic_ns=time.monotonic_ns,
+        ))
+
+        def finish_during_probe(*args, **kwargs):
+            monkeypatch.setattr(static, "current", original)
+            assert lcr.prepare_for_launch(root).changed == 1
+            assert local_cache_worker.run(root, lcr._worker_directory(root)) == 0
+            return None
+
+        monkeypatch.setattr(static, "current", finish_during_probe)
+    assert "queued" in lcr.sessionstart_diagnostic(
+        str(root), deadline=time.time() + 5, session_id="example-session",
+    )
+    if publisher != "during-probe":
+        assert not output.exists(), "backup has not delivered at discovery"
+    if publisher == "foreground-partial":
+        write_json(root / ".github/copilot/settings.json", {
+            "enabledPlugins": {"demo@market": True, "missing@market": True},
+        })
+    if publisher.startswith("foreground"):
+        assert lcr.prepare_for_launch(root).changed == 1
+    directory = lcr._worker_directory(root)
+    directory.mkdir(exist_ok=True)
+    if publisher == "post-copy-failure":
+        from agent_worktrees import static_preparation
+        original_check = static_preparation.require_git_state
+
+        def fail_after_copy(*args, **kwargs):
+            if output.exists():
+                raise ValueError("fixture post-copy verification failed")
+            return original_check(*args, **kwargs)
+
+        monkeypatch.setattr(static_preparation, "require_git_state", fail_after_copy)
+    if publisher != "during-probe":
+        assert local_cache_worker.run(root, directory) == (
+            1 if publisher in ("foreground-partial", "post-copy-failure") else 0
+        )
+    script = Path(__file__).resolve().parents[1] / "scripts" / "nudge_status.py"
+    env = dict(os.environ, HOME=str(home), USERPROFILE=str(home), AGENT_WORKTREES_NUDGE="off")
+
+    def post():
+        result = subprocess.run(
+            [sys.executable, str(script)], env=env,
+            input=json.dumps({"sessionId": "example-session", "cwd": str(root), "toolName": "view"}),
+            text=True, capture_output=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout) if result.stdout.strip() else {}
+
+    notice = post()["additionalContext"]
+    assert "Restart/new context is required" in notice
+    assert "not proof of model admission" in notice
+    if publisher == "foreground-partial":
+        assert "incomplete" in notice and "Retain reviewed fallback" in notice
+    assert not post()
+    assert output.read_bytes() == b"fresh guidance"
+    if publisher == "post-copy-failure":
+        assert "failed" in notice and "repair" in notice
+        monkeypatch.setattr(static_preparation, "require_git_state", original_check)
+        repaired = lcr.prepare_for_launch(root)
+        assert repaired.status == "ready"
+        assert lcr.prepare_for_launch(root).reused
+
+
+def test_probe_timeout_still_admits_bounded_backup(copy_workspace, monkeypatch):
+    root, home = copy_workspace
+    session = home / ".copilot" / "session-state" / "probe-session"
+    session.mkdir(parents=True)
+    queued = []
+
+    def timeout(*args, **kwargs):
+        raise TimeoutError("reuse probe budget exhausted")
+
+    monkeypatch.setattr(static, "current", timeout)
+    monkeypatch.setattr(lcr, "_queue_refresh", lambda cwd: queued.append(cwd) or lcr.RefreshResult("queued"))
+    result = lcr.sessionstart_diagnostic(str(root), deadline=time.time() + 5, session_id="probe-session")
+    assert "queued" in result
+    assert queued == [str(root)]
+    assert (session / "local-guidance-watch.json").is_file()
+
+
+def test_notice_observes_publication_after_backup_result(copy_workspace):
+    from agent_worktrees import local_cache_worker
+    from test_nudge_status import nudge
+
+    root, home = copy_workspace
+    template, _ = provider(root, home)
+    initial = lcr.prepare_for_launch(root)
+    session = home / ".copilot/session-state/later-publication"
+    session.mkdir(parents=True)
+    local_cache_worker.watch_completion(root, "later-publication", initial_revision=initial.publication_revision)
+    assert local_cache_worker.run(root, lcr._worker_directory(root)) == 0
+    template.write_bytes(b"published after the backup returned its unchanged result")
+    assert lcr.prepare_for_launch(root).changed == 1
+    notice = nudge.decide(
+        {"sessionId": "later-publication", "cwd": str(root)},
+        home=home, env={"AGENT_WORKTREES_NUDGE": "off"},
+    )
+    assert "Restart/new context is required" in notice
+    assert "reprepare" in notice
+
+
+def test_probe_timeout_rechecks_remaining_hook_budget(copy_workspace, monkeypatch):
+    root, _ = copy_workspace
+    clock = [100.0]
+    monkeypatch.setattr(lcr, "time", SimpleNamespace(time=lambda: clock[0], monotonic=lambda: clock[0]))
+
+    def timeout(*args, **kwargs):
+        clock[0] = 101.0
+        raise TimeoutError("reuse probe budget exhausted")
+
+    monkeypatch.setattr(static, "current", timeout)
+    monkeypatch.setattr(lcr, "_queue_refresh", lambda *a: pytest.fail("remaining budget too short"))
+    assert "skipped" in lcr.sessionstart_diagnostic(str(root), deadline=102.0)
+
+
+@pytest.mark.parametrize("kind", ["input", "output", "index"])
+def test_deadline_expires_during_real_receipt_validation(copy_workspace, monkeypatch, kind):
+    from agent_worktrees import static_preparation
+
+    root, home = copy_workspace
+    template, output = provider(root, home)
+    if kind == "index":
+        (root / "tracked.txt").write_text("fixture")
+        subprocess.run(
+            ["git", "-C", str(root), "add", "tracked.txt"], check=True, capture_output=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    assert lcr.prepare_for_launch(root).status == "ready"
+    target = {"input": template, "output": output, "index": root / ".git/index"}[kind]
+    clock = [100.0]
+    monkeypatch.setattr(static, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    original = static_preparation._hash_file
+    expired = []
+
+    def expire_after_hash(path, deadline):
+        value = original(path, deadline)
+        if path == target and deadline is not None:
+            clock[0] = deadline + 1
+            expired.append(path)
+        return value
+
+    monkeypatch.setattr(static_preparation, "_hash_file", expire_after_hash)
+    with pytest.raises(TimeoutError):
+        static.current(root, home, deadline=101.0)
+    assert expired == [target]
+
+
+@pytest.mark.parametrize("kind", ["settings", "declaration"])
+def test_symlinked_input_publishes_and_reuses(copy_workspace, kind):
+    root, home = copy_workspace
+    template, _ = provider(root, home)
+    path = (
+        root / ".github/copilot/settings.json" if kind == "settings"
+        else template.parents[1] / "instruction-projections.json"
+    )
+    target = path.with_suffix(".target.json")
+    path.rename(target)
+    try:
+        path.symlink_to(target.name)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("native file-link privilege unavailable")
+        raise
+    first = lcr.prepare_for_launch(root)
+    assert first.status == "ready", first.diagnostic
+    assert lcr.prepare_for_launch(root).reused
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_cyclic_source_link_preserves_independent_publication(copy_workspace, cached):
+    root, home = copy_workspace
+    broken, old_output = provider(root, home, "broken", content=b"old guidance")
+    healthy, healthy_output = provider(root, home, "healthy", content=b"old healthy guidance")
+    if cached:
+        assert lcr.prepare_for_launch(root).status == "ready"
+    healthy.write_bytes(b"current healthy guidance")
+    broken.unlink()
+    try:
+        broken.symlink_to(broken.name)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("native file-link privilege unavailable")
+        raise
+    result = lcr.prepare_for_launch(root)
+    assert result.status == "partial", result.diagnostic
+    assert result.blocking == 1 and not result.reused
+    assert healthy_output.read_bytes() == b"current healthy guidance"
+    if cached:
+        assert old_output.read_bytes() == b"old guidance"
+
+
+def test_new_ignore_negation_invalidates_cached_readiness(copy_workspace):
+    root, home = copy_workspace
+    _, output = provider(root, home)
+    assert lcr.prepare_for_launch(root).status == "ready"
+    (root / ".gitignore").write_text("!**/\n!*.local.instructions.md\n", encoding="utf-8")
+    result = lcr.prepare_for_launch(root)
+    assert result.status == "failed", result.diagnostic
+    assert not result.reused
+    assert output.exists()
+
+
+def test_receipt_never_certifies_index_changed_after_preflight(copy_workspace, monkeypatch):
+    from agent_worktrees import static_preparation
+
+    root, home = copy_workspace
+    _, output = provider(root, home)
+    original = static_preparation.save
+
+    def stage_before_save(*args, **kwargs):
+        subprocess.run(["git", "-C", str(root), "add", "-f", str(output)], check=True, capture_output=True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(static_preparation, "save", stage_before_save)
+    assert lcr.prepare_for_launch(root).status == "failed"
+    assert lcr.prepare_for_launch(root).status == "failed"
+
+
+def test_changed_index_refuses_before_output_mutation(copy_workspace, monkeypatch):
+    root, home = copy_workspace
+    template, output = provider(root, home)
+    assert lcr.prepare_for_launch(root).status == "ready"
+    previous = output.read_bytes()
+    template.write_bytes(b"new source must not overwrite newly staged output")
+    original = static._git
+
+    def stage_after_read(path, *args, **kwargs):
+        value = original(path, *args, **kwargs)
+        if args[0] == "ls-files":
+            subprocess.run(["git", "-C", str(root), "add", "-f", str(output)], check=True, capture_output=True)
+        return value
+
+    monkeypatch.setattr(static, "_git", stage_after_read)
+    assert lcr.prepare_for_launch(root).status == "failed"
+    assert output.read_bytes() == previous
 
 
 @pytest.mark.guard
@@ -344,6 +744,7 @@ def test_exclude_is_reread_after_index_queries(copy_workspace, monkeypatch):
     root, home = copy_workspace
     template, output = provider(root, home)
     assert lcr.refresh_local_cache(root).status == "ready"
+    template.write_bytes(b"new generation requires index preflight")
     exclude = root / ".git" / "info" / "exclude"
     original_git = static._git
 

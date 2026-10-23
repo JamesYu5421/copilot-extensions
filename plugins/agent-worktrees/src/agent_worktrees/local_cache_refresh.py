@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import subprocess
 import sys
@@ -30,6 +30,11 @@ class RefreshResult:
     blocking: int = 0
     detail: str = ""
     removed: int = 0
+    generation: str = ""
+    reused: bool = False
+    elapsed_ns: int | None = None
+    publication_revision: str = ""
+    counts_known: bool = True
 
     @property
     def diagnostic(self) -> str:
@@ -37,6 +42,8 @@ class RefreshResult:
             f"{self.changed} installed, {self.unchanged} unchanged, "
             f"{self.removed} removed, {self.warnings} warnings, {self.blocking} failures"
         )
+        if not self.counts_known:
+            counts = f"publication counts unavailable, {self.blocking} failures"
         return f"[local-guidance] {self.status}: {counts}" + (f"; {self.detail}" if self.detail else "")
 
 
@@ -135,17 +142,34 @@ def refresh_local_cache(
 ) -> RefreshResult:
     from .static_instructions import publish
 
+    started = time.monotonic_ns()
+    root = None
     deadline = time.monotonic() + timeout if timeout is not None else None
     try:
         with step("Copying declared instructions", enabled=timeout is None):
-            changed, unchanged, removed = publish(
-                _checkout_root(repo_root).resolve(), home or Path.home(), deadline=deadline,
+            root = _checkout_root(repo_root).resolve()
+            published = publish(
+                root, home or Path.home(), deadline=deadline,
             )
-        result = RefreshResult("ready", changed=changed, unchanged=unchanged, removed=removed)
+        result = RefreshResult(
+            "partial" if published.failures else "ready",
+            changed=published.changed, unchanged=published.unchanged, removed=published.removed,
+            generation=published.generation, reused=published.reused,
+            publication_revision=published.publication_revision,
+            blocking=len(published.failures), detail="; ".join(published.failures),
+            elapsed_ns=time.monotonic_ns() - started,
+        )
     except (TimeoutError, subprocess.TimeoutExpired) as exc:
-        result = RefreshResult("timeout", blocking=1, detail=f"instruction copy timed out: {exc}")
+        result = RefreshResult("timeout", blocking=1, counts_known=False, detail=f"instruction copy timed out: {exc}")
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
-        result = RefreshResult("failed", blocking=1, detail=f"instruction copy failed: {exc}")
+        result = RefreshResult("failed", blocking=1, counts_known=False, detail=f"instruction copy failed: {exc}")
+    if not result.counts_known:
+        from .static_preparation import publication_revision
+
+        result = replace(
+            result, publication_revision=publication_revision(root) if root is not None else "",
+            elapsed_ns=time.monotonic_ns() - started,
+        )
     if timeout is None:
         print(result.diagnostic, file=sys.stderr, flush=True)
     return _report(result)
@@ -174,11 +198,37 @@ def _run_refresh_worker(cwd: str) -> int:
     return local_cache_worker.run(root, _worker_directory(root))
 
 
-def sessionstart_diagnostic(cwd: str, *, deadline: float | None) -> str:
+def sessionstart_diagnostic(cwd: str, *, deadline: float | None, session_id: str | None = None) -> str:
     """Queue the bounded backup without waiting inside SessionStart."""
     try:
+        watch_started_at = time.time()
         if deadline is not None and deadline - time.time() < 1.5:
             return RefreshResult("skipped", detail="backup refresh deadline too short").diagnostic + "\n"
+        from .static_instructions import current
+        from .local_cache_worker import watch_completion
+        from .static_preparation import publication_revision
+
+        root = _checkout_root(cwd).resolve()
+        initial_revision = publication_revision(root)
+        remaining = max(0, deadline - time.time()) if deadline is not None else 1.0
+        try:
+            cached = current(
+                root, Path.home(),
+                deadline=time.monotonic() + min(remaining, 1.0),
+            )
+        except (TimeoutError, subprocess.TimeoutExpired):
+            cached = None
+        if cached is not None and cached.publication_revision == initial_revision:
+            watch_completion(root, session_id, prepared=True)
+            return RefreshResult(
+                "ready", unchanged=cached.unchanged, generation=cached.generation,
+                reused=True, detail="prepared generation reused; model admission unknown",
+            ).diagnostic + "\n"
+        if deadline is not None and deadline - time.time() < 1.5:
+            return RefreshResult("skipped", detail="backup refresh deadline too short after probe").diagnostic + "\n"
+        watch_completion(
+            root, session_id, initial_revision=initial_revision, started_at=watch_started_at,
+        )
         return _queue_refresh(cwd).diagnostic + "\n"
     except Exception as exc:
         return _report(RefreshResult("failed", detail=f"backup refresh failed: {exc}")).diagnostic + "\n"
