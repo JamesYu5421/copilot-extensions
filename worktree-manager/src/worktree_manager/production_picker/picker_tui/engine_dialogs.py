@@ -321,25 +321,77 @@ class SubMenuScreen(ModalScreen[tuple]):
     _AHP_DESC = ("Launch (Open/Resume) through the configured same-machine "
                  "Agent Host Protocol endpoint. Enter/Space toggles this row.")
 
+    @staticmethod
+    def record_is_local(rec, engine=None) -> bool:
+        """Use published locality only; the source's LOCAL may be a cold resolver."""
+        if rec.get("source_kind", "machine-ssh") != "machine-ssh":
+            return False
+        explicit = rec.get("is_local")
+        if explicit is not None:
+            return bool(explicit)
+        if engine is None:
+            return True
+        local = getattr(engine, "_source_local", None)
+        return local is not None and (rec.get("machine"), rec.get("env")) == local
+
+    @classmethod
+    def open_for(cls, engine, rec, *, loading=False):
+        """Own one Actions lifetime and its accepted dispatch maps."""
+        acts, ext = engine._wt_submenu_verbs(rec)
+        engine._wt_submenu_ext = ext
+        engine._wt_submenu_epoch = getattr(engine, "_wt_submenu_epoch", 0) + 1
+        epoch = engine._wt_submenu_epoch
+        source = engine.src
+        setup_epoch = getattr(engine, "_setup_epoch", None)
+        menu = cls(rec, acts, loading=loading, engine=engine)
+        menu._action_extensions = ext
+        menu._action_workers = dict(getattr(engine, "_wt_submenu_workers", {}) or {})
+
+        def dismissed(result):
+            if (
+                engine._wt_submenu_epoch != epoch
+                or engine.src is not source
+                or getattr(engine, "_setup_epoch", None) != setup_epoch
+            ):
+                return
+            engine._wt_submenu_epoch += 1
+            engine._wt_submenu_dispatch(
+                rec, result, ext=menu._action_extensions, workers=menu._action_workers,
+            )
+
+        engine.app.push_screen(menu, dismissed)
+        return menu
+
+    @staticmethod
+    def verify_liveness(rec, source, project):
+        """Worker-only eligibility and liveness refinement."""
+        try:
+            from .. import project_config, engine_group_c
+
+            wt_id = rec["raw"]["id"]
+            local_check = getattr(source, "is_local", None)
+            if callable(local_check):
+                is_local = bool(local_check(rec.get("machine"), rec.get("env")))
+            else:
+                local = getattr(source, "LOCAL", None)
+                is_local = local is not None and (rec.get("machine"), rec.get("env")) == local
+            if not is_local or not (project_config.tracking_dir(project) / f"{wt_id}.yaml").exists():
+                return None, is_local
+            batch = engine_group_c.picker_reconcile_local(project, worktree_ids=[wt_id])
+            for row in batch.rows:
+                if isinstance(row, dict) and row.get("id") == wt_id:
+                    return row, is_local
+            return None, is_local
+        except Exception:
+            return None, None
+
     def __init__(self, rec, actions, *, loading=False, engine=None) -> None:
         super().__init__()
         self._rec = rec
         self._actions = actions
         self._no_mux = False
         self._ahp = False
-        explicit_local = rec.get("is_local")
-        self._is_local = (
-            bool(explicit_local)
-            if explicit_local is not None
-            else (
-                True
-                if engine is None
-                else (
-                    rec.get("source_kind", "machine-ssh") == "machine-ssh"
-                    and (rec.get("machine"), rec.get("env")) == engine.src.LOCAL
-                )
-            )
-        )
+        self._is_local = self.record_is_local(rec, engine)
         # Always-async: the menu opens IMMEDIATELY from cached liveness; when an
         # authoritative re-verify is in flight, ``loading`` shows the shared
         # animated spinner in the footer and the caller calls ``refresh_actions``
@@ -475,7 +527,7 @@ class SubMenuScreen(ModalScreen[tuple]):
         t.append("refreshing worktree liveness…", style=C_DIM)
         self.query_one("#sub-foot", Static).update(t)
 
-    def refresh_actions(self, new_actions) -> None:
+    def refresh_actions(self, new_actions, *, status="") -> None:
         """Refine the verb list IN PLACE after the async liveness verify lands and
         drop the footer spinner (always-async: the menu opened immediately from
         cached state; this corrects the verbs without a re-open). Preserves the
@@ -488,13 +540,19 @@ class SubMenuScreen(ModalScreen[tuple]):
                 pass
             self._spin_timer = None
         try:
-            self.query_one("#sub-foot", Static).update("")
+            self.query_one("#sub-foot", Static).update(Text(status))
+            self.query_one("#sub-head", Static).update(self._header())
         except Exception:
             pass
         self._actions = list(new_actions)
+        self._is_local = self.record_is_local(self._rec, self._engine)
         self._has_nomux = ("Open" in self._actions) or ("Resume" in self._actions)
         self._nomux_index = len(self._actions) if self._has_nomux else None
         self._has_ahp = self._has_nomux and self._is_local
+        if not self._has_ahp:
+            self._ahp = False
+        if not self._has_nomux:
+            self._no_mux = False
         self._ahp_index = len(self._actions) + 1 if self._has_ahp else None
         try:
             ol = self.query_one("#sub-list", OptionList)
@@ -508,6 +566,15 @@ class SubMenuScreen(ModalScreen[tuple]):
             ol.highlighted = min(prev, count - 1)
         self._set_desc(ol.highlighted or 0)
         ol.focus()
+
+    def refine(self, rec, *, status=""):
+        engine = self._engine
+        if engine.app.screen is not self or self._rec is not rec:
+            return
+        acts, ext = engine._wt_submenu_verbs(rec)
+        engine._wt_submenu_ext = self._action_extensions = ext
+        self._action_workers = dict(getattr(engine, "_wt_submenu_workers", {}) or {})
+        self.refresh_actions(acts, status=status)
 
     def _set_desc(self, i) -> None:
         if i == self._nomux_index:
