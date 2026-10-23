@@ -806,6 +806,54 @@ class TestNamespaceSeams:
         assert rc == 0
         assert _json.loads(capsys.readouterr().out) == []
 
+    def test_namespace_list_retains_unknown_account_inventory(self, capsys):
+        from agent_codespaces.gh_account import AccountInventoryError
+
+        async def unavailable(self):
+            raise AccountInventoryError("account snapshot unavailable")
+
+        with patch("agent_codespaces.resolver.CodespaceResolver.list_specs", unavailable):
+            assert main(["namespace-list"]) == 1
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert "account snapshot unavailable" in output.err
+
+    @pytest.mark.parametrize("failure", ["startup", "timeout", "refused", "decoding"])
+    def test_namespace_list_retains_explicit_peer_failure(self, tmp_path, monkeypatch, capsys, failure):
+        import subprocess
+
+        from agent_codespaces import __main__ as cli, gh_account, worktrees
+
+        peer = tmp_path / "plugins" / "agent-worktrees"
+        peer.mkdir(parents=True)
+        own = {"cellRoot": str(tmp_path), "pluginRoot": str(tmp_path / "owner")}
+        monkeypatch.setenv("COPILOT_EXTENSIONS_CONTEXT", "validated-test-cell")
+        monkeypatch.setattr(worktrees, "validate_context", lambda: own)
+        monkeypatch.setattr(cli, "validate_context", lambda: own)
+        monkeypatch.setattr(worktrees, "launch_prefix", lambda *args: ["same-cell-peer"])
+
+        def run(*args, **kwargs):
+            if failure == "startup":
+                raise OSError("peer startup failed")
+            if failure == "timeout":
+                raise subprocess.TimeoutExpired("same-cell-peer", 10)
+            if failure == "decoding":
+                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid peer output")
+            return subprocess.CompletedProcess([], 126, "", "peer receipt refused")
+
+        monkeypatch.setattr(worktrees.subprocess, "run", run)
+
+        async def list_specs(self):
+            gh_account.account_inventory()
+            return []
+
+        monkeypatch.setattr("agent_codespaces.resolver.CodespaceResolver.list_specs", list_specs)
+        assert main(["namespace-list"]) != 0
+        output = capsys.readouterr()
+        assert output.out == ""
+        assert ("unavailable" if failure == "decoding" else "peer") in output.err
+        assert "reporting zero" not in output.err
+
     def test_namespace_resolve_json_and_argv(self, capsys):
         import json as _json
         seen = {}

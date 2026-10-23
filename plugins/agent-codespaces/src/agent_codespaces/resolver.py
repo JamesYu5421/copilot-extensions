@@ -382,7 +382,7 @@ class CodespaceResolver:
         JSON and agent-bridge can reconstruct ``NamespaceAgentInfo`` across a
         process boundary (#892 Inc 3).
         """
-        codespaces = await asyncio.to_thread(list_codespaces)
+        codespaces = await asyncio.to_thread(list_codespaces, concurrent=True)
         agents = []
         for cs in codespaces:
             repo_short = cs.repository.split("/")[-1] if cs.repository else ""
@@ -455,15 +455,24 @@ class CodespaceResolver:
 
 
 async def list_specs_tolerant() -> list[dict]:
-    """``CodespaceResolver().list_specs()``, but never raises.
+    """Keep legacy optional discovery tolerant, but retain unknown account scope.
 
     CodeSpaces are optional: missing OAuth scope, unavailable authentication
     or a network failure must not prevent unrelated static-agent resolution.
     Warn and report an empty listing at this subprocess boundary rather than
-    making every agent depend on successful CodeSpace discovery.
+    making every agent depend on successful CodeSpace discovery. A refused or
+    malformed bulk account snapshot or installation-context refusal remains
+    an error for Bridge's existing incomplete-namespace handling rather than
+    attesting an empty namespace.
     """
+    from .gh_account import AccountInventoryError
+    from .worktrees import ContextRefused
+
     try:
         return await CodespaceResolver().list_specs()
+    except (AccountInventoryError, ContextRefused):
+        # Bridge's incomplete-namespace contract must retain unknown account scope.
+        raise
     except Exception as exc:
         print(
             f"agent-codespaces: namespace-list could not query CodeSpaces "

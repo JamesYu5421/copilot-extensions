@@ -41,7 +41,7 @@ from agent_procutil import no_window_kwargs
 from machine_transport import detect_platform
 
 from . import bare_anchor_sync, git_ops, output, registry_paths
-from .repo_accounts import account_for_remote as account_for_remote
+from .repo_accounts import AccountLookupIndex, account_for_remote as account_for_remote
 from .repos_registry_reader import RepositoryResolutionError, read_registry as _read_registry
 
 # ---------------------------------------------------------------------------
@@ -391,7 +391,10 @@ def github_slug(remote: str) -> str | None:
     return github_repository_slug(remote)
 
 
-def account_from_map(owner: str | None) -> str | None:
+def account_from_map(
+    owner: str | None, *, registry: ReposRegistry | None = None,
+    index: AccountLookupIndex | None = None,
+) -> str | None:
     """Return the ``account_map`` login for a GitHub ``owner``, or None.
 
     The decoupled org->account layer: a top-level ``account_map:`` in
@@ -401,8 +404,10 @@ def account_from_map(owner: str | None) -> str | None:
     """
     if not owner:
         return None
+    if index is not None:
+        return index.account_map.get(owner.casefold())
     try:
-        registry = read_registry()
+        registry = registry if registry is not None else read_registry()
     except Exception:
         return None
     for key, login in registry.account_map.items():
@@ -411,7 +416,10 @@ def account_from_map(owner: str | None) -> str | None:
     return None
 
 
-def resolve_account(entry: RepoEntry | None) -> str | None:
+def resolve_account(
+    entry: RepoEntry | None, *, registry: ReposRegistry | None = None,
+    index: AccountLookupIndex | None = None,
+) -> str | None:
     """Resolve the preferred GitHub account for a repo entry: explicit
     ``account:`` -> ``account_map`` -> remote owner -> None (ambient)."""
     if entry is None:
@@ -419,7 +427,10 @@ def resolve_account(entry: RepoEntry | None) -> str | None:
     if entry.account:
         return entry.account
     owner = github_owner(entry.remote)
-    mapped = account_from_map(owner)
+    mapped = (
+        account_from_map(owner) if registry is None and index is None
+        else account_from_map(owner, registry=registry, index=index)
+    )
     if mapped:
         return mapped
     return owner
@@ -506,7 +517,10 @@ def unset_copilot_account(name: str) -> bool:
     return True
 
 
-def account_for_github_owner(owner: str | None) -> str | None:
+def account_for_github_owner(
+    owner: str | None, *, registry: ReposRegistry | None = None,
+    index: AccountLookupIndex | None = None,
+) -> str | None:
     """Resolve the effective account for a github ``owner`` (from a repo slug).
 
     Order (highest wins):
@@ -526,10 +540,13 @@ def account_for_github_owner(owner: str | None) -> str | None:
     """
     if not owner:
         return None
-    try:
-        registry = read_registry()
-    except Exception:
-        registry = ReposRegistry()
+    if index is not None:
+        return index.owners.get(owner.casefold()) or index.account_map.get(owner.casefold()) or owner
+    if registry is None:
+        try:
+            registry = read_registry()
+        except Exception:
+            registry = ReposRegistry()
     for entry in registry.repos.values():
         if not entry.account:
             continue
@@ -582,7 +599,10 @@ def is_unresolved_registered_target(target: str | None) -> bool:
     return resolve_account(entry) is None
 
 
-def account_for_github_slug(slug: str | None) -> str | None:
+def account_for_github_slug(
+    slug: str | None, *, registry: ReposRegistry | None = None,
+    index: AccountLookupIndex | None = None,
+) -> str | None:
     """Resolve a GitHub slug or registry alias to its configured account.
 
     Exact registered repository matches take precedence over owner-wide policy,
@@ -592,16 +612,28 @@ def account_for_github_slug(slug: str | None) -> str | None:
     if not slug:
         return None
     if "/" in slug:
-        for entry in read_registry().repos.values():
+        if index is not None:
+            entry = index.slugs.get(slug.casefold())
+            if entry is not None:
+                return resolve_account(entry, registry=registry, index=index)
+            return account_for_github_owner(slug.split("/", 1)[0], index=index)
+        entries = (registry if registry is not None else read_registry()).repos
+        for entry in entries.values():
             remote_slug = github_slug(entry.remote)
             if remote_slug and remote_slug.casefold() == slug.casefold():
-                return resolve_account(entry)
+                return resolve_account(entry) if registry is None else resolve_account(entry, registry=registry)
     if "/" not in slug:
-        entry = find_repo(slug)
+        entry = find_repo(slug) if registry is None else registry.repos.get(slug)
         if entry is not None:
-            return resolve_account(entry)
-    owner = resolve_slug_owner(slug)
-    return account_for_github_owner(owner)
+            return (
+                resolve_account(entry) if registry is None and index is None
+                else resolve_account(entry, registry=registry, index=index)
+            )
+    owner = resolve_slug_owner(slug) if registry is None else slug.split("/", 1)[0]
+    return (
+        account_for_github_owner(owner) if registry is None
+        else account_for_github_owner(owner, registry=registry, index=index)
+    )
 
 
 def set_account_map(owner: str, login: str) -> None:

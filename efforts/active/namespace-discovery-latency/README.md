@@ -4,7 +4,7 @@
 - **Repo:** copilot-extensions
 - **Branch(es):** Independent, sequential plan and implementation PRs against `dev`
 - **Created:** 2026-10-22
-- **Status:** Draft
+- **Status:** Active
 - **Vision:** [agent-bridge](../../../visions/plugins/agent-bridge/README.md), ownership clarity and honest cross-provider discovery
 - **Umbrella issue:** #5761 (bounded latency slice; broader diagnostic acceptance retained)
 
@@ -60,36 +60,46 @@ normal source/review flow first. The confirmed effort slug is
 `namespace-discovery-latency`. This does not authorize a foreground deadline
 waiver or an ad hoc installed-payload fix.
 
+Subsequent operator selection, captured verbatim:
+
+> complete-within-eight
+
+**Selection summary:** Continue optimizing startup and metadata reads; retain
+complete cold discovery within eight seconds rather than substituting later
+background completion.
+
 ## Plan
 
 ### Phase 1 - Review the bounded repair plan
 
-- [ ] Land this proposal through the repository's automated review and required
+- [x] Land this proposal through the repository's automated review and required
   CI gates before implementation.
-- [ ] Bind the repair owner to the canonical effort and retain the #5761 claim.
+- [x] Bind the repair owner to the canonical effort and retain the #5761 claim.
 
 ### Phase 2 - Profile and repair the measured bottleneck
 
-- [ ] Profile the real registered command boundary on Windows, separating shim,
+- [x] Profile the real registered command boundary on Windows, separating shim,
   interpreter/import, account enumeration and native backend time; compare cold
   and warm runs without printing credentials or private roster data.
-- [ ] Inspect existing provider caches and refresh contracts. Select the
+- [x] Inspect existing provider caches and refresh contracts. Select the
   smallest source-owned repair supported by the profile; do not introduce a
   second registry, a new resident service or a competing refresh owner.
-- [ ] Implement the repair with focused regression coverage. Preserve the
+- [x] Implement the repair with focused regression coverage. Preserve the
   eight-second default foreground deadline, native execution/CPU accounting,
   actual-holder lifetime, coalescing, cancellation isolation, shutdown/provider
   replacement tracking and admission/circuit protections.
-- [ ] If a cache is involved, keep its provenance, freshness and completeness
+- [x] If a cache is involved, keep its provenance, freshness and completeness
   explicit. Never turn a stale, failed, incomplete or unavailable enumeration
   into confirmed target absence or a success-shaped empty roster.
-- [ ] Update directly affected provider/Bridge documentation and add changefiles
+  No persistent cache was introduced; existing per-process account memoization
+  and per-call marketplace reads retain their scope.
+- [x] Update directly affected provider/Bridge documentation and add changefiles
   for each changed plugin. Keep the remaining typed-outcome acceptance on #5761
   explicit instead of declaring the entire issue resolved.
 
 ### Phase 3 - Qualify, publish and return to the consumer
 
-- [ ] Exercise real command and Bridge discovery boundaries on Windows with
+- [x] Exercise real command and Bridge discovery boundaries on Windows with
   cross-account enumeration, cold and warm paths, and representative failure
   cases, within unchanged caller budgets.
 - [ ] Land the implementation through review and required CI; confirm qualified
@@ -106,17 +116,17 @@ waiver or an ad hoc installed-payload fix.
 
 All items are agent-recommended means of proving the requested repair.
 
-- [ ] Unit/regression tests cover the measured cause, complete and incomplete
+- [x] Unit/regression tests cover the measured cause, complete and incomplete
   rosters, provider failure/timeout, cancellation/coalescing, retained native
   holders and admission/circuit behavior without weakening existing coverage.
-- [ ] A real shim/subprocess check measures at least five cold-process and five
+- [x] A real shim/subprocess check measures at least five cold-process and five
   warm runs; each successful registered provider enumeration completes within
   the unchanged eight-second budget. Report per-run wall time and completeness,
   not just an average or a mocked function's speed.
-- [ ] A fresh-state check exercises the no-cache/first-touch path. If remote
+- [x] A fresh-state check exercises the no-cache/first-touch path. If remote
   backend latency cannot satisfy the contract, expose that limitation explicitly
   and amend the reviewed design rather than silently increasing the deadline.
-- [ ] Bridge-level integration proves the intended registered target is
+- [x] Bridge-level integration proves the intended registered target is
   discoverable, healthy peer providers remain usable, and failed/incomplete
   namespaces never become confirmed removals. Include downstream total-budget
   compatibility, not only direct CLI success.
@@ -124,7 +134,7 @@ All items are agent-recommended means of proving the requested repair.
   source without changing shared installed payloads; Linux compatibility runs
   through the existing isolated runner. Record explicit reasons for any
   genuinely unavailable lane and retain its unresolved gate.
-- [ ] Required source tests, lint and install-contract checks pass for the final
+- [x] Required source tests, lint and install-contract checks pass for the final
   diff. Documentation-impact review distinguishes plan-only changes from later
   runtime changes.
 - [ ] Promotion and authorized running-state proof are distinct receipts; an
@@ -138,6 +148,211 @@ closes a bounded reliability delta within the existing Bridge vision and
 namespace-provider pattern, without changing architectural ownership.
 
 ## Journal
+
+### 2026-10-22 - Required peer-map metadata and retained Linux scope
+
+- The latest review identified a successful peer response lacking `account_map`.
+  That required response field is now validated instead of defaulting to an
+  empty map. The legacy account-list shape with an explicit empty map remains
+  supported. The focused CLI/account/peer run passed all 136 cases.
+- Retained hosted execution receipts confirm Linux CodeSpaces default-full
+  qualification at `81065d74a03477c0e7e91ce7775c94d5f514d909`: 1,984 passes
+  and 98 explicit skips across all four batches. This includes the new native
+  owner-exit and overlap regressions; skips are not credited as passes.
+- The Worktrees snapshot regression file belongs to its first successful
+  batch. The full Worktrees invocation later stopped in batch five of 24 on
+  two bootstrap/installer assertions, so it is only partial suite evidence.
+- The completed inspection had seven failing plugin jobs. Their failing tests
+  and named implementation paths are unchanged from the candidate's base;
+  no baseline-control run was performed, so this is not proof of a fully
+  green or regression-free portfolio. Failures cover Worktrees bootstrap,
+  container probe structure, Vault service-output/publication, Logger source
+  redirection, MCP generated-resolver/manifest fixtures, Bridge ordinary-task
+  fixture identity, and Dispatch process-flag fixture typing.
+- The workflow declares Test Portfolio Rationalization #1303 as the failure
+  owner and marks this portfolio non-release-dependent. Preserve those
+  findings for that owner rather than modifying unrelated installer/contracts
+  in the namespace repair. Later parser/configuration-seam corrections have
+  focused Windows evidence, not a new same-head Linux full-suite receipt.
+
+### 2026-10-22 - Existing configuration seam and explicit individual refusal
+
+- Source CI refused four additional lines in the grandfathered configuration
+  module. Removed the new loader parameter and reused its existing
+  `provider_reports` seam to supply the opt-in activation scan. The unchanged
+  module ceiling now passes; no baseline was widened or assertion removed.
+- Preserved explicit-context decoding refusal for individual account lookups
+  too. They raise `ContextRefused`, rather than returning no preference and
+  permitting ambient credentials. A regression exercises `env_for_repo`.
+- The focused consumer/config/authentication run passed 310 cases with six
+  existing skips. Requalification through the actual default-budget Bridge
+  consumer completed five fresh scans in 6.078, 5.906, 5.985, 5.641 and 5.844
+  seconds, each finding the target and serving five warm reads. The malformed
+  map remained incomplete in 7.078 seconds; exact restoration recovered in
+  6.218 seconds. Native and sampling holders settled.
+- The existing periodic Linux inspection is pinned to candidate
+  `81065d74a03477c0e7e91ce7775c94d5f514d909` (run `39881444618`).
+  Its CodeSpaces suite passed, but several other jobs failed and the run was
+  still active when inspected. Their logs and the exact exercised coverage
+  remain owed; this is not an all-green Linux qualification claim.
+
+### 2026-10-22 - Namespace-only overlap and bounded owner compatibility
+
+- The next review summary identified interpreter-shutdown retention in the
+  existing bounded credential-owner helper. Its daemon thread must not acquire
+  executor workers whose shutdown hooks extend the caller's process lifetime.
+- Narrowed overlap to explicit namespace enumeration. Ordinary listing,
+  account-candidate and configuration reads retain their original serial
+  defaults; namespace enumeration opts into all three overlap layers.
+  No daemon executor, detached worker, larger budget or new shutdown owner
+  was introduced.
+- A real child-process regression blocks an owner listing for twenty seconds
+  while the bounded helper returns unknown; ordinary interpreter shutdown must
+  still finish within the five-second test bound. Additional cases prove
+  serial default execution, namespace opt-in and activation-root opt-in.
+- The focused consumer/config/authentication suite passed 309 cases with six
+  existing platform/optional skips. Five fresh actual Bridge scans completed
+  in 6.266, 5.812, 6.422, 5.750 and 5.766 seconds under the unchanged default
+  eight-second deadline, each followed by five warm reads. Malformed stored
+  mapping remained incomplete in 6.547 seconds; exact restoration recovered
+  complete discovery in 6.688 seconds. Native and sampling holders settled.
+- The existing manual periodic Linux workflow can inspect an immutable
+  candidate ref through the canonical hardened container runner. That hosted
+  lane is distinct from unavailable local Docker and the unit-only PR packet;
+  its candidate execution remains pending.
+
+### 2026-10-22 - Undecodable peer-output refusal
+
+- The next review had no remaining formal threads but identified undecodable
+  peer output in its summary. Both legacy and same-cell snapshot calls now
+  translate decoding errors into `AccountInventoryError`; the optional wrapper
+  cannot turn those errors into a successful empty namespace.
+- Added legacy snapshot and explicit-context namespace CLI decoding regressions.
+  The focused CLI/account/peer suite passed all 134 cases. No deadline,
+  success-path worker, activation-library source or effect-observer rule changed.
+
+### 2026-10-22 - Explicit-context failure preservation
+
+- The next #7998 review identified a separate boundary: same-cell peer startup,
+  timeout and receipt failures raise `ContextRefused`, not `AccountInventoryError`.
+  The optional namespace wrapper now preserves both exception types.
+- Three CLI regressions exercise the real same-cell peer adapter with startup,
+  timeout and exit-126 failures. Each produces a nonzero namespace-list exit
+  without a successful JSON roster. The focused CLI/account/peer run passed
+  132 cases.
+- The carried strict-mapping finding was already corrected by `16ef16a14d`:
+  the strict reader rejects malformed stored mappings, seven real-storage
+  bulk-command cases passed, and native malformed-map qualification retained
+  incompleteness. This is an addressed finding, not another required source fix.
+
+### 2026-10-22 - Routing review corrections and native requalification
+
+- Addressed both High findings and both newly reported Medium findings on
+  #7998. Every nonzero account-snapshot exit and process startup/timeout
+  failure now raises an inventory error; strict storage and peer decoding
+  reject malformed account mappings instead of confirming an empty map.
+- Routing is read once per discovery call, never cached across calls. A
+  regression adds an alias between two refreshes and observes its newly
+  configured account with exactly one bulk read per refresh.
+- A per-snapshot index feeds the existing canonical account helpers. Regression
+  cases preserve first-match registry precedence, exact alias casing and
+  owner policy, while 200/400/800-repository cases require at most two slug
+  parses per repository rather than quadratic scans.
+- Focused contained suites passed: CodeSpaces 137 and Worktrees 157. Lint and
+  the changed-source module-size gate passed without raising ceilings.
+- Rebuilt only the contained Worktrees developer runtime and exercised the
+  actual Bridge scan/default eight-second deadline in five fresh consumer
+  processes: 7.844, 6.313, 6.235, 5.672 and 5.906 seconds. Each found the
+  target and then served five warm reads. Native and sampling holders settled.
+- A malformed stored account map produced an incomplete namespace in 7.078
+  seconds, not a complete empty roster; restoring the exact fixture bytes
+  restored complete discovery in 5.875 seconds. No shared runtime changed.
+- The refreshed unit-source admission passed required Linux source CI before
+  these routing corrections. A subsequent review and required CI on the new
+  head remain necessary. Focused Linux threaded/I/O qualification and rollout
+  are still explicit open gates.
+
+### 2026-10-22 - Code review and unit-admission reconciliation
+
+- #7998 opened for implementation review. The publication rebase conflicted
+  only in the effort index; all peer effort rows were retained. The activation
+  compatibility and bounded-overlap suite passed all 88 cases after rebasing.
+- Upstream enrolled the activation import closure in the unit-only packet while
+  implementation was in progress. The first source CI correctly refused the
+  changed `_memo.py` and `resolver.py` bytes. Their exact hashes were refreshed
+  after reviewing the existing adapter and original preservation tests: the
+  default path remains serial, and no thread-enabled test or observer exemption
+  was admitted. All other source hashes and packet nodes remain unchanged.
+- A local Windows packet attempt reached 839 passes and one platform skip
+  before the unchanged preservation reader attempted `ctypes.dlopen`; the
+  effect observer correctly refused it. This is not a passing packet receipt
+  and no native-loader exception was added. Required Linux source CI remains
+  the packet acceptance gate.
+- The focused Linux threaded/I/O lane remains unexecuted: this Windows host
+  has neither Docker nor the devcontainer CLI required by the existing isolated
+  runner. Installing another venue or weakening the runner is not implied.
+
+### 2026-10-22 - Windows source qualification
+
+- Final five real payload-command cold processes completed in 5.8888, 5.8586,
+  6.3526, 5.6877 and 5.6699 seconds under an actual eight-second process bound.
+  Each returned the known target. Earlier failed attempts remain failures,
+  not qualification.
+- A fresh-process, state-reset control removed prior account bindings and had
+  no roster cache: declared sources alone discovered the target in 7.424 seconds.
+  The isolated runtimes were preprovisioned through their canonical developer
+  installers; this is not a virgin-machine or unprovisioned-install latency claim.
+- The actual Bridge CLI resolver/CPU observer completed a native scan in
+  6.0 seconds, then five warm cache reads. A refused strict account snapshot
+  remained an incomplete namespace while an unrelated static agent survived;
+  restoring the fixture restored complete discovery. Native and sampling
+  holders settled.
+- Focused source runs passed: activation 88; Worktrees account compatibility
+  152; Bridge timeout/cancellation/native ownership 58; CodeSpaces/config
+  coverage 276 with seven repository skips, followed by 83 focused cases after
+  final casing/precedence corrections.
+- Windows is qualified locally; a focused Linux threaded/I/O lane has not run
+  from this Windows owner. Ordinary Ubuntu source CI uses the unit-only packet
+  and is not a substitute for that lane. Its validation item remains open.
+- No shared installed runtime or service changed. Code publication, required CI,
+  qualified release and authorized current-host readiness remain pending.
+
+### 2026-10-22 - First profiling and overlap candidate
+
+- Profiling the released provider measured about 10.3 seconds inside Python,
+  including about 6.9 seconds of serialized account-source discovery and
+  2.5 seconds of serialized account listings. The real payload launcher adds
+  roughly two seconds before Python.
+- A source candidate overlaps three independent metadata reads and at most four
+  native account listings, preserving deterministic final merge precedence.
+  The contained focused run passed 135 tests with one existing skip.
+- The latest real-backend candidate process still takes about six seconds
+  before launcher overhead. This is improvement, not proof of the eight-second
+  complete-discovery requirement. No shared runtime was updated and the
+  foreground deadline remains unchanged.
+- Qualification is still open. Do not publish this candidate as a completed
+  repair or treat a sum of separately measured timings as an end-to-end pass.
+
+### 2026-10-22 - Retained deadline and additional startup headroom
+
+- The operator explicitly retained complete discovery within eight seconds.
+  A five-process native check passed its first four runs but timed out on the
+  fifth; the candidate is not qualified.
+- Remaining profiling identified serialized activation-root metadata reads.
+  An in-memory bounded-overlap experiment reduced activation resolution from
+  roughly three seconds to roughly 1.6 seconds while retaining the roster.
+- The source repair therefore adds an opt-in, bounded local-root overlap mode
+  to `plugin-activation`, with synchronized per-call marketplace reads and
+  deterministic result merging. CodeSpaces opts in; other consumers remain
+  serial by default. All vendored consumers must receive changefiles.
+- No deadline, native policy, shared runtime or daemon has been changed.
+
+### 2026-10-22 - Reviewed plan
+
+- #7930 merged after Copilot approval with no findings and successful required
+  CI. The implementation worktree was pulled forward onto the reviewed plan.
+- Phase 1 is complete. Phase 2 starts with profiling the registered command
+  boundary; no timeout, runtime or installed-payload change has been made.
 
 ### 2026-10-22 - Kickoff
 
