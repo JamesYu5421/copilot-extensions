@@ -27,7 +27,7 @@ from . import git_ops, output, tracking
 from .creation_identity import IdentityMode, new_tracking_identity, validate_mode
 
 
-def _worktree_id_from_git(cwd: Path) -> str | None:
+def _worktree_id_from_git(cwd: Path, *, isolated_repository: bool = False) -> str | None:
     """Return the git-internal worktree name if CWD is inside a *linked*
     worktree, else None.
 
@@ -42,7 +42,10 @@ def _worktree_id_from_git(cwd: Path) -> str | None:
     change (copilot-extensions#59).
     """
     try:
-        result = git_ops.git("rev-parse", "--git-dir", cwd=str(cwd), check=False, timeout=10)
+        result = git_ops.git(
+            "rev-parse", "--git-dir", cwd=str(cwd), check=False, timeout=10,
+            **({"isolated_repository": True} if isolated_repository else {}),
+        )
     except Exception:
         return None
     if result.returncode != 0:
@@ -57,6 +60,58 @@ def _worktree_id_from_git(cwd: Path) -> str | None:
     if p.parent.name == "worktrees" and p.name and p.name != "worktrees":
         return p.name
     return None
+
+
+def _confirmed_anchor_checkout(cwd: Path, anchor: Path) -> bool:
+    try:
+        result = git_ops.git(
+            "rev-parse", "--is-bare-repository", "--absolute-git-dir",
+            cwd=str(cwd), check=False, timeout=10, isolated_repository=True,
+        )
+        lines = (result.stdout or "").strip().splitlines()
+        if result.returncode != 0 or len(lines) != 2:
+            return False
+        git_dir = Path(lines[1]).resolve()
+        anchor = anchor.resolve()
+        return (
+            lines[0] in {"true", "false"} and git_dir == anchor / ".git"
+        ) or (
+            lines[0] == "true" and git_dir == anchor
+        )
+    except Exception:
+        return False
+
+
+def tracked_invocation_record(
+    cwd: Path, *, project: str, anchor: Path | None,
+) -> tracking.WorktreeRecord | None:
+    """Read one confirmed linked-worktree record before legacy path lookup."""
+    cwd = cwd.resolve()
+    if anchor is not None and cwd == anchor.resolve():
+        return None
+    tracking_path = cfg.project_dir(project) / "worktrees"
+    worktree_id = _worktree_id_from_git(cwd, isolated_repository=True)
+    if (
+        worktree_id is None and anchor is not None
+        and cwd.is_relative_to(anchor.resolve()) and _confirmed_anchor_checkout(cwd, anchor)
+    ):
+        return None
+    record = (
+        tracking.load_record_by_id(worktree_id, tracking_path=tracking_path)
+        if worktree_id else None
+    )
+    if record is not None and (
+        record.repo != project or not record.worktree_path
+        or not cwd.is_relative_to(Path(record.worktree_path).resolve())
+    ):
+        record = None
+    if record is None:
+        worktree_id = tracking.find_worktree_id_by_cwd(str(cwd), project=project)
+        record = (
+            tracking.load_record_by_id(worktree_id, tracking_path=tracking_path)
+            if worktree_id else None
+        )
+    return record
 
 
 def _linked_worktree_root(cwd: str | Path) -> Path | None:
