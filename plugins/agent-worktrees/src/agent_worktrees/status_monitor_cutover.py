@@ -441,6 +441,53 @@ def _monitor_lock_is_live() -> bool:
     return locks.lock_is_live(locks.read_lock(smr._monitor_lock_path()))
 
 
+def routed_monitor_identity(runtime_home: Path | None = None) -> tuple[int, str, str | None] | None:
+    """Authenticate a stable routed owner before installer retention or cutover."""
+    from zdd import diagnostics
+
+    directory = routing_dir() if runtime_home is None else routing_dir(runtime_home)
+    snapshot = routing.read_table(directory, strict=True)
+    endpoints = []
+    for key in ("active", "previous"):
+        raw = (snapshot or {}).get(key)
+        if raw is None:
+            continue
+        endpoint = routing.Endpoint.from_dict(raw) if isinstance(raw, dict) else None
+        if endpoint is None or type(endpoint.pid) is not int or endpoint.pid <= 0:
+            raise ValueError(f"Routed monitor {key} identity is malformed")
+        endpoints.append((key, endpoint))
+    endpoint = None
+    for key, candidate in endpoints:
+        if diagnostics._pid_alive(candidate.pid):
+            if key != "active":
+                raise ValueError("Live fallback monitor requires owner-led route recovery")
+            endpoint = candidate
+            break
+    if endpoint is None:
+        return None
+    pid = endpoint.pid
+    if type(pid) is not int or pid <= 0:
+        raise ValueError("Routed monitor has no attributable PID")
+    if not diagnostics._pid_alive(pid):
+        return None
+    before = locks.process_start_time(pid)
+    if before is None or (
+        endpoint.process_start_time is not None and endpoint.process_start_time != before
+    ):
+        raise ValueError("Routed monitor process identity is unconfirmed")
+    client_options = {} if runtime_home is None else {"token": load_or_create_control_token(runtime_home)}
+    health = ControlClient(endpoint.base_url, **client_options).health()
+    if (
+        health.get("pid") != pid
+        or health.get("status") not in {"ready", "draining", "unavailable"}
+        or locks.process_start_time(pid) != before
+        or routing.read_table(directory, strict=True) != snapshot
+    ):
+        raise ValueError("Routed monitor identity changed during admission")
+    slot = health.get("runtime_slot")
+    return pid, before, slot if isinstance(slot, str) else None
+
+
 def _health_check(host: str, port: int) -> bool:
     try:
         status = ControlClient(f"http://{host}:{port}").health()
@@ -578,7 +625,19 @@ def activate_after_update(
         restart_arguments["runtime_python"] = runtime_python
     if spawned_handles is not None:
         restart_arguments["spawned_handles"] = spawned_handles
-    if not _monitor_lock_is_live():
+    lock_live = _monitor_lock_is_live()
+    if not lock_live:
+        try:
+            routed_live = routed_monitor_identity() is not None
+        except (OSError, ValueError, ConnectionError):
+            summary.update(
+                action="refused", reason="routed-monitor-unverified",
+                result={"ok": False, "error": "Routed monitor identity could not be verified"},
+            )
+            return summary
+    else:
+        routed_live = False
+    if not lock_live and not routed_live:
         if monitor_was_live:
             summary["action"] = "restart"
             summary["restart"] = smr._restart_status_monitor(**restart_arguments)

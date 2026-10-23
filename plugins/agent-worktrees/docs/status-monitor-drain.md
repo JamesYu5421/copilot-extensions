@@ -11,6 +11,23 @@ Ownership-transfer and serving-convergence follow-ups remain tracked by
 
 1. The installer builds, marks complete and selects the new immutable runtime.
    Monitor handover occurs before final deployment-manifest publication.
+   A stale or absent legacy monitor lock does not suppress handover when the
+   active route names a live owner: the helper verifies native process identity,
+   authenticated control health and an unchanged route before using the normal
+   cutover. An unverified live route refuses convergence rather than reporting
+   `no-live-monitor` success. This identity check does not certify roster health.
+   Before activation, the installer captures that routed identity and retains
+   its authenticated runtime slot even when the legacy lock is absent or stale.
+   Custody and manifest publication wait for actual predecessor exit, not just
+   a shutdown acknowledgement. Identity checks use the native Windows, Linux
+   or Darwin process-birth token; existing route tokens remain comparable.
+   Corrupt routing state or malformed active/previous rows refuse convergence.
+   A live previous endpoint behind a dead or absent active owner likewise
+   requires owner-led route recovery; it is not reported as monitor absence.
+   Native helper-publication callbacks use the plan owner's base interpreter,
+   not an independently selected bootstrap Python. Windows file-device identity
+   representations differ across Python versions; the exact copy-inventory
+   identity check remains required.
 2. The cutover helper starts a passive monitor, waits for its bound endpoint,
    then publishes the successor route. Bound readiness is not elected serving
    readiness.
