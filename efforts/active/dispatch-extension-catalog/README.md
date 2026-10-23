@@ -1087,3 +1087,90 @@ authorized installed proof remain distinct obligations.
   for Clear and a fresh non-absent Save revision before reporting success.
   Four corrupt/stale-response regressions prove no automatic mutation replay.
   The final contained draft/HTTP/native-CLI selection passed 46 tests.
+
+### 2026-10-23 - Guarded draft owner merged; native adoption next
+
+- #8013 merged at 01:05Z as `0ca8862f83ca05575653d9424699d2d909fc213b`.
+  Exact head `d80ba5015c60c1a33c4f2851b416879682d7045b` had an approving
+  review with no unresolved findings and complete green required CI. The
+  incomplete/stale acknowledgement finding was fixed and its thread resolved.
+- Re-read the full Plan and Validation Plan. Existing draft transactions now
+  provide the card/ownership and observed-draft CAS boundary, explicit absence,
+  provenance, old-owner refusal and guarded CLI/SDK operations. This is source
+  delivery, not installed or independent-client adoption.
+- Next is generic contributed draft Save/Reset and provenance-bound local
+  restore in Manager, followed by exact-original-request restart/vanished-row
+  recovery. Keep owner-backed shared drafts separate from client recovery
+  context; no persisted command is executable authority by itself.
+- #7141 and this effort remain Active. No live task, source activation,
+  installed update, producer migration or fleet cutover occurred.
+
+### 2026-10-23 - Native contributed shared-draft adoption
+
+- Manager now consumes optional provider-declared Save/Clear argv and provenance
+  selectors through its existing contribution parsers and payload resolution.
+  The dispatch backend remains outside Manager; forms without a declaration
+  do not acquire an implicit dispatch command.
+- Tasks and Maintenance declare card/draft-CAS commands with the owning queue
+  identity. Dedicated scoped HTTP routes and capability-gated SDK/CLI calls
+  refuse a different queue or older owner before mutation, reusing the existing
+  durable queue identity and draft transaction rather than adding a store.
+- Local production recovery binds source/resolved commands, machine, task,
+  action/schema, card, provider installation/queue scope and observed draft
+  revision. Unbound or mismatched files are not adopted. Shared drafts restore
+  only for their original card version. Atomic local writes precede dismissal;
+  a write error retains the open form and its answer.
+- Reset freezes input until Clear is acknowledged. Failure retains fields and
+  local recovery; success updates only the form's draft revision, not the
+  original card basis. Neither Save nor Reset submits an answer or wakes a task.
+- Contained native Manager selections passed 269 tests with one opt-in skip;
+  the final changed form/result/local-write selection passed 93 tests. Owner
+  scope, HTTP/SDK, board and native CLI selections passed 310 tests with one
+  opt-in skip. Native multi-interpreter cases measured roughly 50 seconds each
+  on this host; explicit bounded case/process deadlines cover their real cold
+  startup rather than failing the previous aggregate 30-second harness limit.
+  Lint, unchanged module ceilings and all 13 install contracts passed.
+- This slice is awaiting publication/review. Native POSIX and authorized
+  installed-client proof remain distinct and open; no live task or deployment
+  was exercised. Exact-original-request restart/vanished-row recovery is next,
+  and the full Plan and Validation Plan remain open under #7141 and #7091.
+- Published as #8060. Current-head review found two draft-state sequence bugs:
+  consecutive Reset reused stale observed draft fields, and a verified first
+  Save left an `absent`-revision local file that could revive cleared answers.
+  Update acknowledged draft values alongside their revision without rebasing
+  the card; remove the old local fallback only after verified shared Save.
+  A native Save/reopen/Reset/second-Reset/restart regression and the coupled
+  form/result/local-write selection pass 94 tests. Re-review remains required.
+- A second review found failed-unlink revival and delayed acknowledgements
+  deleting a newer local write. Use immutable per-write records in the existing
+  local draft directory and mark shared-operation copies unconfirmed before
+  invocation. Auto-open restores owner-backed values; Restore local is an
+  explicit value-only adoption. Cleanup failures remain visible but cannot
+  automatically restore obsolete answers. Save, Reset and Confirm retire only
+  their own attempt's records, preserving a newer process's response.
+  The coupled selection passed 98 tests, including real-process newer writers,
+  native Confirm cleanup and fail-first-unlink Save/Reset/restart coverage. Updated-head review is
+  still required; this does not complete original-request receipt recovery.
+- The next review found the analogous local-only history case: repeated Saves
+  left older automatic records after Reset/Confirm. Track every matching
+  automatic record observed when opening the form, while excluding later
+  writes from cleanup. Native repeated-Save/Reset and repeated-Save/Confirm/
+  reopen regressions plus both shared/local real-process newer writers pass;
+  the coupled selection is now 102 tests. No old finding was waived.
+- Added two failing native reproductions for local-only Confirm cleanup before
+  and after dispatch. A bound Confirm now writes an unconfirmed response and
+  retires observed automatic copies before invocation; preparation failure
+  preserves the open form and invokes no command. Post-command cleanup failures
+  cannot automatically reapply an accepted response.
+- The next review had no inline open issues but named a real shared multichoice
+  fidelity concern. Preserve unchanged restored members and their order instead
+  of merging custom values; retain single-freeform Other editing semantics and
+  Configuration's separate line convention. The combined form/result/local
+  cleanup and Configuration selection passed 212 tests with two opt-in skips.
+  These fixes still require updated-head review and required CI.
+- Review then caught strict multichoice caches returning out-of-options values
+  that the operator could not see or remove. Cache only permitted visible
+  members when Other is disabled and deduplicate displayed selections. The
+  untouched strict-Confirm regression and combined form/Configuration selection
+  passed 213 tests with two opt-in skips. This retains the same source slice,
+  not an expansion into workflow state or a new input authority.

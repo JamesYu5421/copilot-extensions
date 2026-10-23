@@ -63,18 +63,38 @@ class FieldQuestionsMixin:
                 for index, button in enumerate(primary.query(RadioButton)):
                     button.value = index == target
             elif rec["type"] == "multichoice":
+                primary.deselect_all()
+                rec.pop("restored_multichoice", None)
+                if other is not None:
+                    other.text = ""
+                    other.display = False
                 members = value if isinstance(value, list) else [value]
                 extras = []
                 for member in members:
                     if str(member) in options:
                         primary.select(str(member))
-                    else:
+                    elif rec["allow_other"]:
                         extras.append(str(member))
                 if rec["allow_other"] and other is not None and extras:
                     other.text = ("\n" if multiple_other_values else ", ").join(extras)
                     other.display = True
                     other.autosize()
                     primary.select(_OTHER_SENTINEL)
+                if not multiple_other_values:
+                    rec["restored_multichoice"] = {
+                        "members": list(dict.fromkeys(
+                            str(member) for member in members
+                            if rec["allow_other"] or str(member) in options
+                        )),
+                        "extras": extras,
+                        "selected": list(primary.selected),
+                        "other": other.text if other is not None else "",
+                    }
+                    if other is not None and len(extras) > 1:
+                        other.tooltip = (
+                            f"{len(extras)} restored custom choices. Unchanged text preserves "
+                            "them separately; editing replaces them with one custom choice."
+                        )
 
     # ---- dynamic "Other…" reveal --------------------------------------------
     def _rec_for(self, widget) -> dict | None:
@@ -255,11 +275,18 @@ class FieldQuestionsMixin:
                     values[name] = ""
             elif ftype == "multichoice":
                 selected = list(getattr(prim, "selected", []) or [])
+                restored = rec.get("restored_multichoice") if not multiple_other_values else None
+                unchanged_other = restored and (other.text if other is not None else "") == restored["other"]
+                if unchanged_other and selected == restored["selected"]:
+                    values[name] = list(restored["members"])
+                    continue
                 members = [s for s in selected if s != _OTHER_SENTINEL]
                 if (allow_other and _OTHER_SENTINEL in selected
                         and other and other.text.strip()):
                     if multiple_other_values:
                         members.extend(line for line in other.text.splitlines() if line.strip())
+                    elif unchanged_other:
+                        members.extend(restored["extras"])
                     else:
                         members.append(other.text.strip())
                 values[name] = members
