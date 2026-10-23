@@ -9,9 +9,11 @@ instead of importing the engine in-process.
 from __future__ import annotations
 
 import contextlib
+import asyncio
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+import threading
 
 import yaml
 from machine_transport import MachineEntry, SSHEnvironment  # noqa: F401 (re-exported)
@@ -20,6 +22,77 @@ from machine_transport import parse_machines_yaml_file as _mt_parse_machines_yam
 
 from .. import engine_client, harness_state, terminal_fragment
 from . import context, engine_group_a
+
+class _ScalarCache:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.values: dict[tuple[str, str], str] = {}
+        self.fallbacks: dict[tuple[str, str], str] = {}
+        self.failures: dict[tuple[str, str], int] = {}
+        self.epoch = 0
+
+
+_scalar_cache = _ScalarCache()
+
+
+def _input_scalar(cache: _ScalarCache, project: str, key: str) -> str | None:
+    """Keep the last worker-prepared value usable while a reload retries."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+    identity = (project, key)
+    return cache.values.get(identity, cache.fallbacks.get(identity))
+
+
+def bind_bootstrap(project: str, values: object) -> None:
+    """Adopt optional engine scalars; older engines keep the memoized fallback."""
+    global _scalar_cache
+    cache = _ScalarCache()
+    if isinstance(values, dict):
+        for field, key in (
+            ("config_dir", "config-dir"), ("repo_dir", "repo-dir"), ("machine", "machine")
+        ):
+            value = values.get(field)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            if field != "machine" and not Path(value).is_absolute():
+                continue
+            cache.values[project, key] = value
+    # Old readers retain only their old cache, including its in-flight lock.
+    _scalar_cache = cache
+    clear_caches()
+
+
+def _scalar(cache: _ScalarCache, epoch: int, project: str, key: str) -> str:
+    # lru_cache alone permits concurrent cold misses from pivot/source workers.
+    identity = (project, key)
+    value = cache.values.get(identity)
+    if value is not None:
+        return value
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("Picker configuration is not ready; wait for setup or reload")
+    with cache.lock:
+        if identity not in cache.values:
+            if cache.failures.get(identity) == epoch:
+                return ""
+            from .picker_tui.frame_health import append_launch_event
+
+            append_launch_event("picker_config_scalar_fallback", key=key)
+            try:
+                value = engine_client.get_value(project, key)
+            except engine_client.EngineError:
+                cache.failures[identity] = epoch
+                return ""
+            if not value:
+                cache.failures[identity] = epoch
+                return ""
+            cache.values[identity] = value
+        return cache.values[identity]
 
 # ``SSHEnvironment``/``MachineEntry`` are the shared ``machine_transport``
 # library's own classes (vendored, not duplicated -- see its README's "Why
@@ -59,50 +132,76 @@ def cached_load_config_scope():
     return contextlib.nullcontext(ConfigCacheSession())
 
 
-def clear_caches() -> None:
-    _project_dir.cache_clear()
-    _repo_dir.cache_clear()
-    _machine_name.cache_clear()
+def clear_caches(*, reset_binding: bool = False) -> None:
+    """Refresh file snapshots without discarding the accepted engine binding."""
+    global _scalar_cache
+    if reset_binding:
+        _scalar_cache = _ScalarCache()
+    _scalar_cache.epoch += 1
+    _cached_project_dir.cache_clear()
+    _cached_repo_dir.cache_clear()
+    _cached_machine_name.cache_clear()
     _install_dir.cache_clear()
-    _load_project_yaml.cache_clear()
-    _load_repo_yaml.cache_clear()
+    _cached_project_yaml.cache_clear()
+    _cached_repo_yaml.cache_clear()
     _load_machines_yaml.cache_clear()
 
 
-@lru_cache(maxsize=None)
 def _project_dir(project: str) -> Path:
-    try:
-        value = engine_client.get_value(project, "config-dir")
-    except engine_client.EngineError:
-        value = ""
+    cache = _scalar_cache
+    value = _input_scalar(cache, project, "config-dir")
+    if value is not None:
+        return Path(value)
+    return _cached_project_dir(cache, cache.epoch, project)
+
+
+@lru_cache(maxsize=None)
+def _cached_project_dir(cache: _ScalarCache, epoch: int, project: str) -> Path:
+    value = _scalar(cache, epoch, project, "config-dir")
     if value:
         return Path(value)
-    return harness_state.home() / f".{project}"
+    fallback = harness_state.home() / f".{project}"
+    cache.fallbacks[project, "config-dir"] = str(fallback)
+    return fallback
+
+
+def _repo_dir(project: str) -> str:
+    cache = _scalar_cache
+    value = _input_scalar(cache, project, "repo-dir")
+    if value is not None:
+        return value
+    return _cached_repo_dir(cache, cache.epoch, project)
 
 
 @lru_cache(maxsize=None)
-def _repo_dir(project: str) -> str:
-    try:
-        value = engine_client.get_value(project, "repo-dir")
-    except engine_client.EngineError:
-        value = ""
+def _cached_repo_dir(cache: _ScalarCache, epoch: int, project: str) -> str:
+    value = _scalar(cache, epoch, project, "repo-dir")
     if value:
         return value
     for info in harness_state.build_projects():
         if info.name == project and info.anchor:
+            cache.fallbacks[project, "repo-dir"] = info.anchor
             return info.anchor
+    cache.fallbacks[project, "repo-dir"] = ""
     return ""
 
 
-@lru_cache(maxsize=None)
 def _machine_name(project: str) -> str:
-    try:
-        value = engine_client.get_value(project, "machine")
-    except engine_client.EngineError:
-        value = ""
+    cache = _scalar_cache
+    value = _input_scalar(cache, project, "machine")
+    if value is not None:
+        return value
+    return _cached_machine_name(cache, cache.epoch, project)
+
+
+@lru_cache(maxsize=None)
+def _cached_machine_name(cache: _ScalarCache, epoch: int, project: str) -> str:
+    value = _scalar(cache, epoch, project, "machine")
     if value:
         return value
-    return str(harness_state.project_config(project).get("machine") or "")
+    fallback = str(harness_state.project_config(project).get("machine") or "")
+    cache.fallbacks[project, "machine"] = fallback
+    return fallback
 
 
 @lru_cache(maxsize=None)
@@ -143,14 +242,23 @@ def _read_yaml(path: Path) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-@lru_cache(maxsize=None)
 def _load_project_yaml(project: str) -> dict:
-    return _read_yaml(default_config_path(project))
+    cache = _scalar_cache
+    return _cached_project_yaml(cache, cache.epoch, project, default_config_path(project))
 
 
 @lru_cache(maxsize=None)
+def _cached_project_yaml(cache: _ScalarCache, epoch: int, project: str, path: Path) -> dict:
+    return _read_yaml(path)
+
+
 def _load_repo_yaml(project: str) -> dict:
-    repo_dir = _repo_dir(project).strip()
+    cache = _scalar_cache
+    return _cached_repo_yaml(cache, cache.epoch, project, _repo_dir(project).strip())
+
+
+@lru_cache(maxsize=None)
+def _cached_repo_yaml(cache: _ScalarCache, epoch: int, project: str, repo_dir: str) -> dict:
     if not repo_dir:
         return {}
     root = Path(repo_dir)
