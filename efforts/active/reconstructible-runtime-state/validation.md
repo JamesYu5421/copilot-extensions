@@ -94,8 +94,39 @@ telemetry contract and never rebuilds from sampled data.
    boundary it is **not run**; record that restriction, not a fabricated pass.
    Existing Bridge agents, remote workers and live installations are excluded.
 
-The current planning PR runs structure/reference/privacy checks and source-plan
-review only. Runtime unit, integration, clean-room and live-venue tests are
-deferred because no executable behavior changes. Every implementation PR must
+The original planning PR ran structure/reference/privacy checks and source-plan
+review only. Every implementation PR must
 state which tiers ran, results and reasons for any omission, with no live reset
 as a substitute for an isolated loss test.
+
+## G1 admitted evidence
+
+- Windows contained runner:
+  `python tools/run-plugin-tests.py agent-worktrees --test-file tests/test_recovery_facts.py`:
+  **79 passed**, including file-backed close/reopen and relocated/backup fixture
+  roots. All actual file creation is in test-owned roots, not live installations.
+- Ordinary placement opens exactly two identity markers and performs no history
+  enumeration with 0, 100 and 1,000 real synthetic historical files.
+- Malformed/duplicate/truncated/oversized envelopes, unknown required
+  capabilities, lossless nested extensions, foreign paths and reparse-ancestor
+  refusal are covered. Software-version variations are synthetic; they are not
+  historical-runtime qualification.
+- Initial long parametrized test IDs failed on Windows's 32,767-character
+  environment-variable limit; explicit short IDs fixed the fixture and the
+  complete focused rerun passed.
+- Source review found JSON exponent overflow could become infinity despite
+  literal-nonfinite rejection. Fact and marker readers now reject both signs;
+  five added regression cases also cover typed excessive-integer refusal.
+- A follow-up precision finding is covered by explicit scoped refusal for
+  decimal underflow/excess precision before exposing a candidate. Exact decimal
+  oracle tests verify that supported numeric values survive unrelated edits;
+  fact and marker paths share the same parser.
+- Near-limit Unicode checks include both input and canonical escaped output;
+  future marker versions produce `unsupported_schema`, not identity conflict.
+- Marker I/O denial/failure is `source_unavailable`, distinct from malformed
+  JSON, missing marker and excessive nesting; fixture faults cover both stat
+  and open without touching real permission settings.
+- Ruff F/E9, install-contract, documentation consistency and effort-structure
+  checks passed. Linux/native Git adoption, process-crash/power-loss, actual old
+  runtime and external-venue qualification remain unexecuted: G1 has no live
+  integration/installer/default writer, and those effects are not admitted.
