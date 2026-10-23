@@ -47,6 +47,104 @@ def _init_identity(repo: Path) -> None:
     _git("config", "user.name", "Test", cwd=repo)
 
 
+@pytest.mark.parametrize("detached", [False, True])
+def test_checkout_commit_ref_uses_one_real_query(refspec_worktree, monkeypatch, detached):
+    from agent_worktrees import git_ops
+
+    env = refspec_worktree
+    branch = f"worktree/{env.worktree_id}"
+    if detached:
+        _git("checkout", "--detach", cwd=env.clone)
+    else:
+        _git("tag", branch, cwd=env.clone)
+    real_git = git_ops.git
+    calls = []
+
+    def counted_git(*args, **kwargs):
+        calls.append(args)
+        return real_git(*args, **kwargs)
+
+    monkeypatch.setattr(git_ops, "git", counted_git)
+    assert finalize_open_pr_gate._current_commit_ref(str(env.clone)) == (
+        "HEAD" if detached else f"heads/{branch}"
+    )
+    assert calls == [("rev-parse", "HEAD", "--abbrev-ref", "HEAD")]
+
+
+@pytest.mark.parametrize("unborn", [False, True])
+def test_checkout_commit_ref_rejects_missing_head(tmp_path, unborn):
+    if unborn:
+        _git("init", "--template=", "-b", "unborn", cwd=tmp_path)
+    assert finalize_open_pr_gate._current_commit_ref(str(tmp_path)) is None
+
+
+@pytest.mark.parametrize(("status", "stdout"), [
+    (128, "a" * 40 + "\nrefs/heads/task\n"),
+    (0, "HEAD\nrefs/heads/task\n"),
+    (0, "a" * 39 + "\nrefs/heads/task\n"),
+    (0, "a" * 40 + "\nmalformed ref\n"),
+    (0, "a" * 40 + "\n\n"),
+    (0, "a" * 40 + "\nrefs/heads/task\nextra\n"),
+])
+def test_checkout_commit_ref_rejects_inconclusive_output(monkeypatch, status, stdout):
+    from agent_worktrees import git_ops
+
+    monkeypatch.setattr(
+        git_ops, "git",
+        lambda *args, **kwargs: SimpleNamespace(returncode=status, stdout=stdout),
+    )
+    assert finalize_open_pr_gate._current_commit_ref("unused") is None
+
+
+def test_precondition_ref_does_not_reprobe_validated_checkout(refspec_worktree, monkeypatch):
+    from agent_worktrees import git_ops
+
+    env = refspec_worktree
+    real_git = git_ops.git
+    calls = []
+
+    def counted_git(*args, **kwargs):
+        calls.append(args)
+        return real_git(*args, **kwargs)
+
+    monkeypatch.setattr(git_ops, "git", counted_git)
+    assert finalize_open_pr_gate.resolve_precondition_ref(
+        "", env.worktree_id, str(env.clone), cwd=str(env.clone),
+    ) == f"worktree/{env.worktree_id}"
+    assert calls == [("rev-parse", "HEAD", "--abbrev-ref", "HEAD")]
+
+
+def test_checkout_ref_is_fresh_and_unborn_head_retains_tracked_fallback(refspec_worktree):
+    env = refspec_worktree
+    branch = f"worktree/{env.worktree_id}"
+    cwd = str(env.clone)
+    assert finalize_open_pr_gate._current_commit_ref(cwd) == branch
+    _git("checkout", "--detach", cwd=env.clone)
+    assert finalize_open_pr_gate._current_commit_ref(cwd) == "HEAD"
+    _git("symbolic-ref", "HEAD", "refs/heads/unborn", cwd=env.clone)
+    assert finalize_open_pr_gate._current_commit_ref(cwd) is None
+    assert finalize_open_pr_gate.resolve_precondition_ref(
+        "", env.worktree_id, cwd, cwd=cwd,
+    ) == branch
+
+
+@pytest.mark.parametrize("separator", ["\u00a0", "\u0085", "\u2028", "\u2029"])
+def test_unicode_checkout_cannot_fall_back_to_landed_tracked_branch(refspec_worktree, separator):
+    env = refspec_worktree
+    _land_on_master(env, squash=False)
+    branch = f"later{separator}work"
+    _git("checkout", "-b", branch, cwd=env.clone)
+    _commit(env.clone, "unpublished.txt", "newer checkout content\n")
+    cwd = str(env.clone)
+    assert finalize_open_pr_gate._current_commit_ref(cwd) == branch
+    assert finalize_open_pr_gate.resolve_precondition_ref(
+        env.slug, env.worktree_id, cwd, cwd=cwd,
+    ) == branch
+    record, repo = _record_and_repo(env)
+    ok, err = finalize._pr_finalize_precondition(record, repo, cwd, cwd)
+    assert ok is False and err is not None
+
+
 @pytest.fixture(scope="session")
 def _refspec_worktree_seed(tmp_path_factory) -> Path:
     """Build immutable real Git setup before any test-specific landing.
