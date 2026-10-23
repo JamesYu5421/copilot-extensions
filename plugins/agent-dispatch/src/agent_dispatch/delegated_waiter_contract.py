@@ -32,6 +32,8 @@ def validate_delegation(value: object, *, armed: bool = False) -> dict:
         from .delegated_waiter_context import validate_installation
         validate_installation(value["installation"])
         fields.add("installation")
+    if isinstance(value, dict) and "replay" in value:
+        fields.add("replay")
     if not isinstance(value, dict) or set(value) != fields | ({"registration_id"} if armed else set()):
         raise ValueError("invalid delegated waiter identity")
     for field in ("coordinator_id", "preparation_id", "subscriber_id"):
@@ -42,12 +44,19 @@ def validate_delegation(value: object, *, armed: bool = False) -> dict:
     if type(value["number"]) is not int or not 0 < value["number"] < 2**31:
         raise ValueError("invalid PR number")
     positive_timeout(value["timeout"])
+    if "replay" in value:
+        from .delegated_replay_contract import validate_replay
+        validate_replay(value["replay"], repo=value["repo"], timeout=value["timeout"])
+        if "installation" in value or value["shared"] is not False:
+            raise ValueError("service replay cannot use a local callback installation")
     if (
         not isinstance(value["until"], list) or not value["until"]
         or any(not isinstance(t, str) or t not in TRANSITIONS for t in value["until"])
         or type(value["shared"]) is not bool
     ):
         raise ValueError("invalid delegated waiter options")
+    if "replay" in value and len(set(value["until"])) != len(value["until"]):
+        raise ValueError("duplicate replay transitions")
     if armed and (
         not isinstance(value["registration_id"], str)
         or not value["registration_id"] or len(value["registration_id"]) > 200
