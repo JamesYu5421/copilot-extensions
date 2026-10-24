@@ -551,6 +551,24 @@ def test_trusted_wheel_validation_reads_real_metadata_and_members(tmp_path, monk
         artifacts.validate_wheel(archive, wheel)
 
 
+def test_encoded_runtime_metadata_is_a_structured_refusal(tmp_path, monkeypatch):
+    wheel = _manifest(tmp_path / "wheels")["wheels"][0]
+    encoded = b"=?utf-8?b?" + base64.b64encode(b"helper>=2") + b"?="
+    data = _wheel_bytes("demo", "1.0", members={
+        "demo-1.0.dist-info/METADATA": (
+            b"Metadata-Version: 2.4\nName: demo\nVersion: 1.0\nRequires-Dist: " + encoded + b"\n"
+        ),
+    })
+    wheel["sha256"] = "sha256:" + hashlib.sha256(data).hexdigest()
+
+    def check_runtime(_bundle, _hashes, *, metadata, **_kwargs):
+        artifacts.validate_runtime_metadata({"dependencies": ["helper>=2"]}, metadata)
+
+    monkeypatch.setattr(artifacts, "validate_wheel_sources", check_runtime)
+    with pytest.raises(artifacts.PromotionArtifactError):
+        artifacts.validate_wheel(io.BytesIO(data), wheel, source_dir=tmp_path)
+
+
 @pytest.mark.parametrize("payload", [b"", b"chunked digest" * 200000], ids=["empty", "multi-chunk"])
 def test_digest_matches_sha256_across_multiple_chunks(tmp_path, payload):
     path = tmp_path / "data.bin"
@@ -732,6 +750,12 @@ def resolve_toolchain_lock(*args, **kwargs):
     shutil.copy(Path(artifacts.__file__), repo / "tools" / "promotion_python_artifacts.py")
     driver = repo.parent / "trusted" / "tools"
     shutil.copytree(repo / "tools", driver)
+    inspector = driver.parent / "libs" / "installer-engine" / "installer_wheel_inputs.py"
+    inspector.parent.mkdir(parents=True)
+    shutil.copy(
+        Path(artifacts.__file__).parents[1] / "libs" / "installer-engine" / inspector.name,
+        inspector,
+    )
     for name in ("artifact_source_build.py", "standalone_python_artifacts.py", "standalone_consumers.py"):
         shutil.copy(Path(artifacts.__file__).with_name(name), driver / name)
     shutil.copy(Path(promotion.__file__), driver / "promote_release.py")

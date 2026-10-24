@@ -2,11 +2,8 @@
 from __future__ import annotations
 
 import argparse
-import base64
-import csv
 import configparser
 import hashlib
-import io
 import json
 import os
 import re
@@ -15,10 +12,10 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
+from dataclasses import replace
 from pathlib import Path
-from email import policy
-from email.parser import Parser
 from email.message import Message
 from typing import BinaryIO
 from artifact_source_build import (
@@ -26,6 +23,9 @@ from artifact_source_build import (
     validate_runtime_metadata as validate_runtime_metadata,
 )
 from standalone_python_artifacts import COMPONENTS, artifact_label, project_key
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "libs" / "installer-engine"))
+from installer_wheel_inputs import WheelLimits, bounded_tag, inspect_archive
 
 try:
     import tomllib
@@ -41,6 +41,7 @@ _PLUGIN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _VERSION = re.compile(r"[0-9][A-Za-z0-9.+-]*")
 _MANIFEST_LIMIT = 1 << 20
 _BUNDLE_LIMIT = 512 << 20
+_WHEEL_TAG_LIMIT = 10_000
 
 
 def _artifact_label(record: dict) -> str:
@@ -348,6 +349,8 @@ def validate_bundle(path: Path, entry: dict, *, candidate_root: Path | None = No
                         for chunk in iter(lambda: stream.read(1 << 20), b""):
                             digest.update(chunk)
                             archive.write(chunk)
+                    if f"sha256:{digest.hexdigest()}" != wheel["sha256"]:
+                        raise PromotionArtifactError(f"{path.name}: wheel digest mismatch")
                     archive.seek(0)
                     validate_wheel(
                         archive, wheel,
@@ -355,8 +358,6 @@ def validate_bundle(path: Path, entry: dict, *, candidate_root: Path | None = No
                         component=entry.get("component") if wheel["role"] == primary_role else None,
                         candidate_root=candidate_root,
                     )
-                if f"sha256:{digest.hexdigest()}" != wheel["sha256"]:
-                    raise PromotionArtifactError(f"{path.name}: wheel digest mismatch")
             return manifest
     except (
         OSError, UnicodeDecodeError, json.JSONDecodeError, zipfile.BadZipFile,
@@ -377,6 +378,13 @@ def validate_wheel(
     inspect_wheel(
         archive, wheel, expected_generator=wheel["generator"],
         record_algorithms=frozenset({"sha256"}),
+        max_archive_bytes=_BUNDLE_LIMIT,
+        limits=WheelLimits(
+            max_archive_bytes=_BUNDLE_LIMIT, max_expanded_bytes=_BUNDLE_LIMIT,
+            max_member_bytes=_BUNDLE_LIMIT, max_metadata_bytes=3 * _MANIFEST_LIMIT,
+            max_members=100_000, max_tags=_WHEEL_TAG_LIMIT,
+            max_metadata_member_bytes=_MANIFEST_LIMIT,
+        ),
         source_dir=source_dir, component=component, candidate_root=candidate_root,
     )
 
@@ -384,9 +392,11 @@ def validate_wheel(
 def inspect_wheel(
     archive: BinaryIO, wheel: dict, *, expected_generator: str | None = None,
     max_unpacked_bytes: int = _BUNDLE_LIMIT, max_metadata_bytes: int = _MANIFEST_LIMIT,
+    max_archive_bytes: int = _BUNDLE_LIMIT,
     record_algorithms: frozenset[str] = frozenset({"sha256", "sha384", "sha512"}),
     source_dir: Path | None = None, component: str | None = None,
     candidate_root: Path | None = None,
+    limits: WheelLimits | None = None, deadline: float | None = None,
 ) -> tuple[Message, int]:
     """Inspect a wheel without execution; return actual metadata and unpacked size.
 
@@ -395,112 +405,70 @@ def inspect_wheel(
     must supply their own acquisition/approval evidence outside this parser.
     """
     if any(type(value) is not int or value <= 0 for value in (
-        max_unpacked_bytes, max_metadata_bytes,
+        max_unpacked_bytes, max_metadata_bytes, max_archive_bytes,
     )):
         raise PromotionArtifactError("wheel inspection requires positive byte limits")
     if not record_algorithms or not record_algorithms <= {"sha256", "sha384", "sha512"}:
         raise PromotionArtifactError("unsupported wheel RECORD digest policy")
     info = parse_wheel_identity(Path(wheel["filename"]))
     prefix = f"{info['name']}-{info['version']}.dist-info/"
-    metadata_names = {prefix + name for name in ("WHEEL", "METADATA", "RECORD")}
     try:
-        with zipfile.ZipFile(archive) as bundle:
-            members = bundle.infolist()
-            names = [member.filename for member in members]
-            if (
-                len(names) != len(set(names))
-                or sum(member.file_size for member in members) > max_unpacked_bytes
-                or any(
-                    member.flag_bits & 1 or "\\" in member.orig_filename
-                    or "\0" in member.orig_filename or member.filename.startswith("/")
-                    or ":" in member.filename
-                    or any(part in ("", ".", "..") for part in member.filename.rstrip("/").split("/"))
-                    or stat.S_IFMT(member.external_attr >> 16) not in (0, stat.S_IFREG, stat.S_IFDIR)
-                    or (
-                        any(part.endswith(".dist-info") for part in member.filename.rstrip("/").split("/"))
-                        and not member.filename.startswith(prefix)
-                    )
-                    for member in members
-                )
-                or not metadata_names.issubset(names)
-                or any(bundle.getinfo(name).file_size > max_metadata_bytes for name in metadata_names)
-            ):
-                raise PromotionArtifactError("unsafe or incomplete wheel members")
-            headers = {
-                name: Parser(policy=policy.default).parsestr(
-                    bundle.read(prefix + name).decode("utf-8"),
-                ) for name in ("WHEEL", "METADATA")
-            }
-            wheel_metadata, package_metadata = headers["WHEEL"], headers["METADATA"]
-            expected_tags = {
-                f"{python}-{abi}-{platform}"
-                for python in info["python_tag"].split(".")
-                for abi in info["abi_tag"].split(".")
-                for platform in info["platform_tag"].split(".")
-            }
-            tags = wheel_metadata.get_all("Tag", [])
-            names_header = package_metadata.get_all("Name", [])
-            versions_header = package_metadata.get_all("Version", [])
-            version_matches = versions_header == [info["version"]]
-            if expected_generator is None and len(versions_header) == 1:
-                from packaging.version import Version
-                version_matches = Version(str(versions_header[0])) == Version(info["version"])
-            metadata_versions = package_metadata.get_all("Metadata-Version", [])
-            if (
-                any(header.defects for header in headers.values())
-                or wheel_metadata.get_all("Wheel-Version") != ["1.0"]
-                or wheel_metadata.get_all("Root-Is-Purelib") not in (["true"], ["false"])
-                or (
-                    expected_generator is not None
-                    and wheel_metadata.get_all("Generator") != [expected_generator]
-                )
-                or len(tags) != len(set(tags)) or set(tags) != expected_tags
-                or len(names_header) != 1
-                or len(metadata_versions) != 1
-                or not re.fullmatch(r"2\.[0-9]+", str(metadata_versions[0]))
-                or re.sub(r"[-_.]+", "_", str(names_header[0])).lower()
-                != re.sub(r"[-_.]+", "_", info["name"]).lower()
-                or len(versions_header) != 1
-                or not version_matches
-            ):
-                raise PromotionArtifactError("wheel metadata differs from declared source/toolchain")
-            rows = list(csv.reader(io.StringIO(bundle.read(prefix + "RECORD").decode("utf-8"))))
-            if (
-                any(len(row) != 3 for row in rows)
-                or len(rows) != len({row[0] for row in rows})
-                or {row[0] for row in rows} != {member.filename for member in members if not member.is_dir()}
-            ):
-                raise PromotionArtifactError("wheel RECORD member set mismatch")
-            verified_hashes = {}
-            for name, recorded_hash, recorded_size in rows:
-                if name == prefix + "RECORD":
-                    if recorded_hash or recorded_size:
-                        raise PromotionArtifactError("wheel RECORD must not hash itself")
-                    continue
-                algorithm, separator, _ = recorded_hash.partition("=")
-                if not separator or algorithm not in record_algorithms:
-                    raise PromotionArtifactError("unsupported wheel RECORD digest")
-                source_digest = hashlib.sha256()
-                digest = source_digest if algorithm == "sha256" else hashlib.new(algorithm)
-                with bundle.open(name) as stream:
-                    for chunk in iter(lambda: stream.read(1 << 20), b""):
-                        digest.update(chunk)
-                        if digest is not source_digest:
-                            source_digest.update(chunk)
-                encoded = base64.urlsafe_b64encode(digest.digest()).rstrip(b"=").decode("ascii")
-                if recorded_hash != f"{algorithm}={encoded}" or recorded_size != str(bundle.getinfo(name).file_size):
-                    raise PromotionArtifactError("wheel RECORD digest or size mismatch")
-                verified_hashes[name] = source_digest.hexdigest()
-            if source_dir is not None:
+        deadline = time.monotonic() + 120 if deadline is None else deadline
+        limits = limits or WheelLimits(
+            max_archive_bytes=max_archive_bytes, max_expanded_bytes=max_unpacked_bytes,
+            max_member_bytes=max_unpacked_bytes,
+            max_metadata_bytes=max(max_archive_bytes, 3 * max_metadata_bytes),
+            max_members=100_000, max_tags=_WHEEL_TAG_LIMIT,
+            max_metadata_member_bytes=max_metadata_bytes,
+        )
+        facts = inspect_archive(
+            archive, limits=replace(
+                limits,
+                max_archive_bytes=min(limits.max_archive_bytes, max_archive_bytes),
+                max_expanded_bytes=min(limits.max_expanded_bytes, max_unpacked_bytes),
+                max_member_bytes=min(limits.max_member_bytes, max_unpacked_bytes),
+                max_metadata_member_bytes=min(limits.max_metadata_member_bytes, max_metadata_bytes),
+            ), deadline=deadline, record_algorithms=record_algorithms,
+        )
+        wheel_metadata, package_metadata = facts.wheel_metadata, facts.metadata
+        canonical_tags, _ = bounded_tag(
+            "-".join(info[key] for key in ("python_tag", "abi_tag", "platform_tag")),
+            limit=limits.max_tags, deadline=deadline,
+        )
+        python_tags, abi_tags, platform_tags = canonical_tags.split("-")
+        expected_tags = {
+            f"{python}-{abi}-{platform}"
+            for python in python_tags.split(".")
+            for abi in abi_tags.split(".")
+            for platform in platform_tags.split(".")
+        }
+        version_matches = facts.version == info["version"]
+        if expected_generator is None:
+            from packaging.version import Version
+            version_matches = Version(facts.version) == Version(info["version"])
+        if (
+            facts.prefix != prefix
+            or (
+                expected_generator is not None
+                and wheel_metadata.get_all("Generator") != [expected_generator]
+            )
+            or set(facts.tags) != expected_tags
+            or re.sub(r"[-_.]+", "_", facts.name).lower()
+            != re.sub(r"[-_.]+", "_", info["name"]).lower()
+            or not version_matches
+        ):
+            raise PromotionArtifactError("wheel metadata differs from declared source/toolchain")
+        if source_dir is not None:
+            with zipfile.ZipFile(archive) as bundle:
                 validate_wheel_sources(
-                    bundle, verified_hashes, source_dir=source_dir, prefix=prefix,
+                    bundle, facts.member_hashes, source_dir=source_dir, prefix=prefix,
                     metadata=package_metadata,
                     component=component, candidate_root=candidate_root,
                 )
-            return package_metadata, sum(member.file_size for member in members)
+        return package_metadata, facts.unpacked_size
     except (
         OSError, UnicodeDecodeError, zipfile.BadZipFile, RuntimeError, NotImplementedError,
-        csv.Error, ValueError,
+        ValueError,
     ) as exc:
         if isinstance(exc, PromotionArtifactError):
             raise

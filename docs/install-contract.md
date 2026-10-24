@@ -3103,8 +3103,10 @@ by an installer. Its [reviewed contract](../efforts/active/governed-python-artif
 defines the schema and explicit boundary: canonical whole-record identities,
 release/target/mode compatibility, complete asserted wheel metadata graphs
 with extras/markers, and externally supplied whole-record approval references.
-It does not authenticate approvals, verify a source release, inspect/download
-wheels, detect hardware, resolve dependencies or activate a generation.
+Record validation/selection does not authenticate approvals, verify a source
+release, download wheels, detect hardware, resolve dependencies or activate a
+generation. `runtime_profile_wheels.verify_profile_wheels` separately checks
+the complete retained wheel set against the exact record, as described below.
 
 Actual consumers still need adapters from the existing installation authority
 and verified release/configuration channels, followed by admitted byte/metadata
@@ -3135,6 +3137,55 @@ a path, feed, release or record. The caller still owes authenticated approval,
 source/feed/seasoning/revocation evidence, real device eligibility and the
 existing constructor integration. Explicit test budgets are not production
 acquisition defaults or permission to enable a consumer.
+
+### Bounded wheel inspection
+
+`libs/installer-engine/installer_wheel_inputs.py` is a stdlib-only input
+inspector, vendored with the Python engine. Callers supply explicit positive
+archive, expanded/member, individual/aggregate metadata, member-count and expanded-tag
+limits, plus a finite monotonic deadline. It streams the archive digest and every RECORD
+member digest, bounds metadata before parsing, and refuses duplicate/ambiguous
+members, unsafe paths, encryption, links, malformed headers and changed source
+files. It neither extracts package contents nor runs package code or a backend.
+Promotion uses the same archive verifier while preserving its additional
+source/toolchain identity checks.
+Stored and raw DEFLATE streams are consumed independently of `ZipExtFile`'s
+declared-size truncation, checking full length, CRC and end-of-stream before
+metadata parsing or hash acceptance. Trailing-dot/space path components refuse
+as Windows aliases; decompression failures remain structured integrity errors.
+On Windows, reserved device names and invalid filename characters also refuse.
+Metadata-directory suffixes are checked case-insensitively, and local-header
+offsets are bounded before a member is opened. Header parsing follows PyPA's
+[core metadata `compat32` convention](https://packaging.python.org/en/latest/specifications/core-metadata/),
+preserving raw dependency fields rather than decoding email encoded words.
+
+Compressed tags are deduplicated and bounded before Cartesian expansion,
+including the selected filename's tags. Member ancestry uses a deadline-checked
+component trie rather than repeatedly joining every prefix of deep paths.
+ZIP32/ZIP64 preflight bounds actual central-directory entries and directory
+bytes before `ZipFile` allocates an index; the aggregate metadata budget also
+caps that directory. Declared entry counts cannot bypass the actual scan.
+
+The complete-profile verifier above uses this bounded core through the shared
+promotion inspector, not a separate per-wheel semantic facade. Its existing
+byte budgets retain their total-closure and per-metadata-file meanings; callers
+may additionally supply `WheelLimits` and a shared monotonic `deadline`.
+The initial archive hash uses the smaller of the remaining closure budget and
+the optional per-wheel archive limit; default runtime inspection derives its
+archive cap from the caller's closure budget rather than promotion's cap.
+Per-metadata-file limits do not reduce a separately supplied directory/aggregate
+budget. Without explicit `WheelLimits`, the archive budget bounds the directory
+and the three individual file ceilings bound metadata; first-party promotion
+retains its own stricter directory budget.
+Record validation and its dependency walk share the same deadline and bound
+compressed filename and target tags before calling the packaging parsers.
+Runtime RECORD policy permits SHA-256/384/512, while
+source-binding member facts always retain SHA-256 and first-party promotion
+still requires SHA-256 RECORD entries. Neither facts nor a matching digest
+authenticate the profile, admit a feed or authorize cached input. A successful
+inspection is not a retained snapshot: construction must still own immutable
+input custody and obtain authenticated selection/acquisition evidence. No
+installer selects or activates this preparation API automatically.
 
 ### Shared engine delivery
 
