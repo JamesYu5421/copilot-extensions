@@ -3478,3 +3478,15 @@ Follow the same contract so it stays safe-by-default and reproducible:
   environment; only *timeouts* may carry internal constants.
 - Assert observable end-state, not exact model output (turns vary).
 - Document the module and its variables in this file.
+
+## Optional paired-worktree finalization
+
+For paired-worktree finalization, select
+`tools/run-plugin-tests.py agent-worktrees --test-file tests/test_paired_claims.py
+--test-file tests/test_paired_finalize_integration.py`.
+The first file covers claim mutation/refusal and concurrent lifecycle ownership.
+The second uses isolated fresh Git repositories and actual CLI refusal paths,
+then proves bottom-up sibling settlement, BOTH-finalized removal retention,
+and preservation of untracked, modified and unpublished committed knowledge.
+These are on-demand filesystem/process controls, not additions to required
+unit-only CI or a claim of installed-runtime rollout.
