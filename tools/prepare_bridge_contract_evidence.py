@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from agent_bridge_contract_git import clean_git_environment, require_local_object_reads
+import agent_bridge_contract_registry as registry_codec
 
 PACKET = "plugins/agent-bridge/contract/fixtures/http/current/http47-owned-cold-drain.json"
 
@@ -18,7 +19,7 @@ def _run(root: Path, *arguments: str, timeout: int = 10) -> subprocess.Completed
     return subprocess.run(
         ["git", "--no-replace-objects", "-C", str(root),
          "-c", "protocol.file.allow=never", "-c", "protocol.ext.allow=never", *arguments],
-        capture_output=True, text=True, check=False, timeout=timeout,
+        capture_output=True, text=True, encoding="utf-8", check=False, timeout=timeout,
         env=clean_git_environment(),
         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
     )
@@ -43,17 +44,23 @@ def prepare(root: Path, remote: str) -> str:
     if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("capture preparation requires an exact full commit identity")
     require_local_object_reads()
-    if _run(root, "cat-file", "-e", f"{commit}^{{commit}}").returncode == 0:
-        return commit
-    result = _run(
-        root, "fetch", "--no-tags", "--depth=1", "--no-recurse-submodules",
-        "--no-auto-maintenance", "--no-write-fetch-head",
-        remote, commit, timeout=60,
-    )
-    if result.returncode != 0:
-        raise RuntimeError("could not retain the exact capture checkpoint from the selected repository")
     if _run(root, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
-        raise RuntimeError("capture checkpoint is still unavailable after preparation")
+        result = _run(
+            root, "fetch", "--no-tags", "--depth=1", "--no-recurse-submodules",
+            "--no-auto-maintenance", "--no-write-fetch-head",
+            remote, commit, timeout=60,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("could not retain the exact capture checkpoint from the selected repository")
+        if _run(root, "cat-file", "-e", f"{commit}^{{commit}}").returncode != 0:
+            raise RuntimeError("capture checkpoint is still unavailable after preparation")
+    def read(relative: str) -> bytes:
+        result = _run(root, "show", f"{commit}:{relative}")
+        if result.returncode:
+            raise ValueError(f"captured contract metadata is unavailable: {relative}")
+        return result.stdout.encode("utf-8")
+
+    registry_codec.load(root, read=read)
     return commit
 
 

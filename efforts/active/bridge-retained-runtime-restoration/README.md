@@ -4,7 +4,7 @@
 - **Repo:** copilot-extensions
 - **Branch(es):** proposal first, then sequential source PRs against `dev`
 - **Created:** 2026-10-23
-- **Status:** Active; DB foundation merged, inbox source in review; provenance layout proposal pending, full Phase 1 open
+- **Status:** Active; DB foundation merged, inbox source in review; provenance review repairs and chunked capture qualified, current review pending, full Phase 1 open
 - **Vision:** [State-aware rollback](../../../visions/plugin-services/README.md#state-aware-rollback), [canonical Bridge deployment](../../../visions/plugins/agent-bridge/README.md#one-canonical-deploy-path), [version-skew-safe contracts](../../../visions/plugins/agent-bridge/README.md#version-skew-safe-contract-evolution)
 - **Umbrella issue:** [#8063](https://github.com/ThomasMichon/copilot-extensions/issues/8063)
 - **Parent contract:** [Acknowledged Execution Handoff](../acknowledged-execution-handoff/README.md)
@@ -100,8 +100,8 @@ for the existing inbox source PR #8389; it grants no runtime operation.
 
 All decomposition, proposed API/storage names and test cases below and in the
 linked contracts are **agent-recommended design**. The existing custody and
-installer plan cleared proposal review; the later provenance proposal has its
-own pending review gate. Implementation and its source/native evidence still
+installer plan cleared proposal review; the provenance contract cleared its
+separate gate in #8420. Implementation and its source/native evidence still
 require their own review and qualification.
 
 ## Plan
@@ -148,7 +148,7 @@ require their own review and qualification.
       plugin changefiles; preserve unit-only, impact-scoped PR/promotion gates.
 
 ### Phase 4a - Preserve source evidence with lossless provenance sidecars
-- [ ] Review the [versioned provenance layout](provenance-layout.md) before
+- [x] Review the [versioned provenance layout](provenance-layout.md) before
       implementing the bounded source-format change.
 - [ ] Complete its reader/writer, publication and validation gates, then
       return to #8389 without dropping evidence or increasing the size guard.
@@ -189,10 +189,64 @@ The source ownership and integration order are in those documents.
 The proposal merged through normal repository review in
 [#8179](https://github.com/ThomasMichon/copilot-extensions/pull/8179).
 This establishes the reviewed plan, not implementation or running adoption.
-The later [provenance layout](provenance-layout.md) is a separate source-format
-proposal and must pass its own normal review before implementation.
+The later [provenance layout](provenance-layout.md) cleared normal review in
+[#8420](https://github.com/ThomasMichon/copilot-extensions/pull/8420).
+Its source implementation and qualification remain open.
 
 ## Journal
+
+### 2026-10-23 - Validate consumers after actual version-2 publication
+- The converted canonical registry exposed two test-fixture assumptions:
+  an existing archived prefix does not imply a plan creates new chunks, and
+  incremental plan outputs do not include unchanged retained chunks.
+- HTTP-45 replay fixtures now distinguish explicit inline input, new conversion
+  and retained chunks. The real-history round trip seeds complete snapshot
+  inputs before applying the incremental plan and checks retained chunk bytes.
+  Both original failures were reproduced before correction.
+- The bounded post-conversion consumer cohort passed 218 cases with two
+  capability skips, including publication, captures, fixture maintenance and
+  complete registry consumers. The canonical checker still accepts two
+  contracts and 583 fixtures. Only plugin tests and effort prose changed:
+  captured executable/closure inputs and checkpoint `5820a7fb` remain unchanged.
+- Source review/merge and the remaining historical capture-owner gate remain
+  open. No new capture observation or operational effect was fabricated to
+  refresh the review.
+
+### 2026-10-23 - Tighten provenance publication and capture recovery
+- Initial source review identified output-consistency, interrupted journal and
+  hardlink recovery, captured-inventory and host-code-page defects. The source
+  repair requires exact preceding outputs before registry commit, atomically
+  stages journal files, recovers only the source-bound staging alias pair under
+  the existing lock, and preserves captured rather than post-publication
+  metadata inventory. Git metadata readers explicitly decode UTF-8.
+- The bounded Linux capture/publication cohort passed 121 cases with two
+  capability skips; 84 preparation, canonical-checker and real Git-encoding
+  controls passed separately. An earlier oversized selection hit its nested
+  wall-clock limit without an assertion result; it is not counted as a pass.
+- Fresh capture and no-write reproduction both passed all 117 required
+  model-free cases against provider-retained source checkpoint
+  `5820a7fb022e869dbd192044561c44bbcab26144`. The canonical publisher produced
+  73 outputs and genuinely converted to version 2: all 1,786 historical records
+  remain exact ordered prefixes of the 1,853-record result, with five chunks,
+  a 228,258-byte index and a largest chunk of 261,917 bytes. The unchanged
+  per-artifact cap holds; the canonical checker accepts two contracts and
+  583 fixtures.
+- A subsequent passing current-head review remains required. No runtime,
+  installer, live lane or adoption effect is authorized by this source repair.
+
+### 2026-10-23 - Provenance contract merged; source implementation next
+- #8420 merged to `dev` as `a9b307b165a8ef14a305ecf0136250572f36aa2c`,
+  with sole parent `210518070267f654a1534ac98f98f602946d0cbb`.
+  Copilot approved actual head `8c5b426eda1df5df2b9781224c9bfc9d15fb5198`
+  and required CI passed before the normal managed merge.
+- The earlier approval on the pre-index head was not treated as current
+  approval. A bounded timeout led to a normal current-head review request,
+  not reviewer diagnostics or a bypass.
+- The existing source venue was pulled forward onto the merged plan. Next is
+  the complete actual reader/writer trace and the reviewed lossless format
+  implementation, followed by source review and genuine qualification.
+  No codec, schema conversion, sidecar or runtime action is implemented by
+  this plan merge; #8389 and all remaining effort gates stay open.
 
 ### 2026-10-23 - Propose the lossless evidence-format prerequisite
 - #8203 merged the bounded DB/storage foundation; full Phase 1 remains open.

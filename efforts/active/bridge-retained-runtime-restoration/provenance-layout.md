@@ -1,8 +1,9 @@
 # Lossless contract provenance layout
 
 Back to the [effort](README.md). **Prospective, agent-recommended design.**
-Source-only format work is authorized; this contract still requires normal
-proposal review before implementation. It does not authorize runtime changes.
+Source-only format work is authorized and this contract cleared normal review
+in #8420. Implementation and its source/evidence gates remain open.
+It does not authorize runtime changes.
 
 ## Problem and scope
 
@@ -97,21 +98,21 @@ cannot qualify an unknown runtime target or settle outstanding SDK/native work.
 
 ## Implementation and validation gates
 
-- [ ] Land this contract through normal review before source implementation.
-- [ ] Enumerate actual readers/writers and old-format behavior; wire the complete
+- [x] Land this contract through normal review before source implementation.
+- [x] Enumerate actual readers/writers and old-format behavior; wire the complete
       set without silently omitting an unknown consumer.
-- [ ] Implement the versioned representation and lossless publication through
+- [x] Implement the versioned representation and lossless publication through
       the existing owners; preserve every record and existing safety check.
-- [ ] Prove exact materialized-record equality and order before/after conversion
+- [x] Prove exact materialized-record equality and order before/after conversion
       and reconciliation of both real histories, with every artifact under the
       unchanged guard.
-- [ ] Exercise missing/corrupt/foreign/linked chunks, count/version/field errors,
+- [x] Exercise missing/corrupt/foreign/linked chunks, count/version/field errors,
       concurrent input changes and interrupted publication without data loss or
       partial-history success.
 - [ ] Exercise prior inline input, every canonical capture generation, source
       snapshot/closure, preparation and replay through the actual updated entry
       points. Preserve unrelated historical packets and capability floors.
-- [ ] Run the canonical checker and genuine committed-source capture/no-write
+- [x] Run the canonical checker and genuine committed-source capture/no-write
       reproduction in the bounded development lane. Preserve unit-only,
       impact-scoped required CI; do not add native/process matrices to it.
 - [ ] Review and merge the implementation, then return to the same #8389 source
@@ -119,3 +120,77 @@ cannot qualify an unknown runtime target or settle outstanding SDK/native work.
 
 No source, native or operational completion is claimed by this proposal.
 The full effort's Plan and Validation Plan remain the parent completion gate.
+
+## Implementation evidence in progress
+
+The current source inventory uses one codec in
+`tools/agent_bridge_contract_registry.py`; semantic validation remains in the
+existing checker. The updated entry points are:
+
+| Surface | Reader/writer binding |
+|---------|-----------------------|
+| Checker | Complete materialization before existing source/capture checks |
+| HTTP-45 and HTTP-46 captures | Shared snapshot/plan and explicit publication owner |
+| HTTP-47 capture | Committed metadata snapshot, complete ordered history, closure inputs and the same publisher |
+| Preference-authority capture | Committed complete history and declared three-vector output ownership |
+| HTTP-47 closure and CI preparation | Read every captured metadata artifact from the exact source commit |
+| Fixture maintenance and replay | Copy/pin sidecars with their index; inspect complete provenance |
+
+The prior checker explicitly supported only schema version 1. The prior
+HTTP-45/46 writers read inline provenance directly and could update an existing
+inline record; they did not materialize or protect an archived prefix. They are
+not compatible writers for version 2. Updated readers retain version-1 input;
+use the updated capture owners for version-2 publication.
+
+Bounded controls now cover legacy inputs, lossless chunk materialization,
+immutable-prefix refusal, interrupted same-plan recovery, input mutation before
+the final index commit, complete captured metadata preparation and the canonical
+checker over more than 1 MiB of materialized provenance. Capture guard tests
+retain their actual alias, closure and portfolio checks rather than accepting a
+size-limit refusal as a proxy for the intended failure.
+
+At the initial implementation checkpoint, an in-memory three-way check used the
+genuine shared ancestor and verified that
+both actual source histories preserve its complete prefix. Retaining that
+prefix once and both ordered append-only deltas produces 1,856 records and
+1,062,639 inline bytes. The lossless plan has five chunks, a 228,258-byte index
+and a largest artifact of 261,986 bytes, with exact materialized equality and no
+writes. This is conversion evidence, not a published registry, current-source
+capture reproduction, implementation review or runtime qualification.
+
+The committed implementation also completed a genuine HTTP-47 capture and its
+no-write reproduction through the existing bounded owner: all 117 selected
+model-free ASGI/owned-process cases passed on both runs, with the complete
+interpreter/entrypoint receipts checked before publication. The canonical
+checker accepts both contracts and all 583 fixtures. This refresh retains
+version 1 while its final 1,037,891-byte, 1,786-record index fits; conversion is
+exercised by the lossless three-way and canonical-checker controls, not claimed from that
+ordinary inline capture. The final write/no-write pair binds the provider-visible
+source checkpoint `10206a19b416298785dc7a39ffc96cecdf7c2abe`, retained through
+the normal managed source push before capture. Additional actual HTTP-45 and
+preference-authority entry-point controls consume both inline and chunked
+history, retaining their real admission/refusal and complete-history assertions.
+Final integration review and the remaining capture-owner closure remain open.
+
+Each already-published output must equal its planned bytes before registry
+replacement. Journal files stage completely before atomic publication.
+Explicit capture writes recover only an exact journal-owned interrupted
+hardlink pair under the kernel lock; unrelated aliases still refuse.
+Orphaned-checkpoint closure binds the captured metadata prefix rather than
+later publication chunks, and committed metadata uses explicit UTF-8 decoding.
+Focused controls cover reverted/removed outputs,
+partial old/new/manifest staging, owned versus foreign aliases, size-triggered
+conversion with unavailable source checkpoints, and real non-ASCII Git blobs
+under a simulated legacy host code page.
+
+The repaired source checkpoint `5820a7fb022e869dbd192044561c44bbcab26144`
+was retained through the managed source push before another genuine capture.
+Both write and no-write runs passed all 117 required model-free cases and
+validated interpreter/entrypoint receipts. This time the canonical publisher
+actually converted inline history to version 2: 73 declared outputs, five
+chunks, a 228,258-byte index and a largest chunk of 261,917 bytes. All 1,786
+prior records remain exact ordered prefixes of the complete 1,853-record
+history, with every artifact below the original cap. The canonical checker
+again accepts both contracts and all 583 fixtures. A passing current-head
+review and the remaining historical capture-owner gate are still required;
+this source evidence does not qualify a running receiver.

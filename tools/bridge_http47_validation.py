@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from pathlib import Path
 
@@ -32,7 +31,10 @@ def validate_closure(root: Path, packet: dict, registry: dict) -> None:
             metadata, path = line.split("\t", 1)
             mode, kind, blob = metadata.split()
             tree[path] = (mode, kind, blob)
-        original = json.loads(evidence.git(root, "show", commit + ":" + evidence.REGISTRY))
+        metadata = evidence.registry_codec.load(
+            root, read=lambda path: evidence.git(root, "show", commit + ":" + path),
+        )
+        original = metadata.materialized
         # Compute completeness against the captured tree, not a digest supplied
         # by the producer or a later checkout's unrelated new files.
         required = set(evidence.AFFECTED) | set(evidence.TESTS) | {
@@ -44,16 +46,30 @@ def validate_closure(root: Path, packet: dict, registry: dict) -> None:
             item["path"] for contract in original["contracts"]
             for item in contract["source_paths"]
         )
+        required.update(set(metadata.inputs) - {evidence.REGISTRY})
+        provenance_schema = evidence.CONTRACT + "provenance.schema.json"
+        if provenance_schema in tree:
+            required.add(provenance_schema)
         required.update(path for path in tree if closure_python(path))
         if set(proof) != required:
             raise ValueError("HTTP-47 execution closure inventory differs from source tree")
     else:
-        # A squash may orphan the source checkpoint. The complete current
-        # inventory plus content-addressed blobs is the conservative fallback;
-        # a changed inventory requires a fresh capture, never an opaque waiver.
+        # Publication may archive inline history or append chunks after capture.
+        # Captured chunks must remain an immutable prefix of each published
+        # history; newly published chunks are not execution inputs retroactively.
         tree = None
+        metadata = evidence.registry_codec.load(root)
+        metadata_paths = set(proof) & (set(metadata.inputs) - {evidence.REGISTRY})
+        for contract in metadata.index["contracts"]:
+            after_capture = False
+            for chunk in contract.get("provenance_chunks", []):
+                if chunk["path"] not in metadata_paths:
+                    after_capture = True
+                elif after_capture:
+                    raise ValueError("HTTP-47 execution closure inventory is unprovable")
         if set(proof) != evidence.proof_paths(
-            root, json.loads(evidence.safe(root, evidence.REGISTRY).read_bytes())
+            root, metadata.materialized,
+            metadata_paths=metadata_paths,
         ):
             raise ValueError("HTTP-47 execution closure inventory is unprovable")
     for path, identity in proof.items():
@@ -64,6 +80,11 @@ def validate_closure(root: Path, packet: dict, registry: dict) -> None:
             or not re.fullmatch(r"[0-9a-f]{64}", identity.get("sha256", ""))
         ):
             raise ValueError("HTTP-47 execution closure contains an invalid identity")
+        if (
+            tree is None and path in metadata_paths
+            and identity["sha256"] != evidence.digest(metadata.inputs[path])
+        ):
+            raise ValueError(f"HTTP-47 execution closure content mismatch: {path}")
         blob = identity["blob"]
         if tree is not None and tree.get(path) not in {
             ("100644", "blob", blob), ("100755", "blob", blob)
