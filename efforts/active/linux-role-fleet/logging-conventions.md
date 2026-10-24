@@ -96,3 +96,80 @@ The following implementation details are **agent-recommended**:
   native/live evidence for changed owners. An unavailable lane stays explicit.
 - [ ] Publish source through review/CI, then separately qualify released and
   admitted running behavior. Do not mark the parent effort Done at plan merge.
+
+## Dispatch application source slice (#8377)
+
+`spinning-sprocket` takes only the Dispatch application-handler and local
+discovery slice. Reconciliation confirmed #8370's independent installer capture
+and #6812's progress presentation ownership; neither shared implementation is
+modified. The source realization is described in
+[Dispatch diagnostic logs](../../../plugins/agent-dispatch/docs/diagnostic-logs.md).
+It closes part of the reviewed `convention-discoverable-diagnostic-logs` intent,
+not the whole feature or any live deployment gate.
+
+- [x] Reconcile the bounded application/native writer seams and preserve adjacent
+  installer/progress ownership before editing.
+- [x] Select an explicit application namespace so legacy/native inherited
+  handles cannot be renamed/truncated by the new handler.
+- [x] Implement and validate application UTC attribution, exact record-age
+  retention, real concurrent writers and active/archived/fallback discovery.
+- [ ] Publish the bounded source through passing review and required CI.
+- [ ] Integration owner: qualify release and authorized running adoption, and
+  complete the remaining native/installer/Bridge/telemetry/controller/container
+  inventory, owner adapters and failure-stage correlation gates above.
+
+The broad Plan and validation items remain open: an application handler cannot
+promise timestamps or retention for native stdout/stderr, early bootstrap,
+installer attempts, optional spools or a deployment adapter.
+
+### Journal
+
+- 2026-10-23 — Implementation starts with Dispatch application diagnostics using
+  its existing install resolver, operation lock, package logger, daemon GC and
+  supervisor iteration. Read-only JSON discovery includes unmanaged legacy/
+  native/fallback locations and missing files. No new collector or deployment
+  operation; #8370/#6812/#8334 implementation seams remain untouched.
+- 2026-10-23 — Native Windows source validation: 240 tests pass across the new
+  diagnostics and existing coordinator/supervisor suites; the focused final
+  diagnostics plus telemetry run passes 40 tests (13 diagnostics). This includes
+  real concurrent process/thread Unicode rotation, exact cutoff/timezone/skew,
+  continuous active output, forced idle/restart pruning, actual daemon
+  maintenance before governance backoff, fresh read-only CLI discovery,
+  fail-open replacement/initialization and excluded arbitrary LogRecord extras.
+  Ruff F/E9, install-contract (13 plugins), documentation consistency and diff
+  whitespace checks pass. These are application-handler tests, not native
+  stdout/stderr framing or deployed service proof. Linux/macOS native lanes and
+  live external qualification are not available in this source-only Windows
+  scope; those gates remain open with the integration owner.
+- 2026-10-23 — Source PR #8415 review identified abandoned prune copies,
+  repeated full-history work and configured lifecycle routing discovery.
+  Corrections reclaim only strictly recognized component temporaries under the
+  same operation lock, cache validated unchanged-segment expiry information,
+  rewrite only expired segments and yield custody between files, and resolve
+  lifecycle locations through the actual routing-directory owner. Added restart,
+  scan/copy work-count, cache-invalidation and routing-override regressions.
+  Focused Windows diagnostics plus telemetry now pass 44 tests (17 diagnostics);
+  unchanged Bridge concurrent spool append proof passes all 7 tests from #8334.
+  No native capture, installer or live scope is promoted by these corrections.
+- 2026-10-23 — Follow-up review correctly identified synchronous history work on
+  coroutine logging. Emission now only appends/rolls the active file; existing
+  off-thread coordinator GC and the supervisor iteration exclusively own ongoing
+  history maintenance. The event-loop regression proves emission does no history
+  scan even when expired archives exist, and the real GC regression asserts
+  maintenance scans execute off the event-loop thread.
+- 2026-10-23 — Re-review's previously missed interrupted-tail case is also
+  addressed: check only the final byte while inspecting the active segment and
+  roll an unterminated file before appending. A restart regression preserves the
+  damaged archive byte-for-byte while proving the new event stays parseable.
+  This does not alter the separately owned telemetry append contract.
+- 2026-10-23 — Review identified the supported task-GC-disabled configuration.
+  The existing lifespan-owned maintenance loop now remains armed for diagnostics
+  in that mode, with a 60-second logging-only branch and no queue reconciliation.
+  The actual application lifespan regression proves aged records expire while
+  task GC remains disabled (zero liveness runs); shutdown retains the existing
+  loop cancellation owner. No separate logging scheduler or process is added.
+- 2026-10-23 — Final disabled-GC correction validation passes 282 native Windows
+  tests across diagnostics, coordinator, supervisor, loop governance and telemetry.
+  This preserves disabled task recovery, governance backoff and existing queue
+  behavior while qualifying quiet diagnostic maintenance. The diagnostic module
+  now has 20 cases, including the actual lifespan boundary.

@@ -36,6 +36,7 @@ placement is an explicit requirement; no option is a mandatory core dependency.
 | Deployment owner | Sequential adapter and fresh-environment proofs | Separate managed upstream worktree after plan review |
 | Runner loadout participant | Vision-first #7192 template, placement and declaration-to-managed-owner flow; existing release/lifecycle/authentication owners retained | Existing #7192 coordination and separate managed upstream worktree |
 | Trusted base-image participant | Bounded #8352 image recipe, contract, docs and tests; no controller or credential ownership | Separate managed upstream worktree; campaign owner integrates |
+| Diagnostic logging contributor | Bounded #8377 Dispatch application-handler, discovery and retention source slice; no installer/native capture or deployment ownership | Managed source worktree `spinning-sprocket` |
 | Adopter | Capacity, inventory, trust and live activation approval | Provider-specific downstream flow |
 
 ## Coordination
@@ -54,6 +55,11 @@ placement is an explicit requirement; no option is a mandatory core dependency.
   credentials, organization policy or downstream coordination links.
 - **Activation:** Reviewed upstream code is not permission to enroll a live fleet,
   acquire capacity, change operator credentials or move an existing service.
+- **Logging slice:** `spinning-sprocket` owns Dispatch application diagnostics,
+  local discovery and existing-owner idle maintenance under #8377. It does not
+  modify #8370's installer-attempt capture or #6812's progress formatter.
+  Native capture, Bridge/telemetry, controller/container mappings and actual
+  released/running qualification remain explicit integration acceptance.
 - **Trusted image slice:** #8352 owns the bounded
   [trusted harness container plan](trusted-harness-containers.md) under #6030.
   Its proposed `.devcontainer/trusted-harness-base/` reservation does not transfer
