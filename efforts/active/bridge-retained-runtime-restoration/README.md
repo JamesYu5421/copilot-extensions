@@ -4,7 +4,7 @@
 - **Repo:** copilot-extensions
 - **Branch(es):** proposal first, then sequential source PRs against `dev`
 - **Created:** 2026-10-23
-- **Status:** Active; DB foundation and provenance implementation merged; historical capture-owner qualification and inbox source remain open, full Phase 1 open
+- **Status:** Active; DB foundation, provenance implementation and historical capture qualification merged; inbox source in progress, full Phase 1 open
 - **Vision:** [State-aware rollback](../../../visions/plugin-services/README.md#state-aware-rollback), [canonical Bridge deployment](../../../visions/plugins/agent-bridge/README.md#one-canonical-deploy-path), [version-skew-safe contracts](../../../visions/plugins/agent-bridge/README.md#version-skew-safe-contract-evolution)
 - **Umbrella issue:** [#8063](https://github.com/ThomasMichon/copilot-extensions/issues/8063)
 - **Parent contract:** [Acknowledged Execution Handoff](../acknowledged-execution-handoff/README.md)
@@ -83,10 +83,11 @@ Unsupported predecessors or participants refuse honestly.
 Source implementation is authorized, with architecture acceptance and normal
 proposal review required before executing the widened protocol design. Local
 architecture acceptance and proposal review/landing are complete.
-The Integration owner assigned the first bounded Phase 1 DB epoch/producer
-association and strict-inventory foundation. Broader producer, SDK, native and
-installer wiring remain paused pending review and another specific source-slice
-assignment. Source authorization is
+The first bounded Phase 1 DB epoch/producer association and strict-inventory
+foundation merged in #8203. The Integration owner has assigned the next bounded
+internal DB inbox-admission/handoff slice. Actual authenticated producer/consumer
+enrollment, public poll/SDK integration, native and installer wiring remain
+separate source slices under this same contract. Source authorization is
 not permission for deployment, process stops, protected-owner operations,
 credential work or production capture. No private permission record or
 operational evidence is incorporated into this public effort.
@@ -123,6 +124,14 @@ require their own review and qualification.
       handoffs, wake/redrive and host/lifecycle mutations at their effect owners.
 - [ ] Preserve unresolved operations and refuse incomplete or legacy coverage;
       do not synthesize quiescence from an empty projection.
+
+### Phase 1a - Retain internal DB inbox handoffs
+- [x] Extend existing inbox rows with producer association, immutable original
+      handoff/consumer observations and a one-shot final-admission primitive.
+- [x] Retain distinct SDK acceptance/consumption/unknown outcomes through
+      registration cleanup, closure and restart; preserve legacy uncertainty.
+- [x] Validate the bounded owner methods and normal migration/passive adoption.
+      This slice does not close actual transport/SDK integration or Phase 1.
 
 ### Phase 2 - Reconcile custody and negotiate state compatibility
 - [ ] Settle or transfer accepted work under its original identity, including
@@ -193,9 +202,47 @@ The later [provenance layout](provenance-layout.md) cleared normal review in
 [#8420](https://github.com/ThomasMichon/copilot-extensions/pull/8420).
 The source-format implementation merged in
 [#8469](https://github.com/ThomasMichon/copilot-extensions/pull/8469);
-historical capture-owner closure and dependent-source qualification remain open.
+historical capture-owner qualification merged in
+[#8503](https://github.com/ThomasMichon/copilot-extensions/pull/8503).
+Dependent-source capture is complete; current evidence-head review remains open.
 
 ## Journal
+
+### 2026-10-23 - Capture the reconciled inbox source
+- Genuine committed source `c0b3a2a09a67d93c7ceb8d4cc936254ba2444beb`,
+  retained through managed publication before capture, completed the actual
+  HTTP-47 write and same-source no-write entrypoints. Both passed all 117
+  selected model-free cases and checked the complete interpreter/entrypoint
+  receipts before accepting 68 outputs.
+- The capture appends 67 HTTP records while retaining all 2,057 prior records
+  in exact order. The complete history now contains 2,073 HTTP records and
+  51 preference records. All five published chunks remain byte-identical;
+  the index is 323,955 bytes under the unchanged 1 MiB guard.
+- The canonical checker accepts both contracts and all 583 fixtures against
+  the reviewed base. Only current HTTP-47 packets and their registry bindings
+  change; older packets, generation and capability floors remain unchanged.
+- Review of the final evidence head and normal merge remain required.
+  This source capture does not qualify an installed receiver, native START,
+  actual SDK delivery, complete runtime custody or guarded restoration.
+
+### 2026-10-23 - Return to the inbox source with both complete histories
+- #8503 merged as `17bec8794444148b65e0b78f1279d51df6a5f30b` after
+  current-head Copilot approval, no open findings and green required checks.
+  The source effort was reread; full restoration remains Active.
+- Reconcile the same #8389 onto that reviewed source. Preserve both ordered
+  append-only provenance deltas after their genuine shared prefix: 2,006 HTTP
+  records plus 51 preference records. All five upstream chunks remain exact,
+  and the resulting index is 300,305 bytes under the unchanged guard.
+- The 68 current HTTP-47 packet conflicts differ only in source/closure/shared
+  capture bindings; their actual reviewed upstream bytes and hashes remain
+  paired. Original inbox captures remain in retained source history.
+  No pre-47 packet, capability floor or historical record is rewritten.
+- The reviewed producer/durability repair and final associated-control refusal
+  retain identical implementation/test/doc patches after integration. The
+  merged inbox/storage/adoption/receipt/recovery cohort passed 213 cases with
+  two unrelated collection skips and verified cleanup. A genuine
+  committed-source capture/no-write pair,
+  canonical checker and current-head review remain required before merge.
 
 ### 2026-10-23 - Qualify the historical HTTP-46 capture owner
 - The actual updated writer completed inline and chunked `--write`/no-write
@@ -212,7 +259,7 @@ historical capture-owner closure and dependent-source qualification remain open.
   preparation precedes network disconnection. The two collection-time skips
   are unrelated to the selected positive case; all four inner replays must
   pass without skipped cases.
-- Qualification helper review/merge remains open. Then return to the same
+- Qualification helper review/merge completed through #8503. Return to the same
   #8389 source integration for complete-history reconciliation, fresh source
   qualification and current-head review. Full custody, native START, release,
   installation and running adoption remain separate open gates.
@@ -292,6 +339,43 @@ historical capture-owner closure and dependent-source qualification remain open.
 - Record a bounded versioned-layout proposal and complete reader/writer and
   validation obligations before implementation. This plan does not alter
   runtime protocols, installation, active custody or operational permission.
+
+### 2026-10-23 - Repair reviewed producer and durability boundaries
+- Source review identified mixed-producer batch refusal, non-durable final
+  admission under WAL/NORMAL, keyed retry association mismatch and legacy
+  exposure before handoff. Each now has a focused regression.
+- Poll/final admission validates each original row's enrolled producer in the
+  current installation/epoch, independently of the polling frontend. Keyed
+  retries must match the original association, including legacy versus enrolled.
+- Associated rows stay out of legacy poll/ACK/consumption from insertion onward.
+  Custody and associated inbox insertion commit with connection-local FULL
+  synchronization before returning, then restore the previous setting. Normal
+  event/metadata writes retain their existing policy.
+- The affected isolated cohort passed 323 cases with two unrelated collection
+  skips, including normal/adopted commit-setting observations, rollback-policy
+  restoration and the original process-exit/race controls. Actual power-loss,
+  authenticated SDK and native platform qualification remain open.
+
+### 2026-10-23 - Assign the internal inbox custody owner slice
+- #8203 merged the bounded DB/storage foundation to `dev` as
+  `ca1602f0f9e4717fc3836bc164966ca44b900ed2`. Full Phase 1 remains open.
+- The Integration owner selected the existing DB inbox owner for the next
+  bounded source slice: original-row producer admission, retained consumer
+  handoff, one-shot final admission, separate outcome reports and history
+  retention. It refines the reviewed contract without widening operational
+  authority or adding a competing service, queue or operation ledger.
+- The current public poll returns bodies without durable handoff; the extension
+  sends and ACKs afterward, with in-memory interrupt replay. Those ordinary
+  paths are not switched to the internal primitives by this slice. Actual
+  authenticated consumer enrollment, negotiated transport/SDK integration,
+  native custody and installer qualification remain open.
+- Schema 30 and the DB owner methods passed the affected isolated development
+  cohort: 314 tests, with two unrelated collection skips. This includes an
+  independent child exiting after committed final admission, two-owner SQLite
+  ordering, registration cleanup and legacy/passive-adoption controls. The old
+  receipt migration fixture now starts from frozen pre-custody SQL instead of
+  dropping a column required by today's retention trigger. No production guard
+  was removed. These results are not actual SDK, Windows or live qualification.
 
 ### 2026-10-23 - Require prepared custody storage and finite host metadata
 - Schema 28 explicitly versions the required storage. The canonical writable
