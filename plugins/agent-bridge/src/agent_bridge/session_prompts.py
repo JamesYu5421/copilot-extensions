@@ -99,6 +99,9 @@ class _SessionPromptMixin:
             if no_resume:  # re-checked here: a stop may have landed since admission
                 raise SessionNotRunningError(
                     f"{SessionNotRunningError.code}: Session {session_id} has no running client")
+            from .hosting_policy import require_session_hosting
+
+            await require_session_hosting(self, session, operation="implicit resume")
             log.info(
                 "Session %s (%s) process is dead -- auto-%s",
                 session_id,
