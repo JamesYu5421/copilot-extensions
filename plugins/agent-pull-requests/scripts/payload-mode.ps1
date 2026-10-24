@@ -29,32 +29,62 @@ if ((Split-Path -Parent $stage) -eq $stageRoot) {
     }
     $entries = @(Get-ChildItem -LiteralPath $payload -Recurse -Force)
     $originalEntries = @(Get-ChildItem -LiteralPath $origin -Recurse -Force)
-    if ($entries.Count -ne $originalEntries.Count) { throw 'Staged installer payload differs from its origin' }
+    foreach ($entry in @($entries + $originalEntries)) {
+        if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'Staged installer payload contains a link or mismatched entry'
+        }
+    }
+    $completeCopy = $entries.Count -eq $originalEntries.Count
     foreach ($entry in $entries) {
         $relative = $entry.FullName.Substring($payload.Length + 1)
-        $original = Get-Item -LiteralPath (Join-Path $origin $relative) -Force
-        if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-            ($original.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-            $entry.PSIsContainer -ne $original.PSIsContainer) {
-            throw 'Staged installer payload contains a link or mismatched entry'
+        $original = Get-Item -LiteralPath (Join-Path $origin $relative) -Force -ErrorAction SilentlyContinue
+        if (-not $original -or $entry.PSIsContainer -ne $original.PSIsContainer) {
+            $completeCopy = $false
+            break
         }
         if (-not $entry.PSIsContainer -and
             (Get-FileHash -LiteralPath $entry.FullName -Algorithm SHA256).Hash -cne
             (Get-FileHash -LiteralPath $original.FullName -Algorithm SHA256).Hash) {
+            $completeCopy = $false
+            break
+        }
+    }
+    if (-not $completeCopy) {
+        # The canonical freezer excludes generated artifacts and empty directories.
+        $generated = @('.git', '.venv', '__pycache__', '.pytest_cache', '.ruff_cache',
+            'build', 'dist', 'node_modules')
+        $sourceFiles = @($originalEntries | Where-Object {
+            if ($_.PSIsContainer) { return $false }
+            $parts = $_.FullName.Substring($origin.Length + 1).Split('\')
+            for ($i = 0; $i -lt $parts.Length - 1; $i++) {
+                if ($parts[$i] -cin $generated -or $parts[$i].EndsWith('.egg-info') -or
+                    $parts[$i].EndsWith('.dist-info')) { return $false }
+            }
+            return -not $_.Name.EndsWith('.pyc') -and -not $_.Name.EndsWith('.pyo')
+        })
+        $stagedFiles = @($entries | Where-Object { -not $_.PSIsContainer })
+        if ($stagedFiles.Count -ne $sourceFiles.Count) {
             throw 'Staged installer payload differs from its origin'
+        }
+        foreach ($original in $sourceFiles) {
+            $relative = $original.FullName.Substring($origin.Length + 1)
+            $copy = Get-Item -LiteralPath (Join-Path $payload $relative) -Force -ErrorAction SilentlyContinue
+            if (-not $copy -or $copy.PSIsContainer -or
+                (Get-FileHash -LiteralPath $copy.FullName -Algorithm SHA256).Hash -cne
+                (Get-FileHash -LiteralPath $original.FullName -Algorithm SHA256).Hash) {
+                throw 'Staged installer payload differs from its origin'
+            }
         }
     }
     $payload = $origin
 }
-$hostExe = (Get-Process -Id $PID).Path
-$forward = @(
-    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
-    (Join-Path $PSScriptRoot 'installation-context\installation-context.ps1'),
-    'status', '-PayloadRoot', $payload, '-PluginId', 'agent-pull-requests',
-    '-LegacyRoot', $legacy
-)
+$helper = Join-Path $PSScriptRoot 'installation-context\installation-context.ps1'
+$forward = @{
+    Action = 'status'; PayloadRoot = $payload
+    PluginId = 'agent-pull-requests'; LegacyRoot = $legacy
+}
 if (-not (Get-Item -LiteralPath $legacy -Force -ErrorAction SilentlyContinue)) {
-    $forward += @('-LegacyProbeJson', '{"declared":true,"result":"absent","checkedAt":null}')
+    $forward.LegacyProbeJson = '{"declared":true,"result":"absent","checkedAt":null}'
 }
 if ($env:COPILOT_EXTENSIONS_CONTEXT) {
     $receipt = $env:COPILOT_EXTENSIONS_CONTEXT
@@ -65,12 +95,12 @@ if ($env:COPILOT_EXTENSIONS_CONTEXT) {
     }
     $durable = $receipt
     1..5 | ForEach-Object { $durable = Split-Path -Parent $durable }
-    $forward += @(
-        '-Context', $receipt, '-DurableHome', $durable,
-        '-ExpectedPluginId', 'agent-pull-requests', '-ExpectedPayloadRoot', $payload
-    )
+    $forward.Context = $receipt
+    $forward.DurableHome = $durable
+    $forward.ExpectedPluginId = 'agent-pull-requests'
+    $forward.ExpectedPayloadRoot = $payload
 }
-$raw = @(& $hostExe @forward)
+$raw = @(& $helper @forward)
 if ($LASTEXITCODE -ne 0) { throw 'Installation governance could not be resolved' }
 $status = ($raw -join "`n") | ConvertFrom-Json
 $legacyAllowed = (

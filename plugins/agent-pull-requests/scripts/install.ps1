@@ -311,14 +311,21 @@ function Invoke-VersionedActivate {
     Test-SourceRuntimeUnchanged
     if (-not $VersionedRuntime) { return $true }
     $vr = Join-Path $PSScriptRoot 'versioned_runtime.py'
-    $py = if (Test-Path $VenvPython) { $VenvPython } else { $LinkPython }
-    if (-not (Test-Path $py)) { return $true }
+    $py = $VenvPython
+    if (-not (Test-Path -LiteralPath $py -PathType Leaf)) {
+        Write-Fail "Candidate runtime interpreter is unavailable (versions/$SrcVersion) -- not activating"
+        return $false
+    }
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    & $VenvPython -c 'import agent_pull_requests' 2>$null
+    $nativeError = ''
+    [void](Invoke-Hidden -FilePath $VenvPython -ArgList @(
+        '-I', '-B', '-m', 'agent_pull_requests', '--help'
+    ) -ErrorOutput ([ref]$nativeError))
     $slotOk = ($LASTEXITCODE -eq 0)
     $ErrorActionPreference = $prevEAP
     if (-not $slotOk) {
+        Write-Fail "Isolated agent_pull_requests CLI health probe failed: $nativeError"
         Write-Fail "Fresh runtime slot failed its health gate (versions/$SrcVersion) -- not activating"
         return $false
     }

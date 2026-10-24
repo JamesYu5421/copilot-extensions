@@ -29,9 +29,47 @@ if [[ "$(dirname "$stage")" == "$stage_root" ]]; then
         done
     done
     links="$(find "$payload" "$origin" -type l -print)"
-    [[ -z "$links" ]] && diff -qr "$payload" "$origin" >/dev/null || {
+    [[ -z "$links" ]] || {
         printf '%s\n' 'Staged installer payload differs from its origin or contains links' >&2; exit 126;
     }
+    if ! diff -qr "$payload" "$origin" >/dev/null; then
+        # A frozen copy has exactly the canonical input files, without caches.
+        frozen_files() {
+            local code=0
+            if [[ "$2" == source ]]; then
+                find "$1" -type d \( -name .git -o -name .venv -o -name __pycache__ \
+                    -o -name .pytest_cache -o -name .ruff_cache -o -name build \
+                    -o -name dist -o -name node_modules -o -name '*.egg-info' \
+                    -o -name '*.dist-info' \) -prune -o -type f \
+                    ! -name '*.pyc' ! -name '*.pyo' -print0 || code=$?
+            else
+                find "$1" -type f -print0 || code=$?
+            fi
+            printf '%s\0' "$code"
+        }
+        compare_frozen_files() {
+            local file relative expected=0 actual=0 complete=0
+            while IFS= read -r -d '' file; do
+                if [[ "$file" == 0 ]]; then complete=1; continue; fi
+                [[ "$complete" == 0 && "$file" == "$origin/"* ]] || return 1
+                relative="${file#"$origin/"}"
+                [[ -f "$payload/$relative" ]] &&
+                    diff -q "$payload/$relative" "$file" >/dev/null || return 1
+                expected=$((expected + 1))
+            done < <(frozen_files "$origin" source)
+            [[ "$complete" == 1 ]] || return 1
+            complete=0
+            while IFS= read -r -d '' file; do
+                if [[ "$file" == 0 ]]; then complete=1; continue; fi
+                [[ "$complete" == 0 && "$file" == "$payload/"* ]] || return 1
+                actual=$((actual + 1))
+            done < <(frozen_files "$payload" staged)
+            [[ "$complete" == 1 && "$actual" == "$expected" ]]
+        }
+        compare_frozen_files || {
+            printf '%s\n' 'Staged installer payload differs from its origin' >&2; exit 126;
+        }
+    fi
     payload="$origin"
 fi
 forward=(status --payload-root "$payload" --plugin-id agent-pull-requests --legacy-root "$legacy")

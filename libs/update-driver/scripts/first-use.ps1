@@ -38,18 +38,36 @@ foreach ($path in @($Payload, $RuntimeRoot)) {
         throw 'Execution root must be separate from owning payload and installation.'
     }
 }
-if ($env:AGENT_VAULT_NO_SELFPROVISION -or (Test-Path Env:AGENT_VAULT_PINNED_CONTEXT)) {
-    throw 'Owning plugin first-use provisioning is disabled for this invocation.'
-}
 $invocation = [IO.File]::ReadAllText((Join-Path $Payload 'payload-invocation.json')) | ConvertFrom-Json
 $identity = [IO.File]::ReadAllText((Join-Path $Payload 'plugin.json')) | ConvertFrom-Json
+$plugin = $identity.name
+switch -CaseSensitive ($plugin) {
+    'agent-vault' { $prefix = 'AGENT_VAULT' }
+    'agent-pull-requests' { $prefix = 'AGENT_PULL_REQUESTS' }
+    default { throw 'Owning payload does not declare the fixed first-use provision recipe.' }
+}
+if ($plugin -ceq 'agent-pull-requests' -and (
+    [IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($Payload)) -ine
+        (Join-Path $env:USERPROFILE '.copilot\installed-plugins') -or
+    $RuntimeRoot -ine (Join-Path $env:USERPROFILE '.agent-pull-requests'))) {
+    throw 'Pull Requests first use requires its canonical installed payload and legacy root.'
+}
+if ($ServiceMode -ceq 'client-only' -and $plugin -cne 'agent-vault') {
+    throw 'Client-only selection is unsupported by the owning installer.'
+}
+$noSelf = $prefix + '_NO_SELFPROVISION'
+if ([Environment]::GetEnvironmentVariable($noSelf) -or
+    ($plugin -ceq 'agent-pull-requests' -and (Test-Path ("Env:" + $noSelf))) -or
+    (Test-Path ("Env:" + $prefix + '_PINNED_CONTEXT'))) {
+    throw 'Owning plugin first-use provisioning is disabled for this invocation.'
+}
 $installer = if ($null -eq $invocation.PSObject.Properties['installer']) {
     'install'
 } else { $invocation.installer }
 $recipe = @{
     schema = 'copilot-extensions.payload-invocation'
-    command = 'agent-vault'
-    noSelfProvisionEnv = 'AGENT_VAULT_NO_SELFPROVISION'
+    command = $plugin
+    noSelfProvisionEnv = $noSelf
     provisionMode = 'direct'
     installationContext = 'required'
 }
@@ -59,7 +77,7 @@ foreach ($field in $recipe.GetEnumerator()) {
         throw 'Owning payload does not declare the fixed first-use provision recipe.'
     }
 }
-if ($identity.name -isnot [string] -or $identity.name -cne 'agent-vault' -or
+if ($identity.name -isnot [string] -or
     ($invocation.version -isnot [int] -and $invocation.version -isnot [long]) -or
     $invocation.version -ne 2 -or $installer -isnot [string] -or $installer -cne 'install') {
     throw 'Owning payload does not declare the fixed first-use provision recipe.'
@@ -70,11 +88,11 @@ $previousPayload = $env:COPILOT_PLUGIN_ROOT
 try {
     $env:COPILOT_PLUGIN_ROOT = $Payload
     $document = @(& $modeRunner -Action probe-plugin-publication `
-        -PayloadRoot $Payload -PluginId agent-vault -LegacyRoot $RuntimeRoot -ProjectRoot $Project)
+        -PayloadRoot $Payload -PluginId $plugin -LegacyRoot $RuntimeRoot -ProjectRoot $Project)
     $code = $LASTEXITCODE
     if ($code -ne 0) { throw 'Owning installation refused first-use publication.' }
     $sourceDocument = @(& $modeRunner -Action resolve `
-        -PayloadRoot $Payload -PluginId agent-vault -ProjectRoot $Project)
+        -PayloadRoot $Payload -PluginId $plugin -ProjectRoot $Project)
     if ($LASTEXITCODE -ne 0) { throw 'Owning payload provenance could not be resolved.' }
 } finally {
     if ($null -eq $previousPayload) {
