@@ -1846,6 +1846,59 @@ and retains timestamped Bridge diagnostics and operation-label-only stage
 timing, without writing provider stdin or task credentials into the stage log.
 All diagnostics remain inside the unchanged test and subprocess deadlines.
 
+### Consented Windows elevation (Agent Conduct Guidance)
+
+`tools/run-plugin-tests.py agent-conduct-guidance --test-file tests/test_windows_elevation.py`
+covers exact terminal IDs, incomplete/stale/success-shaped failure refusal,
+actual stdout/stderr, argument quoting, native exit codes, script drift and
+owned-Job deadlines. Broker failure controls replace `Start-Process`, so this
+selection never requests UAC or registers a task.
+
+On a quiescent, active same-user Windows desktop, set
+`AGENT_CONDUCT_TEST_INTERACTIVE_ELEVATION=1` and select
+`tests/test_windows_elevation_scheduler.py` through that same runner. Its two
+bounded cycles use private directories, real limited interactive tasks and the
+harmless probe. They observe visible console windows and foreground transitions,
+require matching `probe` receipts and verify exact task cleanup. They never
+request UAC and do not qualify administrator execution.
+Window qualification first requires the baseline and watcher thread to match
+the worker's recorded session, window station and desktop. An unbound observer
+explicitly reports both window and focus observation unavailable; a nonempty
+`EnumWindows` result alone is not qualification for the selected desktop.
+The watcher takes its first snapshot before signaling readiness and propagates
+startup or later observation failures to the test. Its three synthetic observer
+controls run without desktop opt-in; empty or truncated observations cannot pass.
+Foreground qualification additionally requires a non-null observable foreground window.
+A headless caller can enumerate visible windows yet receive a null foreground
+even when the operator confirms an unlocked desktop. Such a run emits an
+explicit unavailable-observation warning: it does not prove zero focus changes.
+Use an observer with access to the interactive foreground or obtain a literal
+operator witness of the two harmless cycles before claiming that dimension.
+The native fixture allows thirty seconds for queued consent admission, gives
+its real child PowerShell ten seconds and bounds the complete command at
+twenty-five seconds. A five-second fixture child bound expired in the
+combined native run; the separate two-second owned-Job deadline
+control and production defaults remain unchanged. Failure diagnostics retain
+the log tail rather than hiding the last completed stage behind a reader timeout.
+Discovery controls exclude access-denied/unmapped foreign entries while still
+requiring positive SID ownership, and preserve unexpected errors. Identity
+preflight tests use token elevation type (including linked limited tokens),
+not the filtered group list, and reject unsupported alternate-account elevation
+before staging or consent.
+The worker contract selection also verifies an actual write/replacement denial
+between hashing and execution, separate admission expiry while execution time
+remains, and retained process-handle proof that long-lived descendants die on
+leftover detection and on forced worker exit. These controls are non-elevating
+and do not request a UAC dialog.
+
+Actual administrator qualification remains an explicitly approved, on-demand
+invocation of the skill's harmless `assets/probe.ps1` with `-ConsentConfirmed`,
+a fresh private log and the selected interactive desktop. Require its actual
+elevated-token output and matching successful terminal marker; do not count a
+limited `probe` result, scheduler result or canceled dialog as that proof.
+No ordinary test/CI path prompts a human, changes UAC policy, stores a password,
+registers a highest-privilege task or reboots.
+
 ### Native Agent Machines lifecycle boundaries
 
 `tools/run-plugin-tests.py agent-machines --test-file tests/test_registry_native.py`
