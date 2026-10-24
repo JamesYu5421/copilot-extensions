@@ -830,6 +830,7 @@ def _retain_uv_install(
             find["where"] = [relative]
             setuptools["package-dir"] = {"": relative}
             _write_toml(Path(_native_retained_path(manifest)), data)
+            _configuration.retain_editable_metadata(mirror(project), error_type=DependencyPolicyError)
         for path in files:
             destination = mirror(path)
             Path(_native_retained_path(destination.parent)).mkdir(parents=True, exist_ok=True)
