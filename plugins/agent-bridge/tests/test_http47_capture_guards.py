@@ -28,7 +28,7 @@ def fixture_git(root: Path, *args: str) -> str:
 
 def test_http47_registry_encoding_is_lossless_and_bounded() -> None:
     registry = json.loads((ROOT / evidence.REGISTRY).read_bytes())
-    compact = evidence.encode(registry, indent=1)
+    compact = evidence.encode(registry, indent=None)
     assert json.loads(compact) == registry
     assert len(compact) <= 1024 * 1024
     assert len(compact) < len(evidence.encode(registry))
@@ -127,6 +127,23 @@ def output_bytes(root: Path) -> dict[str, bytes | None]:
     }
 
 
+def test_http47_generated_registry_is_lossless_and_bounded(
+    repository: tuple[Path, str],
+) -> None:
+    root, commit = repository
+    original = evidence.baseline(root, commit)
+    proof = evidence.source_snapshot(root, commit, original)
+    outputs = evidence.build_outputs(
+        root, commit, original, proof, capture.expected_input(root)["expected"],
+    )
+    data = outputs[evidence.REGISTRY]
+    assert len(data) <= 1024 * 1024
+    generated = json.loads(data)
+    for before, after in zip(original["contracts"], generated["contracts"], strict=True):
+        assert after["provenance"][:len(before["provenance"])] == before["provenance"]
+    assert generated["deferred_contracts"] == original["deferred_contracts"]
+
+
 @pytest.mark.parametrize("fault", ["none", "dirty", "unregistered", "foreign"])
 def test_http47_capture_semantic_upgrade_requires_registered_same_source(
     repository: tuple[Path, str], fault: str,
@@ -202,7 +219,7 @@ def test_http47_capture_reproducible_real_commit_preserves_history(repository, m
     calls = stub_transport(monkeypatch)
     outputs = capture.capture(root, commit, write=True)
     registry = json.loads(outputs[evidence.REGISTRY])
-    assert outputs[evidence.REGISTRY] == evidence.encode(registry, indent=1)
+    assert outputs[evidence.REGISTRY] == evidence.encode(registry, indent=None)
     after = public_hashes(root)
     for path, sha in before.items():
         if path not in outputs:
