@@ -48,6 +48,10 @@ The ``agent-worktrees`` prefix is stripped for SSH compatibility
 
 from __future__ import annotations
 
+if __name__ == "__main__":
+    from .current_roster_entry import run_module_if_selected
+    run_module_if_selected()
+
 import argparse
 import contextlib
 import dataclasses
@@ -97,7 +101,7 @@ from . import (
     permissions as permissions,
     pr_config,
     pr_ops,
-    procs as procs,
+    procs as _procs_module,
     profile_assignment,
     prune,
     reciprocal_presentation,
@@ -106,6 +110,8 @@ from . import (
     sessions_pane_retire,  # noqa: F401 -- compatibility re-export (handoff_cutover.py tests patch m.sessions_pane_retire)
     terminal_identity, tracking, tracking_lifecycle,
 )
+procs = _procs_module
+
 from . import claimant as claimant_mod
 from . import config as cfg
 from . import finalize as fin
@@ -6718,16 +6724,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def console_entry() -> None:
-    """Entry point for both the ``python -m agent_worktrees`` guard below and
-    the installed ``agent-worktrees`` console script (`pyproject.toml`'s
-    ``[project.scripts]``) -- the generated script wrapper calls this
-    directly, bypassing the ``__main__`` guard, so routing both through here
-    is required for the shutdown-crash workaround to cover the installed
-    command too.
-    """
-    from ._shutdown_exit import run_and_exit
-
-    run_and_exit(main)
+    """Compatibility entry retaining the root's late-bound main callable."""
+    from .current_roster_entry import run_legacy_console
+    run_legacy_console(main)
 
 
 def __getattr__(name: str):
