@@ -65,11 +65,17 @@ def test_actual_manager_to_selected_engine_reads_without_mutation(tmp_path, monk
         # Put execution and the independently joined native observation beyond page one.
         for index in range(100):
             identity = f"{index:032x}"
+            events = [
+                {"at": "2026-10-24T00:00:00+00:00", "phase": "resolution-requested", "details": {}},
+            ]
+            if index == 0:
+                events.append({
+                    "at": "2026-10-24T00:00:01+00:00", "phase": "unknown",
+                    "details": {"exit_code": 2},
+                })
             (folder / (identity + ".json")).write_text(json.dumps({
                 "schema": "worktree-launch-resolution", "version": 1,
-                "attempt_id": attempt, "operation_id": identity, "events": [
-                    {"at": "2026-10-24T00:00:00+00:00", "phase": "resolution-requested", "details": {}},
-                ],
+                "attempt_id": attempt, "operation_id": identity, "events": events,
             }), encoding="utf-8")
         epoch = {
             "platform": "linux", "environment_id": "e" * 32,
@@ -80,14 +86,70 @@ def test_actual_manager_to_selected_engine_reads_without_mutation(tmp_path, monk
         (folder / (operation + ".execution.json")).write_text(json.dumps({
             "schema": "worktree-launch-execution", "version": 2,
             "attempt_id": attempt, "operation_id": operation, "resolution_id": resolution,
-            "parent_id": None, "worktree_id": "example-worktree", "creation_nonce": "nonce",
+            "parent_id": "f" * 32, "worktree_id": "example-worktree", "creation_nonce": "nonce",
             "native_epoch": epoch, "events": [
                 {"at": "2026-10-24T00:00:00+00:00", "phase": "execution-requested", "details": {}},
                 {"at": "2026-10-24T00:00:01+00:00", "phase": "process-spawned", "details": {
                     "pid": 42, "process_start_time": "100", "boundary": "backend-command",
                 }},
+                {"at": "2026-10-24T00:00:03+00:00", "phase": "execution-returned", "details": {
+                    "exit_code": 3, "process_exit_code": 0, "receipt_uncertain": False,
+                }},
             ],
         }), encoding="utf-8")
+        (folder / ("f" * 32 + ".execution.json")).write_text(json.dumps({
+            "schema": "worktree-launch-execution", "version": 1,
+            "attempt_id": attempt, "operation_id": "f" * 32, "resolution_id": resolution,
+            "parent_id": None, "worktree_id": "example-worktree", "creation_nonce": "nonce",
+            "events": [
+                {"at": "2026-10-24T00:00:00+00:00", "phase": "execution-requested", "details": {}},
+                {"at": "2026-10-24T00:00:01+00:00", "phase": "process-spawned", "details": {
+                    "pid": 41, "process_start_time": None, "boundary": "launcher-command",
+                }},
+                {"at": "2026-10-24T00:00:04+00:00", "phase": "execution-returned", "details": {
+                    "exit_code": 0, "process_exit_code": 0, "receipt_uncertain": False,
+                }},
+            ],
+        }), encoding="utf-8")
+        fault_script = textwrap.dedent("""
+            import json, os, subprocess, sys
+            from pathlib import Path
+            from types import SimpleNamespace
+            from agent_worktrees import launch_execution as execution, launch_seed_state
+            directory, attempt, resolution = sys.argv[1:]
+            execution.tracking.load_record = lambda path: SimpleNamespace(
+                worktree_id="example-worktree", creation_nonce="nonce")
+            execution.uuid4 = lambda: SimpleNamespace(hex="e" * 32)
+            execution._epoch = lambda: None
+            def dispatch(verb, args, **kwargs):
+                assert verb == "launch_attempt_execution"
+                if args["phase"] == "seed-claimed":
+                    raise OSError("synthetic earlier receipt failure")
+                return execution._apply(args)
+            launch_seed_state._dispatch = dispatch
+            def work(owner):
+                owner.observed("seed-claimed", seed_id="1" * 32, handoff_id="2" * 32)
+                flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+                child = subprocess.Popen([sys.executable, "-c", "pass"], **flags)
+                try:
+                    owner.spawned(child.pid, invoke=True)
+                finally:
+                    owner.process_exit_code = child.wait(timeout=15)
+                return owner.process_exit_code
+            result = execution.run(Path(directory) / "example-worktree.json",
+                                   execution.Correlation(attempt, resolution), work)
+            print(json.dumps({"actual_wrapper_exit": result}))
+        """)
+        fault_result = subprocess.run(
+            [*engine[:1], "-c", fault_script, str(folder.parent.parent), attempt, resolution],
+            cwd=anchor, env=environment, capture_output=True, text=True,
+            check=True, timeout=30, **flags,
+        )
+        assert json.loads(fault_result.stdout) == {"actual_wrapper_exit": 3}
+        fault_receipt = json.loads((folder / ("e" * 32 + ".execution.json")).read_text(encoding="utf-8"))
+        assert fault_receipt["events"][-1]["details"] == {
+            "exit_code": 0, "process_exit_code": 0, "receipt_uncertain": True,
+        }
         # Derive the source identity with the actual selected engine, not a copied algorithm.
         identity_script = (
             "import json; from agent_worktrees import native_source_context as n; "
@@ -137,13 +199,34 @@ def test_actual_manager_to_selected_engine_reads_without_mutation(tmp_path, monk
     assert report["engine"]["status"] == "read"
     if summary:
         assert report["engine"]["pages_read"] == 2
-        assert report["engine"]["receipts_read"] == 103
+        assert report["engine"]["receipts_read"] == 105
         assert report["summary"]["boundaries"]["allocation"]["status"] == "unknown"
         assert report["summary"]["boundaries"]["backend_start"]["evidence"][0]["operation_id"] == operation
         assert report["summary"]["boundaries"]["native_session"]["evidence"][0]["native_session_id"] == session
         assert report["summary"]["observation"] == "non-atomic"
         assert report["summary"]["errors"] == []
-        print(f"summary source read: receipts=103 pages=2 elapsed_seconds={elapsed:.6f}")
+        owners = report["summary"]["owner_observations"]
+        assert len(owners["resolution"]) == 101
+        assert owners["resolution"][0]["terminal_phase"] == "unknown"
+        assert owners["resolution"][0]["recorded_exit_code"] == 2
+        assert owners["resolution"][0]["wrapper_exit_code"] is None
+        assert owners["resolution"][-1]["terminal_phase"] is None
+        assert len(owners["execution"]) == 3
+        assert owners["execution"][0]["parent_id"] == "f" * 32
+        assert owners["execution"][0]["recorded_exit_code"] == 3
+        assert owners["execution"][0]["wrapper_exit_code"] is None
+        assert owners["execution"][0]["process_exit_code"] == 0
+        assert owners["execution"][0]["receipt_uncertain"] is False
+        assert owners["execution"][1]["recorded_exit_code"] == 0
+        assert owners["execution"][1]["process_exit_code"] == 0
+        assert owners["execution"][1]["receipt_uncertain"] is True
+        assert owners["execution"][1]["wrapper_exit_code"] is None
+        assert owners["execution"][1]["parent_id"] is None
+        assert owners["execution"][2]["recorded_exit_code"] == 0
+        assert owners["execution"][2]["receipt_uncertain"] is False
+        assert owners["execution"][2]["wrapper_exit_code"] is None
+        assert owners["admission"] == []
+        print(f"summary source read: receipts=105 pages=2 elapsed_seconds={elapsed:.6f}")
     else:
         assert report["engine"]["receipts"][0]["operation_id"] == operation
         assert report["engine"]["receipts"][0]["evidence"]["events"][0]["phase"] == "resolution-requested"

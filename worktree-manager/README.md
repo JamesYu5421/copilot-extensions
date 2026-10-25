@@ -1157,6 +1157,25 @@ does not prove handoff, and a returned plan does not prove allocation. Multiple
 operations are not collapsed into one winning launch or conversation. The
 Manager-only `--outcome` filter retains its existing meaning.
 
+`summary.owner_observations` adds separate `resolution`, `execution` and
+`admission` lists from those same existing receipts. Each resolver/execution
+operation keeps its last observed phase and timestamp. `terminal_phase: null`
+means no terminal was read; the literal `unknown` phase preserves an owner's
+explicit uncertainty, not proof of a crash. Resolver `plan-ready`, `forwarded`
+and `remote-admission-returned` phases are resolver observations only.
+`recorded_exit_code` is the result recorded inside that owner, not proof of the
+wrapper's final return. `wrapper_exit_code` stays `null`: later persistence,
+output or receipt failures can still change the wrapper's actual exit.
+Execution `process_exit_code` and `receipt_uncertain` remain separate, including
+a zero child/recorded result followed by an actual wrapper return of 3 after an
+earlier receipt-write failure. Execution records retain parent and resolution
+identities, never letting a parent observation overwrite a child outcome.
+Admission observations retain only the existing creation/acceptance flags:
+neither incomplete creation nor missing acceptance proves refusal or failure.
+Repeated unchanged admissions are deduplicated; changed observations remain
+visible with a non-atomic-source diagnostic. No overall success/failure or
+prompt-acceptance verdict is synthesized from these lists.
+
 The projection labels its observations **non-atomic**, leaves absent boundaries
 `unknown`, and never claims snapshot completeness, current liveness, safe replay,
 or allocated-but-not-launched based on a missing event. A later-page failure
@@ -1183,9 +1202,14 @@ Set `WORKTREE_MANAGER_TEST_ENGINE_ARGV` to a JSON array naming a prepared
 candidate engine interpreter/entry command. The lane runs the real Manager
 entry and engine CLI against isolated synthetic intent, checking metadata and
 explicit input in separate cases and verifying unchanged fixture state.
-Its summary cases additionally cross two real engine pages (103 receipts),
+Its summary cases additionally cross two real engine pages (105 receipts),
 including a backend spawn and the engine's native-session join beyond page
-one, while preserving unknown allocation and prompt acceptance. They print
+one, while preserving unknown allocation and prompt acceptance. They also
+preserve separate parent/child recorded results, unknown final wrapper exits,
+explicit resolver uncertainty and missing resolver terminals. A fault-injected
+actual execution owner runs a real child, fails an earlier receipt write,
+successfully writes the terminal with zero recorded/child exits and uncertainty,
+then returns 3; the reader must not call its final wrapper exit zero. They print
 source-read elapsed time, not a performance-budget verdict.
 It is not a required-unit-CI matrix, a latency qualification, installed
 Copilot acceptance or permission to provision a runtime.
