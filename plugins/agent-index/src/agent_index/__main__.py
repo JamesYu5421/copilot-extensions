@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from agent_procutil.daemon_instances import DaemonInstanceSpec, daemon_entrypoint
+
 import argparse
 import contextlib
 import io
@@ -15,12 +17,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from agent_procutil import (
-    no_window_kwargs,
-    spawn_daemon,
-    windowless_python,
-    windowless_python_env,
-)
+from agent_procutil import no_window_kwargs, spawn_daemon, windowless_python, windowless_python_env
 import httpx
 
 from . import http_auth
@@ -591,6 +588,7 @@ def _config_from_args(args: argparse.Namespace) -> Config:
     return Config(host=host, port=cfg.port if port is None else int(port))
 
 
+@daemon_entrypoint("agent-index", source=__file__, purpose="production")
 def serve(cfg: Config | None = None, *, passive: bool = False) -> None:
     """Lazily import and delegate to the real ``.server.serve``.
 
@@ -1383,7 +1381,7 @@ def cmd_deploy(args: argparse.Namespace) -> int:
             windowless_python(python), "-I", "-X", "utf8", "-m", "agent_index",
             start_command, "--host", cfg.host, "--port", str(port), "--passive",
         ]
-        root = install_dir().resolve()
+        root = Path(os.path.abspath(install_dir()))
         root.mkdir(parents=True, exist_ok=True)
         env = {k: v for k, v in os.environ.items() if k not in {"PYTHONPATH", "PYTHONHOME"}}
         overrides = dict(windowless_python_env(python))
@@ -1393,6 +1391,7 @@ def cmd_deploy(args: argparse.Namespace) -> int:
             overrides["AGENT_INDEX_LOG_LEVEL"] = "warning"
         handle = spawn_daemon(
             cmd, cwd=root, log_path=root / "service-stdio.log", env=env, env_overrides=overrides,
+            instance=DaemonInstanceSpec("agent-index", root, Path(__file__).resolve()),
             display=f"agent_index {start_command} --passive --port {port}",
         )
         passive_instance.update({"port": port, "pid": handle.pid})

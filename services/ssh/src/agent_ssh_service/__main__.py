@@ -1,6 +1,7 @@
 """The SSH service's internal foreground container/host entry point."""
 
 import argparse
+import os
 from pathlib import Path
 import sys
 
@@ -8,16 +9,22 @@ from . import __version__
 
 
 async def _foreground(config) -> int:
+    from agent_procutil.daemon_instances import admit_daemon_instance
+
     from .hosting import UnsettledRelay, run
 
-    try:
-        await run(config)
-        return 0
-    except UnsettledRelay as unsettled:
-        print("agent-ssh-service: native-relay-cleanup-unconfirmed; "
-              "foreground custody and writer lease retained", file=sys.stderr)
-        await unsettled.settle()
-        return 1
+    with admit_daemon_instance(
+        "agent-ssh-service", source=__file__, purpose="production",
+        runtime_root=Path(os.path.abspath(config.to_dict()["data_dir"])),
+    ):
+        try:
+            await run(config)
+            return 0
+        except UnsettledRelay as unsettled:
+            print("agent-ssh-service: native-relay-cleanup-unconfirmed; "
+                  "foreground custody and writer lease retained", file=sys.stderr)
+            await unsettled.settle()
+            return 1
 
 
 def main(argv=None) -> int:

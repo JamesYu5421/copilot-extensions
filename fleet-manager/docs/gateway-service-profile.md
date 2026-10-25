@@ -67,6 +67,10 @@ registration retires an agent lease or authorizes replacing an incumbent release
 
 ## Bootstrap and coherent live policy
 
+CLI and embedded startup bind the policy to its lexical absolute selection.
+Initial loading, later reloads and instance admission use that same path;
+normalizing parent components cannot make the reader follow a different tree.
+
 Listener configuration is strict bounded JSON with schema
 `fleet-manager.gateway-service-listener`, version `1`, stable `fleet`/`gateway`
 identifiers, `host`, `port`, `origin`, `certificate`, `key` and `remote`.
@@ -86,6 +90,12 @@ private-origin restrictions and the separate application-authentication boundary
 
 SDK tests may call `await start(Listener(...), policy_path)` with port zero;
 the returned handle supplies the actual origin, app and asynchronous `close()`.
+Embedded and app-runner startup acquire instance attribution before background
+reload or listener work. Production has no lease expiry; explicit test-owner
+contexts retain their test lease. Await `close()` to join complete cleanup:
+concurrent callers share one shielded cleanup task, and cancelling a waiter
+does not release admission while cleanup is still running. Nested CLI/app
+admission borrows the existing process record rather than creating a duplicate.
 Foreground CLI serving requires an explicitly selected nonzero port.
 Changing bootstrap/listener settings requires a controlled runtime change;
 ordinary service policy reload does not.

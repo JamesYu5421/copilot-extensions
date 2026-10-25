@@ -31,6 +31,8 @@ re-spawn) and surfaced for a human, which is the safe default.
 
 from __future__ import annotations
 
+from agent_procutil.daemon_instances import daemon_entrypoint
+
 import hashlib
 import json
 import logging
@@ -3770,6 +3772,7 @@ class Supervisor(RestrictedStartupMixin, TerminalStartupMixin):
         self._sync_event_subscriptions()
         return spawned
 
+    @daemon_entrypoint("agent-dispatch-lane", source=__file__, purpose="production")
     def serve(
         self,
         *,
@@ -3781,6 +3784,7 @@ class Supervisor(RestrictedStartupMixin, TerminalStartupMixin):
         Push delivery changes latency only; the timeout always preserves ordinary
         fixed-interval reconciliation as the correctness floor.
         """
+        event_wake = self.event_wake
         try:
             while True:
                 boundary = self._recheck_governance("iteration-boundary")
@@ -3809,5 +3813,5 @@ class Supervisor(RestrictedStartupMixin, TerminalStartupMixin):
                 except KeyboardInterrupt:
                     return
         finally:
-            if self.event_wake is not None:
-                self.event_wake.close()
+            if event_wake is not None:
+                event_wake.close_and_wait()
