@@ -337,6 +337,36 @@ integer and macOS `seconds:microseconds` birth identities. The native
 companion-lifecycle node above exercises that same lock through concurrent
 creation recovery and launch, rather than replacing it with a test double.
 
+## Optional Bridge selected-source snapshots
+
+The manual `installation-context-full.yml` portfolio `bridge-snapshots` qualifies
+Bridge's source-qualified selected legacy snapshot for the fixed `provision`
+recipe on native Windows and Ubuntu. It uses the actual clean-source
+materializer and Bridge stamp, removes the installed publisher/source checkout,
+then exercises Python-free admission, caller loss, ordinary queue results and
+installed CLI/module/distribution consumers. Same-package source generations
+remain distinct; failed candidates preserve the previous completed selection.
+Separate bounded runner roots cover admission/freeze refusal matrices, native
+construction, installed-source recipe regressions, shared Logger behavior and
+canonical-installed-only bootstrap publication. A native launch acknowledgement
+is not durable request acceptance.
+The portfolio also runs canonical source-preparation regressions and native
+daemon wait-status controls, preserving the same job and per-run resource bounds.
+
+Linux fixtures explicitly construct the disposable-daemon native support with
+its canonical build helper before cold admission. The synthetic source commit
+includes that support before source materialization and identity publication;
+no launcher compiles code or mutates an accepted source assembly.
+The Python-free Bridge construction PATH retains the platform C compiler,
+assembler and linker for the source package's explicit native build; it still
+exposes no host Python or UV. This is not compiler-free host qualification.
+Acknowledged owners and foundation/queue/kernel custody settle before fixture
+cleanup, including failure paths. Registration/start effects alone use isolated
+synthetic adapters; no host task/unit or live bridge is launched. This portfolio
+does not adopt ordinary command publishers, unreceipted copies, explicit
+installers, cells/custom roots or macOS. Exhaustive native qualification stays
+manual, outside required PR CI.
+
 ## Optional Bridge bootstrap adoption
 
 The manual `installation-context-full.yml` portfolio `bridge-bootstrap` qualifies
@@ -3345,6 +3375,8 @@ Explicit out-of-plugin targets use the same bounded runner and admission lease:
 `worktree-manager` selects that product's tests, `payload-invocation` selects
 `libs/payload-invocation/tests`, and `runtime-source` selects the source
 preparation/identity/native-consumer contracts in `libs/versioned-runtime/tests`.
+`agent-procutil` selects the shared process primitives in
+`libs/agent-procutil/tests`, including explicit native daemon wait-status controls.
 `--all` remains scoped to plugin suites.
 
 Manager's cold canonical-adopter acceptance has an explicit native lane:

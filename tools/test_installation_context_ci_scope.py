@@ -605,6 +605,56 @@ def test_ssh_recipes_use_explicit_bounded_native_portfolio() -> None:
         ]
 
 
+def test_bridge_snapshots_use_explicit_bounded_native_portfolio() -> None:
+    workflow = yaml.safe_load(
+        (HERE.parent / ".github/workflows/installation-context-full.yml").read_text()
+    )
+    trigger = workflow.get("on", workflow.get(True))
+    assert "bridge-snapshots" in trigger["workflow_dispatch"]["inputs"]["portfolio"]["options"]
+    for name, runner, opt_in in (
+        ("bridge-snapshots-linux", "ubuntu-latest", "UPDATE_DRIVER_NATIVE_LINUX_GENESIS"),
+        ("bridge-snapshots-windows", "windows-latest", "UPDATE_DRIVER_NATIVE_FOUNDATION_GENESIS"),
+    ):
+        job = workflow["jobs"][name]
+        assert job["if"] == (
+            "github.event_name == 'workflow_dispatch' && inputs.portfolio == 'bridge-snapshots'"
+        )
+        assert job["runs-on"] == runner and job["timeout-minutes"] == 35
+        assert job["env"][opt_in] == "1" and not job.get("continue-on-error")
+        checkout = next(step for step in job["steps"] if step.get("uses") == "actions/checkout@v4")
+        assert checkout["with"]["persist-credentials"] is False
+        bootstrap = next(step for step in job["steps"]
+                         if step.get("name") == "Preserve canonical-installed-only bootstrap publication")
+        assert bootstrap["env"]["UPDATE_DRIVER_BRIDGE_BOOTSTRAP_ACCEPTANCE"] == "1"
+        assert [step["run"].split() for step in job["steps"] if "run" in step] == [
+            ["python", "tools/run-plugin-tests.py", "update-driver",
+             "--test-file", "tests/test_first_use_bridge_snapshot.py",
+             "-k", '"not', 'actual"', "--test-timeout", "90", "--timeout", "600"],
+            ["python", "tools/run-plugin-tests.py", "update-driver",
+             "--test-file", "tests/test_first_use_bridge_snapshot.py",
+             "-k", '"actual', "and", "not", 'actual_stamp"', "--test-timeout", "900", "--timeout", "1080"],
+            ["python", "tools/run-plugin-tests.py", "runtime-source",
+             "--test-file", "tests/test_prepare_runtime_source.py",
+             "--test-file", "tests/test_source_snapshot_publication.py",
+             "--test-timeout", "120", "--timeout", "600"],
+            ["python", "tools/run-plugin-tests.py", "agent-procutil",
+             "--test-file", "tests/test_native_daemon_shell.py",
+             "-k", "waitable", "--test-timeout", "90", "--timeout", "180"],
+            ["python", "tools/run-plugin-tests.py", "update-driver",
+             "--test-file", "tests/test_first_use_bridge_snapshot.py",
+             "-k", "actual_stamp", "--test-timeout", "900", "--timeout", "1080"],
+            ["python", "tools/run-plugin-tests.py", "update-driver",
+             "--test-file", "tests/test_first_use_bridge.py",
+             "-k", '"not', 'native_caller_loss"', "--test-timeout", "900", "--timeout", "900"],
+            ["python", "tools/run-plugin-tests.py", "update-driver",
+             "--test-file", "tests/test_first_use_logger_snapshot.py",
+             "-k", '"not', 'actual"', "--test-timeout", "90", "--timeout", "600"],
+            ["python", "tools/run-plugin-tests.py", "agent-bridge",
+             "--test-file", "tests/test_bootstrap_driver.py",
+             "--test-timeout", "60", "--timeout", "180"],
+        ]
+
+
 def test_bridge_recipes_use_explicit_bounded_native_portfolio() -> None:
     workflow = yaml.safe_load(
         (HERE.parent / ".github/workflows/installation-context-full.yml").read_text()
