@@ -58,6 +58,18 @@ bytes and capture identity, and retain offline, unsafe-index and insecure-TLS
 refusals without an HTTP request. This qualifies the shared capture mechanism,
 not admission-tool installation, normal-consumer enablement or a live feed.
 
+`tools/test_runtime_profile_bootstrap.py` also runs runtime source-policy and
+actual wheel inspection in a fresh isolated Python process with the Manager
+installer, promotion and publisher modules explicitly refused. Pure owner
+controls preserve the single semantic inspector, byte/metadata refusals and
+promotion's additional first-party source check. These are narrow import and
+validation contracts, not complete toolkit packaging or admitted-tooling
+consumer qualification.
+Manager inventory/update fixtures select the shared configuration root through
+`WORKTREE_MANAGER_ROOT`, not an attribute patch on the installer re-export.
+The unsupported-source case reads that actual policy before forbidding engine
+submission, retaining the refusal contract across configuration-owner changes.
+
 `tools/test_runtime_source_reuse.py` covers bounded persisted evidence admission,
 changed current selections, missing completed receipts, source/receipt corruption, current digest denials
 and consume-time invalidation. Nonordinary selected slots, including dangling
