@@ -1382,9 +1382,9 @@ bootstrap's Python adapter applies the same Dev qualification before constructin
 Manager, using only its own declared process helper and trusted preparer under
 an isolated base interpreter. A supplied prepared Manager payload is validated
 and retained exactly rather than resolving Dev again. Recovery-only and adopted
-recovery entries do not acquire another Manager source. Service-source
-bootstrap/repair still refuses before Manager installation; qualifying Manager
-does not authorize an engine update from a different source.
+recovery entries do not acquire another Manager source. Qualifying Manager
+does not select the engine's build source; the independent service-source
+repair contract below owns that choice.
 
 `worktree-manager update` owns the update run's telemetry: it records the
 self-update as the `manager_self_update` phase, exports the run identity to the
@@ -1468,9 +1468,27 @@ The engine remains authoritative for complete portfolio admission, native
 installation, retries and outcomes; no alternate installer or recurring worker
 is introduced. Marketplace plugin-content refresh remains independent.
 
-Bootstrap/repair and targeted service-runtime updates still refuse a
-non-marketplace policy **before their installation/repair effects**. They are
-not source-aware recovery entry points yet. A targeted Manager self-update
+Fresh suite repair can also honor that independent policy when the installed
+engine cannot provide inventory yet. It acquires one service-source selection,
+holds its lease through repair and the subsequent suite, and prepares the engine
+through the executing Manager's trusted toolkit. The fresh publication SDK
+revalidates the incumbent registered command owner and default runtime root;
+the prepared native installer supplies code, not a new owner or data root.
+Repair uses the installer's existing runtime-only update mode, enforces the
+complete transaction pin and requires the actual pinned slot and deployment
+receipt to be complete. A corrupt completion marker or failed installed-health
+check for an existing source generation enters the engine's canonical distinct
+`repair` mode, preserving the damaged generation. An already selected healthy
+repair with the same complete source identity is reused; the source pin still
+names the original source assembly, not a different commit.
+The repaired engine then supplies real inventory, and
+the suite prepares all eligible runtimes from the same original commit/tree
+without fetching a moving branch again. Manager's own source remains independent.
+This is legacy/default-root repair; namespaced source repair refuses before
+native payload refresh.
+
+Non-repair bootstrap updates and targeted service-runtime updates still refuse a
+non-marketplace policy before their effects. A targeted Manager self-update
 continues to follow its independent `[source]` policy. `reset` explicitly
 restores ordinary marketplace runtime delivery. Invalid bootstrap arguments
 retain their existing failure scope without opening aggregate update telemetry.
