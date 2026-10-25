@@ -18,7 +18,9 @@ from worktree_manager import self_install as si
 from worktree_manager import source_config
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_manager_runtime_install import SOURCE, _environment, _prepare_constructed, _run
+from test_manager_runtime_install import (
+    SOURCE, _environment, _prepare_command, _prepare_constructed, _run,
+)
 
 
 def _repository(directory, env):
@@ -62,7 +64,7 @@ def _prepare_source_repair(directory, constructed):
     source = si._runtime_installer().runtime_source
     config = root / "config.toml"
     config.write_text('[runtime_source]\nchannel = "main"\nrepo = "https://example.invalid/service.git"\n')
-    source_config.set_source(repo=str(repo), ref="dev", root=root)
+    source_config.set_source(repo=os.path.relpath(repo, directory), ref="dev", root=root)
     database = root / "continuity.sqlite"
     with sqlite3.connect(database) as connection:
         connection.executescript(
@@ -74,6 +76,7 @@ def _prepare_source_repair(directory, constructed):
     commands = {path: path.read_bytes()
                 for path in (Path(env["USERPROFILE"]) / ".local" / "bin").glob("worktree-manager*")}
     with pytest.MonkeyPatch.context() as patch:
+        patch.chdir(directory)
         for name in ("HOME", "USERPROFILE", "AGENT_WORKTREES_CONTROL_PLANE_PROVIDERS_DIR"):
             patch.setenv(name, env[name])
         # No alternate data-root override: both installed interpreters resolve
@@ -92,8 +95,13 @@ def _prepare_source_repair(directory, constructed):
         assert (payload / "source-fixture.txt").read_text() == "Merged development acquisition witness\n"
         target = si.version_slot(identity.runtime_version, root)
         assert si.current_version(root) == Path(constructed["target"]).name
-        selected = si.self_update(root=root, dry_run=False)
-        assert selected.action == "updated" and si.current_version(root) == target.name, selected
+        selected = _prepare_command([
+            Path(getattr(sys, "_base_executable", sys.executable)), "-I", "-S", "-B",
+            str(SOURCE / "scripts/runtime_install.py"),
+            "--root", os.path.relpath(root, directory), "--payload", str(SOURCE), "--", "--version",
+        ], env, directory)
+        assert selected.returncode == 0, selected.stdout + selected.stderr
+        assert si.current_version(root) == target.name
         initial = si.self_update(root=root, dry_run=True)
         assert initial.action == "already-current", initial
         python = si._runtime_installer().runtime.slot_python(root, target.name)
@@ -123,6 +131,21 @@ def _prepare_source_repair(directory, constructed):
         (checkout / "untracked-refusal.txt").write_text("Acquisition must refuse this dirty checkout\n")
         refused = si.self_update(root=root, dry_run=True)
         assert refused.action == "error" and "untracked or ignored" in refused.reason, refused
+        assert si.current_version(root) == repair.name
+        bootstrap_refused = _prepare_command([
+            Path(getattr(sys, "_base_executable", sys.executable)), "-I", "-S", "-B",
+            str(SOURCE / "scripts/runtime_install.py"),
+            "--root", str(root), "--payload", str(SOURCE), "--", "--version",
+        ], env, directory)
+        assert bootstrap_refused.returncode == 1, bootstrap_refused.stdout + bootstrap_refused.stderr
+        assert "untracked or ignored" in bootstrap_refused.stderr
+        assert si.current_version(root) == repair.name
+        exact = _prepare_command([
+            Path(getattr(sys, "_base_executable", sys.executable)), "-I", "-S", "-B",
+            str(SOURCE / "scripts/runtime_install.py"),
+            "--root", str(root), "--payload", str(payload), "--", "--version",
+        ], env, directory)
+        assert exact.returncode == 0, exact.stdout + exact.stderr
         assert si.current_version(root) == repair.name
         plan = si.self_install(payload, root=root, dry_run=True)
         assert plan.action == "already-current" and plan.marker == repair.name, plan
