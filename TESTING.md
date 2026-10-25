@@ -888,6 +888,32 @@ The Windows lane remains control-plane-only and explicitly skips Linux-native
 cases. These tests do not qualify a built native container image, normal Fleet
 placement, provider/Vault admission or a preserving production migration.
 
+The same suite covers optional explicit peer approval: fresh/restarted pending
+state, exact public fingerprints, authenticated active approvers, self/stale/
+unauthorized refusal, distinct confirmed recovery and original-decision retries.
+Its real TLS/JWT/DPoP test starts the installed CLI with three synthetic caller
+identities, proves that pending enrollment cannot notify/admit, and restarts
+that owner against retained state. The Gateway fixture follows real time for
+that native restart instead of weakening proof freshness around a frozen unit
+clock. SDK tests additionally prove old/missing support and policy rollback
+refuse before a required-policy request can admit anything. These remain
+contained standalone/explicit-lane tests, not additions to required unit CI.
+The maximum-binding regressions assert the actual 32 KiB response boundary:
+compact original decisions remain retrievable as the directory grows,
+oversized response construction refuses, capacity failure rolls back the whole
+decision transaction, and every long-identifier candidate remains reachable
+through byte-bounded pending pages.
+The exact-limit short-principal control exercises a 32,769-byte terminal
+response through the actual client/service route, then proves both cursor
+representations are budgeted and every candidate remains reachable.
+Native restart consumers share the Gateway fixture's realtime clock. Invalid
+local writer scopes also refuse before credential-runtime imports, with the
+installed CLI's existing fifteen-second refusal deadline unchanged.
+Policy-round-trip controls also prove that a retained observation is durable,
+stable across later directory growth, and remains readable as superseded after
+a generation change. New identical request aliases preserve the original
+candidate decision; a withdrawn status caller cannot commit receipt repair.
+
 ## Optional diagnostic telemetry
 
 Manager's `tests/test_launch_update_requests.py` native lane checks the user-local

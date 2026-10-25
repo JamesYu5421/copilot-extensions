@@ -388,8 +388,9 @@ The selected policy is **`explicit-peer-approval`**. The detailed decomposition
 in the [peer-approval plan](peer-approval.md) is agent-recommended realization,
 not installation, credential or live-adoption authority.
 
-- [ ] Review the #8888 vision/contract amendment before implementation.
-- [ ] Implement optional exact-fingerprint peer admission and separate explicit
+- [x] Review the #8888 vision/contract amendment before implementation:
+  #8894 merged at `1fcf4f5f16926762e3a85ef799f55eaf02aeb81a`.
+- [x] Implement optional exact-fingerprint peer admission and separate explicit
   bootstrap/recovery in the existing SSH service, preserving its automatic
   configured-binding baseline when the policy is absent.
 - [ ] Qualify the actual client/Gateway/store contract, restart, original-request
@@ -464,6 +465,74 @@ takeover or implementation completion is asserted.
   acquire/rotate keys, renew a provider, change sshd, deploy or retire a
   predecessor. General node hosting and the broader Plan/Validation items stay
   open; release/artifact selection and actual adoption require their owners.
+
+### 2026-10-25 - Explicit peer-approval source
+
+- #8894 merged the scoped intent and plan after approval and required checks.
+  The selected policy extends the existing service; automatic configured-binding
+  admission remains the absent-policy baseline.
+- Implemented durable pending public candidates, exact authenticated peer
+  decisions, separately configured confirmed recovery, and the supported
+  runtime-selected client contract. The original store owns activation,
+  historical decisions, generation checks and original-request recovery.
+- The native Windows contained suite passed 116 tests with six explicit
+  Linux-only skips. Real TLS/JWT/DPoP and the installed CLI's retained-state
+  restart are exercised with synthetic identities. All five installed changed
+  source bodies match the candidate. Linux native/disposable
+  qualification and implementation review/publication remain outstanding.
+- No live installation, credential access, provider/setup takeover or
+  production migration is included. Broader integration and live adoption
+  remain with #6681 and its retained owners.
+- Review of #8917 found that an embedded near-limit directory could strand
+  committed outcomes and a maximum-size pending list could exceed its frame.
+  The new unreleased receipt now retains the decision's original directory
+  revision instead of embedding the global catalog, and checks its complete
+  encoded size before commit. Pending inspection uses byte-bounded `after` /
+  `next` pages without dropping candidates or reducing the binding limit.
+- The review-corrected Windows suite passed 120 tests with six explicit skips;
+  four focused wire-limit/transaction controls and the installed CLI's signed
+  paging/restart control also passed. All five changed installed source bodies
+  match the candidate. The earlier exact-head Linux/Windows run
+  [40176923839](https://github.com/ThomasMichon/copilot-extensions/actions/runs/40176923839)
+  passed on `a8e7d19df91f7b8fed0e05541803996d0b83ac6a`; these corrections still
+  require fresh current-head review, required CI and native qualification.
+- The next review identified a retained outcome synthesized after a policy
+  round trip without persisting its decision. Observation now repairs that
+  receipt transactionally, reuses the original decision for equivalent request
+  aliases, and rolls back if the observing request is withdrawn.
+- The rebuilt Windows suite passes 127 tests with six Linux-only skips,
+  including four retained-history controls and real-process metadata controls.
+  The offline distribution check also passes with its unchanged ten-second
+  CLI deadline; metadata parsing no longer imports runtime-only dependencies.
+  All six installed changed production modules match the candidate and Ruff
+  passes. The preceding head passed both hosted native jobs in run
+  [40182383847](https://github.com/ThomasMichon/copilot-extensions/actions/runs/40182383847);
+  this corrected head still requires fresh review, CI and native qualification.
+- Review of the next head found an intrinsically invalid inbound candidate
+  could be journaled without its required host pin. Validation now refuses
+  that candidate before recording its request, and likewise refuses a relay
+  key identical to its own client key. Corrected original-ID retries remain
+  usable in both modes; outbound-only clients may still omit host pins.
+  The host-pin controls first reproduced the defect against the preceding
+  installed wheel. The rebuilt final Windows suite passes 133 tests with six
+  Linux-only skips; Ruff passes. The preceding head passed both native jobs
+  in run [40187342145](https://github.com/ThomasMichon/copilot-extensions/actions/runs/40187342145).
+  Fresh current-head review and qualification remain required before merge.
+- The rebased review found a one-byte terminal-page edge: `null` can exceed a
+  one-character continuation cursor. The regression reproduces an actual
+  32,769-byte terminal response against the 32,768-byte transport bound through
+  the client/service path. Page construction now budgets both representations.
+- Qualification of the newly merged Fleet consumer also exposed its frozen
+  Gateway clock versus a restarted realtime CLI. Both native restart fixtures
+  now share the existing realtime-clock helper. Invalid local writer scopes
+  refuse before credential-runtime imports; an import guard reproduces and
+  protects that ordering without changing the CLI's fifteen-second deadline.
+- All 55 focused enrollment regressions pass against the rebuilt provider,
+  including the exact transport boundary. The latest local whole-suite run
+  passed 139 cases with six Linux-only skips but hit four native startup
+  deadlines while aggregate host CPU remained at 100%, including an unchanged
+  foreground-custody fixture. No timeout or authentication allowance was raised.
+  Fresh pinned Linux/Windows whole-suite qualification remains a merge gate.
 
 ### 2026-10-16 - Intake and current boundary
 
