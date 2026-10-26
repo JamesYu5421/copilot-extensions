@@ -2,7 +2,7 @@
 
 Parent: [Dev/Main Release Pipeline](README.md#phase-9e---source-coherent-release-implementations).
 Tracker: #8983. Participant: Release implementation coherence contributor.
-Status: Proposed; implementation and Main activation require review.
+Status: Active; plan #9054 merged, implementation and Main activation open.
 
 ## Operator direction and bounded ownership
 
@@ -89,17 +89,18 @@ expression while leaving incompatible call sites.
 
 ## Plan
 
-- [ ] Reconcile this proposal with the existing source/control owners and
+- [x] Reconcile this proposal with the existing source/control owners and
       obtain independent review. Resolve any concrete source-authority or
-      privilege-boundary defect before execution.
-- [ ] Implement source-coherent helper selection in the ordinary Dev workflow
+      privilege-boundary defect before execution: #9054,
+      `c4868a1bbaab3f822aacc3a2b57d5ad5417a9851`.
+- [x] Implement source-coherent helper selection in the ordinary Dev workflow
       proposal. Retain and prove the existing privileged-job qualification
       prerequisites rather than adding redundant gates. Keep Main bootstrap
       code tied to its exact executing snapshot.
-- [ ] Bind the privileged helper closure and executable build inputs to
+- [x] Bind the privileged helper closure and executable build inputs to
       qualification, enroll missing helper decision-rule coverage and reject
       uncovered/unbound additions before privileged execution.
-- [ ] Add bounded PR-time compatibility checks against the actual Main control
+- [x] Add bounded PR-time compatibility checks against the actual Main control
       contract. Exercise the known missing complete-source input and
       producer/verifier disagreement before publication, not for the first time
       in release. Preserve the positive unit/effect/coverage and time budgets;
@@ -151,6 +152,58 @@ expression while leaving incompatible call sites.
 
 ## Journal
 
+- 2026-10-26: Hosted review follow-up closes non-tools and already-visited
+  file-loader decision enrollment, narrows native `exec` admission to its exact
+  declared-input site, and refuses captured helper calls beside valid calls.
+  All 2,352 admitted cases passed in 26.381 seconds without unit effects.
+  Prepared-controller/publication controls passed 70 cases and 222 subtests.
+  Main remains the explicit legacy generation pending the independent bootstrap;
+  source qualification is not activation or release completion.
+- 2026-10-26: Hosted follow-up now checks actual Main against Main's own helper
+  inventory, including commands absent from the source proposal. Lexical loader
+  provenance refuses dynamic import aliases and shadowing. Source-contract tests
+  use recorded Dev while explicit Main inputs remain unsubstituted. The complete
+  2,330-case packet passed in 28.618 seconds with the compatibility CLI itself
+  positively covered; source/explicit-controller regressions passed 101 cases.
+  The single-workflow Main bootstrap is prepared locally, not activated.
+- 2026-10-26: The next hosted review follow-up restricts migration warnings to
+  the explicit legacy pin generation, makes active source-coherent interface
+  mismatches fail, and checks each direct/indirect helper invocation separately.
+  File-spec loads now contribute qualified repository edges or fail explicitly;
+  the unchanged Windows retention actor retains only its exact private boundary.
+  All 2,270 admitted cases passed in 29.149 seconds, including 79 helper-source
+  inputs and 119 coverage targets. Prepared-controller/publication regressions
+  passed 94 cases and 222 subtests. Main bootstrap and release/rollout remain open.
+- 2026-10-26: Hosted review follow-up now derives qualification roots from
+  controller-discovered commands, including development and preserved Main
+  recipes, and requires actual executable function-body hits rather than
+  import-phase line attribution. Added a real import-inside-test refusal,
+  new-command enrollment refusals, generated-Main source-recipe replay and an
+  explicit obsolete-helper selection witness. All 2,041 admitted cases passed
+  in 23.517 seconds; the focused helper/materializer/controller cohort passed
+  328 cases. Main activation, publication and rollout remain open.
+- 2026-10-26: Architecture follow-up closed structural dynamic-input coverage,
+  synchronized executable-copy origins and conditional CLI compatibility gaps.
+  Runtime publication validation and controller checking now share the same
+  mode-input declarations; legacy index behavior remains unchanged. The
+  resulting 2,032-case packet passed in 25.769 seconds, and the complete prepared
+  controller/publication regressions passed separately. Main activation and
+  real release/rollout remain open.
+- 2026-10-26: Implemented source-coherent workflow selection and qualification
+  of the 73-source release-helper closure. The admitted 2,029-case packet
+  passed with zero actor effects or skips in 24.096 seconds, including actual
+  helper decision-call coverage and hash-bound native compiler input. Prepared
+  controller and publication/merge boundary regressions passed separately.
+  The compatibility guard correctly reports current Main as incompatible
+  because it lacks complete-source construction. Dev review, the independent
+  Main workflow bootstrap, actual signed release and local rollout remain open.
+- 2026-10-26: Plan #9054 merged after current-head approval and required CI.
+  Existing source-coherent Dev helpers built all fifteen bundles for the frozen
+  source and a separate fresh validator accepted the complete artifact set,
+  including Containers resources and procutil native bindings. This is
+  construction/source-binding evidence only; Main authority, signed publication,
+  release merge and local rollout remain open. Qualification must still close
+  the privileged helper coverage/import-closure contract before activation.
 - 2026-10-26: Operator redirected bounded recovery from recurring helper
   backports/pin updates to durable source/controller coherence. #9050 is merged
   only into its isolated helper review branch. Main activation, release

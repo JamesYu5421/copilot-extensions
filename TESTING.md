@@ -1653,6 +1653,47 @@ The runner rejects process, network, native-loader,
 Git-storage, thread and sleep effects, including attempted effects caught by a
 test. Test writes are confined to synthetic temporary storage.
 
+Release-helper qualification additionally resolves the canonical repository
+import closure from controller-discovered commands and registered executable
+build inputs. Candidate verification includes both the preserved Main control
+and its development recipe. Every release-tool decision module must be enrolled
+and have positive test-call hits inside executable decision-function bodies;
+hash binding, module initialization or import-only coverage cannot substitute.
+The native C source
+is an explicitly admitted data input, including source-bound materialized
+copies, never a selected unit or Python coverage target.
+`test_release_helper_contract.py`, `test_release_helper_decisions.py` and
+`test_release_build_admission.py` under `tools/promotion_unit_tests/` exercise
+the admission, reuse, materialization, resource and native verification rules.
+Compiler, Git transport and setuptools superclass actors are substituted only
+at their boundaries. These tests do not qualify real compiler/native execution.
+
+`tools/test_release_controller_contract.py` uses the recorded development
+proposal for source-contract tests, even inside generated Main with an
+independently preserved controller. Its explicit-path tests never substitute
+that source recipe for the supplied Main control. It checks
+immutable Main/bootstrap and admitted-source/helper selection, the existing
+signer qualification dependency, required CLI inputs and complete-source
+producer/attestor/publisher ordering. The PR-time compatibility guard reports
+live Main separately from prepared compatibility; a source-only pass does not
+activate independently owned Main controls. Warning-only migration applies
+only to the explicit legacy pinned-helper controller. An already source-coherent
+Main that lacks a required input fails before a source merge.
+Invocation regressions isolate repeated calls and exclude inputs mentioned only
+by comments or unrelated commands; the current indirect promoter is tested with
+its own base argument array, not the composition step's arguments.
+The command-line compatibility regression also supplies a helper used only by
+Main, proving that active Main is checked against its own implementation
+inventory. File-loader regressions retain imported-alias provenance through
+lexical scopes and shadowing; a renamed dynamic import is not qualification.
+File-loaded decision bodies outside `tools/` also require positive call
+coverage, including bodies visited before their dynamic edge is discovered.
+The native build `exec` exception admits only its exact source-bound load site
+and declared input bindings; an additional executable load is not exempt.
+Captured helper calls are refused rather than silently borrowing a later
+invocation's arguments. Literal helper-path assignments and the supported
+runpy heredoc trampoline remain distinct supported forms.
+
 Use the bounded test supervisor around:
 
 ```text
