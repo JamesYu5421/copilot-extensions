@@ -26,6 +26,88 @@ requiring explicit `[stdio-mcp]` opt-in on either role (absent from base and hos
 That means the old "Phase 1 service shell only" description is stale. Future
 work still exists, but indexing and retrieval are present in the shipped code.
 
+## Incremental connector and reuse contracts
+
+An in-process connector may opt into `DeltaSourceConnector.discover_delta()`,
+returning a version-1 `SourceDelta` with changed `FileEntry` values, explicit
+`DeletedFile` tombstones, its target checkpoint and complete-acquisition status.
+The engine validates the result and canonical source family before writes.
+Incomplete/incompatible deltas fail the source; they are not converted into
+an empty success or inferred whole-corpus deletion.
+
+This path does not call `current_commit()`, `list_paths()` or read all stored
+paths: the connector owns coherent base-to-target coverage. Full reindexing and
+legacy connectors retain the snapshot/discovery path, with stored-path
+reconciliation limited to the connector's exact canonical family in either
+storage layout. The opt-in Python
+protocol does not change the external provider CLI wire format; provider
+capability negotiation and durable event/task payloads remain separate work.
+
+Presented files use bounded, exact checkpoint lookups. A normal round reuses
+only complete file fingerprints covering text, language, metadata, chunker
+policy and configured embedding profiles. `IndexConfig.chunker_revision` and
+`ModelProfile.revision` are explicit programmatic invalidation inputs; a chunker
+or model change that preserves its name must advance the corresponding revision.
+Legacy content-only fingerprints deliberately miss once when a file is next
+presented. Full reindexing still forces work, while its retries can reuse
+compatible writes committed within the task window.
+
+Existing file reuse is revoked before mutations begin, including forced rewrites
+at an unchanged fingerprint. Each file checkpoint is published only after all
+its content/vector writes and stale-chunk cleanup succeed. Chunking and deletion
+failures retain the source cursor for
+idempotent replay; legacy vector deletion precedes content deletion so retry can
+still discover canonical chunk IDs. Transactional SQLite triggers maintain
+per-source chunk totals as file checkpoints change, including deletions and
+replayed batches. Existing path databases receive a one-time aggregate backfill;
+ordinary rounds read only these source totals, not unchanged file rows.
+
+Before mutating a nonempty acquired delta, the engine journals its complete
+manifest and target in the existing path-index SQLite database. A retry first
+finishes that pinned acquisition, atomically publishes and flushes the existing
+JSON source cursor, then clears the journal and acquires fresh changes. This
+prevents a newer net delta from omitting an item partially written by an
+interrupted older delta (for example, a file changed and then reverted).
+Source/account configuration changes refuse replay rather than applying old
+work under a new scope. The same constructed connector supplies both acquisition
+and its canonical/effective recovery identity: delta connectors declare a
+nonsecret `recovery_identity` tuple. Built-in Git binds the resolved checkout,
+remote target and selected ref, including environment/registry resolution;
+GitHub binds the actual HTTP client's API/repository target, configured initial
+window and authenticated account ID (one cached `/user` metadata probe, so user
+token renewal preserves identity). Installation tokens cannot call `/user`;
+after verifying `/installation/repositories`, their recovery scope conservatively
+binds an opaque credential fingerprint. GitHub exposes no installation ID through
+that token's identity API, so a rotated installation token refuses an existing
+journal rather than guessing that repository ownership proves the same principal.
+Complete pending crawls before rotation; no token bytes are persisted or logged.
+Authentication failures never become anonymous identity. Azure DevOps binds its effective
+HTTP-client endpoint, authenticated account and resolved work-item/pull-request queries.
+Expected permission-only `/user` denials do not incur retry backoff; quota,
+secondary-rate-limit and transient failures retain bounded HTTP retries.
+Legacy CLI providers bind their registered command. Providers remain responsible
+for stable backend identity.
+Credential-bearing URL components are excluded, except SSH usernames remain
+part of the target because they select remote home directories.
+Ambiguous query/fragment target
+semantics refuse recovery rather than silently selecting an identity.
+The journal is not another checkpoint authority.
+Another crawl alias cannot acquire or mutate an overlapping canonical family
+(including ancestor/descendant scopes) while acquired
+work remains pending. Source garbage collection also defers before deletion or
+cursor retirement and reports the pending sources as failures. Restore the
+original source configuration and complete its pending crawl before retiring
+or retargeting it; deleting the journal is not a supported recovery path.
+Pending work must finish through a journal-capable engine before rolling back
+to an older engine; old runtimes do not implement this recovery contract.
+
+Engine readiness is deferred until the first nonempty embedding batch; an empty
+delta or wholly reused file set does not start embedding engines. Reused files
+are excluded from timestamp-based stale cleanup. Metadata/model changes are
+currently conservative whole-file invalidations: selective chunk/model reuse,
+coverage backfill and metadata-only vector preservation remain subsequent
+slices, not guarantees of the file-level checkpoint path.
+
 ## Process model
 
 ```mermaid

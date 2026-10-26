@@ -9,7 +9,7 @@ visions:
 - **Repo:** copilot-extensions
 - **Branch(es):** independent, dependency-ordered PRs against `dev`
 - **Created:** 2026-10-25
-- **Status:** Draft
+- **Status:** Active
 - **Vision:** [agent-index](../../../visions/plugins/agent-index/README.md) -
   good-citizen ingestion and an engine consumers extend without forking
 - **Umbrella issue:** [#9023](https://github.com/ThomasMichon/copilot-extensions/issues/9023)
@@ -44,9 +44,9 @@ shared mechanisms instead of maintaining a second indexing pipeline.
   was authorized to edit runtime code or operate a service.
 - **Handoff:** findings integrate into [audit.md](audit.md); future implementers
   claim a named slice before editing.
-- **Admission:** this change authorizes investigation and a reviewed plan only.
-  Implementation and consumer rollout require subsequent admission. A merged
-  proposal is not evidence that any optimization has shipped.
+- **Admission:** implementation was admitted after the proposal merged.
+  Consumer rollout retains its separate confirmation gate. A merged proposal
+  is not evidence that any optimization has shipped.
 
 ## Context
 
@@ -78,6 +78,10 @@ The phased mechanisms and quantitative acceptance criteria below are
 **agent-recommended implementation proposals**, not claims that the operator
 specified each API or authorized execution.
 
+After the reviewed proposal, the operator admitted execution:
+
+> Drive the work
+
 ## Plan
 
 ### Phase 0 - Audit and reviewed proposal
@@ -86,7 +90,7 @@ specified each API or authorized execution.
 - [x] Audit independent engine, intake and storage/maintenance tracks.
 - [x] Author the canonical proposal with explicit consumer ownership and
   operation-count acceptance criteria.
-- [ ] Obtain implementation admission; retain Draft status until then.
+- [x] Obtain implementation admission ("Drive the work", 2026-10-25).
 
 ### Phase 1 - Shared delta and compatibility contracts
 
@@ -95,7 +99,7 @@ specified each API or authorized execution.
   provider metadata revisions and snapshot-completeness evidence.
 - [ ] Distinguish event deltas, bounded polling and complete reconciliation.
   Incomplete/truncated pages must never authorize deletion of unseen items.
-- [ ] Specify lossless queued unions and trailing deltas for changes received
+- [x] Specify lossless queued unions and trailing deltas for changes received
   during active work. Preserve existing full-task sequencing guarantees.
 - [ ] Design external-provider capability/version negotiation and staged
   producer/consumer compatibility using the existing contract-evolution policy.
@@ -197,3 +201,30 @@ source-owner coordination rather than one large rewrite.
   queued-full sequencing/incremental-FTS suites (22 passed), using bounded test
   supervision. These prove current behavior and retained protections, not
   completion of the proposed optimizations.
+
+### 2026-10-25 - Execution admitted
+
+- The operator admitted execution after proposal #9024 merged. Claimed the
+  shared implementation slices on #9023; existing correctness owners and
+  separate consumer rollout gates remain unchanged.
+- Begin with a versioned complete-delta seam and normal-round no-op reuse,
+  using operation-count regressions before expanding acquisition and storage.
+- Implemented the first opt-in Python delta seam, bounded file-checkpoint
+  lookups, conservative normal-round reuse and lazy engine readiness.
+  Targeted delta/reuse/source-family/worker/lifecycle tests pass (56 passed,
+  1 existing skip), including 100/10,000/100,000-row fixtures. Task/event
+  payloads, external-provider negotiation, per-chunk/model reuse and
+  maintenance generations remain open; this is not end-to-end completion.
+
+### 2026-10-25 - Durable hint receiver merged
+
+- Merged #9046 as `507bd27ff` after current-head Copilot approval, green CI
+  and an independent 63-test queue/domain/sequencing/worker selection.
+- Version-1 acquisition hints now preserve exact source/family/account scope,
+  changed identities, distinct ref ranges, event IDs and metadata revisions.
+  Queued unions are lossless and processing work retains a separate trailing
+  row. SQLite fences keep hinted rows invisible to legacy dequeue code,
+  including after an older retry/release operation.
+- This is receiver-first expansion only. Worker/HTTP/CLI capability migration
+  and connector consumption remain the next intake stretch; the queue merge
+  does not enable hinted execution or complete Phase 1.
