@@ -32,6 +32,8 @@ from agent_procutil import (
 )
 
 from agent_index.indexing.task_store import TERMINAL, TaskStatus
+from agent_index.indexing.change_hints_contract import WORKER_HINT_REFUSAL, current_execution_versions
+from agent_index.runtime_version import current_runtime_version
 
 if TYPE_CHECKING:
     from agent_index.indexing.task_store import TaskRecord, TaskStore
@@ -333,6 +335,7 @@ class TaskRunner:
         self._monitors: dict[str, asyncio.Task[None]] = {}
         self._worker_locks: dict[str, Any] = {}
         self._cancel_requested: set[str] = set()
+        self._hint_worker_refusal: tuple[str, str] | None = None
         self._governance_helper = _load_governance_module()
         self._governance_baseline: dict[str, Any] | None = None
         self._governance_state: dict[str, Any] | None = None
@@ -538,6 +541,15 @@ class TaskRunner:
 
     # ── Worker loop ──────────────────────────────────────────
 
+    def _selected_worker_generation(self) -> tuple[str, str]:
+        return os.path.abspath(sys.executable), current_runtime_version()
+
+    def _can_dequeue_hints(self) -> bool:
+        return (
+            bool(current_execution_versions())
+            and self._hint_worker_refusal != self._selected_worker_generation()
+        )
+
     async def _worker_loop(self) -> None:
         log.info("Worker loop started")
         # Small initial delay to let the service fully start
@@ -583,7 +595,10 @@ class TaskRunner:
             )
             return _GOVERNANCE_BACKOFF_SECONDS
 
-        task = await asyncio.to_thread(self.store.dequeue_next)
+        if self._can_dequeue_hints():
+            task = await asyncio.to_thread(self.store.dequeue_next, accept_change_hints=True)
+        else:
+            task = await asyncio.to_thread(self.store.dequeue_next)
         if task is None:
             return 10.0
         if self._shutdown:
@@ -601,6 +616,9 @@ class TaskRunner:
             )
             return _GOVERNANCE_BACKOFF_SECONDS
 
+        if getattr(task, "change_hints", None) is not None and not self._can_dequeue_hints():
+            await asyncio.to_thread(self.store.release_processing, task.id)
+            return _GOVERNANCE_BACKOFF_SECONDS
         await self._launch_worker(task)
         return None
 
@@ -667,6 +685,7 @@ class TaskRunner:
         # does not hold it while the detached worker keeps writing. That narrow
         # cross-process write window is left to the store's own file locking; a
         # durable cross-process source lock is a follow-up.
+        worker_generation = self._selected_worker_generation()
         source_lock = None
         if self._source_lock_acquire is not None:
             source_key = task.source if task.source != "all" else "__all__"
@@ -699,10 +718,8 @@ class TaskRunner:
             )
             return
 
-        from agent_index import __version__
-
         await asyncio.to_thread(
-            self.store.set_worker, task.id, proc.pid, _machine_id(), __version__,
+            self.store.set_worker, task.id, proc.pid, _machine_id(), worker_generation[1],
         )
         self._worker_procs[task.id] = proc
         self._active_workers.add(task.id)
@@ -714,7 +731,9 @@ class TaskRunner:
             "full": task.full,
             "trigger_source": task.trigger_source,
         })
-        self._monitors[task.id] = asyncio.create_task(self._monitor_worker(task, proc))
+        self._monitors[task.id] = asyncio.create_task(
+            self._monitor_worker(task, proc, worker_generation=worker_generation)
+        )
 
     async def _adopt_running_workers(self, host: str) -> None:
         """Adopt tasks whose detached worker survived a cutover (monitor only)."""
@@ -737,7 +756,8 @@ class TaskRunner:
             )
 
     async def _monitor_worker(
-        self, task: TaskRecord, proc: subprocess.Popen[bytes] | None
+        self, task: TaskRecord, proc: subprocess.Popen[bytes] | None,
+        *, worker_generation: tuple[str, str] | None = None,
     ) -> None:
         """Poll a worker to completion, then reconcile status + counters.
 
@@ -754,8 +774,29 @@ class TaskRunner:
                 if proc is not None:
                     alive = proc.poll() is None
                 else:
-                    alive = _pid_alive(rec.worker_pid if rec else task.worker_pid)
+                    alive = _pid_alive(
+                        rec.worker_pid if rec and rec.worker_pid else task.worker_pid
+                    )
                 if not alive:
+                    rec = await _settle(asyncio.create_task(
+                        asyncio.to_thread(self.store.get_task, task.id)
+                    ))
+                    if rec is not None and rec.status in _TERMINAL_VALUES:
+                        break
+                    if (
+                        rec is not None and rec.status == TaskStatus.QUEUED_HINTS.value
+                        and getattr(rec, "change_hints", None) is not None
+                    ):
+                        if rec.error == WORKER_HINT_REFUSAL:
+                            self._hint_worker_refusal = worker_generation or (
+                                os.path.abspath(sys.executable),
+                                task.worker_version or current_runtime_version(),
+                            )
+                        if task.id in self._cancel_requested:
+                            await _settle(asyncio.create_task(
+                                asyncio.to_thread(self.store.cancel, task.id)
+                            ))
+                        break
                     # Worker gone without a terminal status: reconcile it.
                     if task.id in self._cancel_requested:
                         final, err = TaskStatus.CANCELLED.value, None
@@ -791,13 +832,18 @@ class TaskRunner:
                         log.warning("Post-index hook failed", exc_info=True)
             elif status in (TaskStatus.FAILED.value, TaskStatus.INTERRUPTED.value):
                 self.tasks_failed += 1
-            log.info("Task %s finished: %s", task.id, status)
-            self.event_bus.publish("task_complete", {
-                "task_id": task.id,
-                "success": status == TaskStatus.COMPLETE.value,
-                "status": status,
-                "result_stats": rec.result_stats if rec else None,
-            })
+            log.info("Task %s worker settled: %s", task.id, status)
+            if status == TaskStatus.QUEUED_HINTS.value:
+                self.event_bus.publish("queue_update", {
+                    "task_id": task.id, "reason": "capability-rollback",
+                })
+            else:
+                self.event_bus.publish("task_complete", {
+                    "task_id": task.id,
+                    "success": status == TaskStatus.COMPLETE.value,
+                    "status": status,
+                    "result_stats": rec.result_stats if rec else None,
+                })
         except asyncio.CancelledError:
             # Service is stopping (e.g. cutover): LEAVE the detached worker
             # running — the next service adopts it. Do not mark the task.
