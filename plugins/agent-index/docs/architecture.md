@@ -40,8 +40,37 @@ paths: the connector owns coherent base-to-target coverage. Full reindexing and
 legacy connectors retain the snapshot/discovery path, with stored-path
 reconciliation limited to the connector's exact canonical family in either
 storage layout. The opt-in Python
-protocol does not change the external provider CLI wire format; provider
-capability negotiation and durable event/task payloads remain separate work.
+protocol is independent of the external provider CLI wire format. External
+providers can opt into the separately negotiated contract below.
+
+An external provider's existing `content-current-commit --source SOURCE` reply
+may add `source_delta` with contract `agent-index.source-delta`, explicit
+`versions`, canonical `family`, stable nonsecret `account` and effective
+`target`. One connector instance captures one negotiation snapshot from the
+actual executed provider; package or manifest versions do not imply support.
+Missing or valid future-only declarations retain logged legacy reconciliation
+with unchanged verbs and flags. Malformed declarations fail visibly.
+Only advertised version 1 enables
+`content-discover-changed --source SOURCE [--last-commit CURSOR] --delta-version 1`.
+Its response requires `version`, `upserts`, `deletions`, `commit`, `complete`
+and a `source_delta` echo of the acquisition process's actual scope. The echo
+must still support v1 and exactly match the negotiated family/account/target,
+so retargeting between metadata and acquisition cannot cross a recovery fence.
+The delta's own cursor owns coverage; metadata cursors and incomplete output
+never authorize tombstones. Invalid replies or process failures do not trigger
+an effectful legacy retry.
+Full reconciliation retains the old syntax and accepts canonical descendant
+sources within the invoked subtree. Once v1 is negotiated, full
+`content-discover`, legacy-shaped `content-discover-changed` and
+`content-list-paths` responses must also include the same executing-scope echo.
+It is checked before entries or paths are returned, protecting snapshot-derived
+tombstones as well as explicit deltas. These calls introduce neither new flags
+nor additional metadata probes; direct non-negotiated calls retain the legacy
+baseline. Old callers can ignore the additive echo and metadata; new callers
+handle supported rollback without guessing new syntax. Provider
+hint consumption remains unadvertised. These providers must retain the baseline
+through the consumer-upgrade and provider-rollback window; retirement requires
+a separate contract revision.
 
 Git revision sources use this seam for pinned base-to-target raw diffs and
 bounded new-commit history, without listing unchanged tracked paths, stored
@@ -87,7 +116,19 @@ JSON source cursor, then clears the journal and acquires fresh changes. This
 prevents a newer net delta from omitting an item partially written by an
 interrupted older delta (for example, a file changed and then reverted).
 Source/account configuration changes refuse replay rather than applying old
-work under a new scope. The same constructed connector supplies both acquisition
+work under a new scope. Completed checkpoints also retain the existing
+`recovery_scope` hash in `SourceState.acquisition_scope`, alongside their cursor
+and canonical family. A missing or mismatched checkpoint identity requires an
+explicit full reindex before any new acquisition, in either storage layout;
+a new target cannot reuse an old target's cursor even after its journal clears.
+Successful application and atomic checkpoint publication bind the accepted
+scope, including empty full snapshots with a null cursor. Failed application
+or publication restores the prior in-memory checkpoint and retains any pending
+acquisition for replay. Older state files still load, but their unbound cursors
+require full reconciliation. An already-admitted pending journal with a matching
+scope may finish and bind its checkpoint before fresh acquisition; its existing
+envelope does not change. No additional identity or credential authority is
+introduced. The same constructed connector supplies both acquisition
 and its canonical/effective recovery identity: delta connectors declare a
 nonsecret `recovery_identity` tuple. Built-in Git binds the resolved checkout,
 remote target and selected ref, including environment/registry resolution;
