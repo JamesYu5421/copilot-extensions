@@ -3662,6 +3662,42 @@ Pytest items retain their 30-second limit.
 This proves the updater migration contract, not release qualification or a
 live-host rollout.
 
+Supported Manager removal has its own explicit native contract:
+
+The admitted pure packet also covers batch-custody input refusal in
+`tools/promotion_unit_tests/test_manager_uninstall.py`, before filesystem
+ownership can be acquired. Real lease contention and removal remain in the
+separate functional/native portfolios, not the unit-only CI packet.
+
+```text
+python tools/run-manager-runtime-acceptance.py --root .validation --contract uninstall
+```
+
+It prepares a real standalone payload and canonical installed Manager in a
+redirected disposable home, then checks an actual installed daemon start,
+health request and graceful shutdown before non-mutating preview, installed-self
+refusal, actual external removal, repeated absence and actual reinstall.
+The daemon and Installation & Updates list command execute their production
+child argv without an inherited bytecode suppression setting; both must leave
+the sealed runtime unchanged.
+Installed package/payload hashes and origin evidence must match; runtime slots,
+selectors and owned frontdoors/registration must disappear while durable-state
+bytes remain. No synthetic inventory, constructor mock or manual fixture
+deletion substitutes for removal. Initial installed preparation and the
+removal/reinstall exercise use separate existing 300-second native groups:
+each requires a real cold construction, with a 240-second command bound inside
+its group. Ordinary pytest items retain 30 seconds. Other native contracts,
+production deadlines and required PR CI are unchanged.
+The disposable daemon is caller-contained and fully settled before removal.
+This operation does not launch a mux or Copilot, qualify interactive session
+survival, or authorize a host uninstall/rollout.
+The ordinary Manager suite excludes this prepared lane.
+The manual `installation-context-full.yml` portfolio `manager-uninstall`
+executes the same owner on a fresh Windows runner with Python 3.12, read-only
+repository permissions, exact checked-out source verification and a 15-minute
+setup/job envelope. Its native groups retain their 300-second boundaries.
+It is not part of required PR CI or the default scheduled portfolio.
+
 Retained mux shell callbacks have a separate, independently contained contract:
 
 ```text

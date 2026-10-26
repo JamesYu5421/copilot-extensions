@@ -107,6 +107,15 @@ def test_ordinary_start_anchors_relative_cwd_before_instance_spec(tmp_path, monk
     assert captured["instance"].runtime_root == tmp_path / "relative-root"
 
 
+@pytest.mark.parametrize("with_root", [False, True])
+def test_detached_child_disables_bytecode_independently_of_parent(tmp_path, with_root):
+    root = tmp_path / "manager" if with_root else None
+    assert mux_daemon_process.detached_child_argv(root) == [
+        sys.executable, "-B", "-m", "worktree_manager", "mux-daemon", "run",
+        *([f"--root={root}"] if root is not None else []),
+    ]
+
+
 @pytest.mark.parametrize("gui_name", ["pythonw.exe", "gui-host.exe"], ids=["relocated", "renamed"])
 def test_linked_gui_keeps_console_and_venv_from_configured_home(tmp_path, monkeypatch, gui_name):
     base = tmp_path / "base"
@@ -212,13 +221,17 @@ def test_real_windows_venv_runtime_pid_matches_spawn_and_routing(tmp_path):
     root = tmp_path / "stable"
     root.mkdir()
     slot = synthetic_runtime(root, "probe", program="""import json, os, pathlib, sys, time
+import work_coalescing_singleton
 from work_coalescing_singleton import CoalescingServer
 root = pathlib.Path(next(a.split('=', 1)[1] for a in sys.argv if a.startswith('--root=')))
 port = int(next(a.split('=', 1)[1] for a in sys.argv if a.startswith('--listen-port=')))
 server = CoalescingServer(lambda kind, payload: {'pid': os.getpid()}, bind_port=port, token='probe-token')
 server.start()
 try:
-    (root / 'runtime.json').write_text(json.dumps({'pid': os.getpid(), 'prefix': sys.prefix}), encoding='utf-8')
+    (root / 'runtime.json').write_text(json.dumps({
+        'pid': os.getpid(), 'prefix': sys.prefix, 'module': __file__,
+        'wcs_module': work_coalescing_singleton.__file__,
+    }), encoding='utf-8')
     while not (root / 'stop').exists():
         time.sleep(0.02)
 finally:
@@ -235,6 +248,7 @@ finally:
         data = json.loads(result_path.read_text(encoding="utf-8"))
         assert data["pid"] == proc.pid
         assert os.path.normcase(data["prefix"]) == os.path.normcase(str(slot))
+        assert all(Path(data[key]).is_relative_to(slot) for key in ("module", "wcs_module"))
         from work_coalescing_singleton import client
         client_id = client.new_client_id()
         try:
