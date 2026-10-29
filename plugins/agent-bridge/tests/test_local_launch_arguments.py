@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -113,6 +114,95 @@ async def test_resolved_setup_keeps_final_native_arguments_in_envelope(
     assert barrier.await_count == int(prepare)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="complete Windows Worktrees launch producer")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["wrapped", "deferred", "prepared"])
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize("prepare_plugins", [False, True])
+async def test_complete_worktrees_plan_preserves_final_native_boundary(
+    tmp_path, monkeypatch, shape, resume, prepare_plugins,
+):
+    for key in ("HOME", "USERPROFILE", "AGENT_WORKTREES_CONFIG_DIR"):
+        monkeypatch.setenv(key, str(tmp_path))
+    monkeypatch.setenv("AGENT_WORKTREES_STATUS_MONITOR", "0")
+    monkeypatch.syspath_prepend(str(SETUP_SOURCE.parents[1] / "src"))
+    for library in ("lazy-cli-dispatch", "work-coalescing-singleton"):
+        monkeypatch.syspath_prepend(str(SETUP_SOURCE.parents[3] / "libs" / library / "src"))
+    from agent_worktrees import __main__ as owner
+    from agent_worktrees import config, launch_seed_exec, manager_launch_cli, tracking
+
+    root = SETUP_SOURCE.parents[1]
+    monkeypatch.setattr(owner.inst, "install_dir", lambda: root)
+    monkeypatch.setattr(owner, "resolve_launch_pref_flags", lambda *_: [])
+    manager = tmp_path / "manager"
+    manager.mkdir()
+    (manager / "pane-wrapper.ps1").write_text(
+        "# worktree-manager:native-console-owner-v1\n", encoding="utf-8",
+    )
+    monkeypatch.setattr(manager_launch_cli, "_worktree_manager_root", lambda: manager)
+    monkeypatch.setattr(manager_launch_cli, "_usable_worktree_manager_launcher_dir", lambda: manager)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    record = tracking.create_new_record(
+        "test-worktree", "worktree/test", str(workspace), "example",
+        "test", "windows", tmp_path, codename="test-launch",
+    )
+    settings = config.Config(
+        srcroot=str(tmp_path), machine="test", platform="windows", repo_name="example",
+        repos={"example": config.RepoConfig(
+            anchor=str(tmp_path / "anchor"), worktree_root=str(tmp_path / "worktrees"),
+        )},
+    )
+    command = owner._build_launch_cmd(
+        settings,
+        SimpleNamespace(
+            recovery=True,
+            copilot_args=["--model", "configured-model", "--name", "--", "--", "literal-tail"],
+        ),
+        str(workspace),
+        preflight=SimpleNamespace(error=None, config_root_path=None),
+    )
+    if shape != "wrapped":
+        command = launch_seed_exec.deferred_command(
+            command, record.yaml_path, admission_only=True,
+            native_resume_session="original-head" if resume else None,
+            prepare_native=shape == "prepared",
+        )
+    original = list(command)
+    payload_index = command.index("-NativeArgumentsJson") + 1
+    before = json.loads(command[payload_index])
+    target = transport.SpawnTarget(
+        project="example", worktree_id="test-worktree",
+        native_resume_id="original-head" if resume else None,
+        local_plugin_preparation=prepare_plugins,
+        static_plugin_args={"base": ["--allow-all"], "automatic": ["--plugin-dir", "old"]},
+        copilot_args=["--allow-all", "--plugin-dir", "old", "--name", "two words"],
+    )
+    monkeypatch.setattr(transport, "_resolve_worktree", AsyncMock(return_value={"launch": {
+        "cmd": command, "record_path": str(record.yaml_path), "work_dir": str(workspace),
+        "worktree_id": "test-worktree", "env": {"PLAN_VALUE": "retained"},
+    }}))
+    barrier = AsyncMock(return_value=["--plugin-dir", "prepared path"])
+    monkeypatch.setattr(venue_plugins, "prepare_local_plugins", barrier)
+    args, cwd, env = await transport.resolve_local_launch(target)
+    additions = [
+        "--acp", "--stdio", "--no-auto-update", "--allow-all",
+        "--plugin-dir", "prepared path" if prepare_plugins else "old", "--name", "two words",
+    ]
+    assert len(args) == len(command)
+    assert Path(args[0]).stem.casefold() == Path(command[0]).stem.casefold()
+    assert args[1:payload_index] == command[1:payload_index]
+    assert args[payload_index + 1:] == command[payload_index + 1:]
+    assert json.loads(args[payload_index])["args"] == [
+        *before["args"][:-2], *additions, *before["args"][-2:],
+    ]
+    assert command == original
+    assert cwd == str(workspace) and env["PLAN_VALUE"] == "retained"
+    assert target.worktree_id == "test-worktree"
+    assert target.native_resume_id == ("original-head" if resume else None)
+    assert barrier.await_count == int(prepare_plugins)
+
+
 @pytest.mark.parametrize("command", [
     ["copilot", "--resume=original-head"],
     ["bash", "/launch/default-setup.sh", "--recovery"],
@@ -179,13 +269,14 @@ def test_missing_custom_setup_is_not_inspected_or_rewritten(tmp_path):
 
 @pytest.mark.skipif(os.name != "nt", reason="native Windows PowerShell setup consumer")
 @pytest.mark.parametrize("shell", ["pwsh", "powershell"])
+@pytest.mark.parametrize("wrapped", [False, True], ids=["direct", "wrapped"])
 @pytest.mark.parametrize("prefix, tail", [
     (["--resume=original-head"], []),
     (["--resume=original-head"], ["--", "literal-tail"]),
     (["--resume=original-head", "--name", "--"], ["--", "literal-tail"]),
 ], ids=["resume", "literal-tail", "terminator-as-name"])
 def test_real_setup_consumer_rejects_old_shape_and_preserves_fixed_arguments(
-    tmp_path, monkeypatch, shell, prefix, tail,
+    tmp_path, monkeypatch, shell, wrapped, prefix, tail,
 ):
     executable = shutil.which(shell)
     if executable is None:
@@ -204,10 +295,17 @@ def test_real_setup_consumer_rejects_old_shape_and_preserves_fixed_arguments(
         "AGENT_WORKTREES_LAUNCH_RUNTIME_ROOT": str(tmp_path / "absent-runtime"),
     }
     command = [
-        executable, "-NoProfile", "-File", str(script), "-Recovery",
+        executable, "-NoProfile", "-NoLogo", "-File", str(script), "-Recovery",
         "-CopilotPath", str(backend), "-ExecutionDirectory", str(tmp_path),
         "-NativeArgumentsJson", json.dumps({"args": [*prefix, *tail]}),
     ]
+    if wrapped:
+        wrapper = tmp_path / "launch-command.ps1"
+        shutil.copy2(SETUP_SOURCE.with_name("launch-command.ps1"), wrapper)
+        command = [
+            executable, "-NoProfile", "-NoLogo", "-File", str(wrapper), "--recovery", "--",
+            *command,
+        ]
     additions = ["--acp", "--stdio", "--no-auto-update", "--name", "literal ' $value", "--plugin-dir", ""]
     old = subprocess.run(
         command + additions, cwd=tmp_path, env=environment,

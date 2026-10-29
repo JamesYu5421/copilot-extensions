@@ -579,6 +579,7 @@ async def resolve_local_launch(
     env.pop("VIRTUAL_ENV", None)
     env.pop("PYTHONHOME", None)
     env.update(target.env)
+    record_path = None
 
     if target.project and (not target.explicit_cwd or target.native_resume_id):
         # Stage 6: create/resume the worktree. Failures propagate (no retry).
@@ -590,6 +591,7 @@ async def resolve_local_launch(
         cmd = launch.get("cmd", [])
         plan_env = launch.get("env", {})
         worktree_id = launch.get("worktree_id")
+        record_path = launch.get("record_path")
 
         if not cmd:
             raise RuntimeError("Worktree resolve returned empty cmd")
@@ -640,6 +642,7 @@ async def resolve_local_launch(
     # Assemble once after plugin preparation; envelope arguments are not an argv suffix.
     args = _append_local_launch_arguments(
         cmd, ["--acp", "--stdio", "--no-auto-update", *native_args],
+        record_path=record_path,
     )
     log.info(
         "Resolved local agent launch: %s (cwd=%s, worktree=%s)",

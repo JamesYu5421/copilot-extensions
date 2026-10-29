@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path, PureWindowsPath
 
 NATIVE_VALUE_OPTIONS = {
@@ -35,17 +36,99 @@ def _worktrees_setup_script() -> Path:
     return root / "scripts" / "default-setup.ps1"
 
 
-def _owned_setup_index(command: list[str]) -> int | None:
-    if not any(value.casefold() == "-nativeargumentsjson" for value in command):
+def _powershell_script_index(command: list[str], start: int) -> int | None:
+    if start >= len(command) or PureWindowsPath(command[start]).stem.casefold() not in {
+        "pwsh", "powershell",
+    }:
         return None
-    if not command or PureWindowsPath(command[0]).stem.casefold() not in {"pwsh", "powershell"}:
-        return None
-    index = 1
+    index = start + 1
     while index < len(command) and command[index].casefold() in {"-noprofile", "-nologo"}:
         index += 1
     if index + 1 < len(command) and command[index].casefold() == "-file":
-        if Path(command[index + 1]) == _worktrees_setup_script():
+        return index + 1
+    return None
+
+
+def _deferred_command_start(command: list[str], record: Path | None) -> int | None:
+    if not command or PureWindowsPath(command[0]).stem.casefold() not in {"python", "python3"}:
+        return 0
+    if (
+        record is None or len(command) < 6
+        or command[1:4] != ["-m", "agent_worktrees.launch_seed_exec", "--record"]
+        or Path(command[4]) != record
+    ):
+        return None
+    index = 5
+    values = {
+        "--seed-id", "--preserve-seed-id", "--native-resume-session",
+        "--launch-attempt-id", "--launch-resolution-id", "--launch-parent-id",
+    }
+    while index < len(command):
+        if command[index] == "--":
             return index + 1
+        if command[index] == "--admission-only":
+            index += 1
+        elif command[index] in values and index + 1 < len(command):
+            index += 2
+        else:
+            return None
+    return None
+
+
+def _prepared_script(script: Path, record: Path | None, name: str) -> bool:
+    if record is None:
+        return False
+    try:
+        parts = script.relative_to(record.parent / "launch-attempts").parts
+    except ValueError:
+        return False
+    return (
+        len(parts) == 3 and parts[2] == name
+        and re.fullmatch(r"[0-9a-f]{32}", parts[0]) is not None
+        and re.fullmatch(r"[0-9a-f]{32}\.shell", parts[1]) is not None
+    )
+
+
+def _owned_setup_index(command: list[str], record_path: str | None) -> int | None:
+    if not any(value.casefold() == "-nativeargumentsjson" for value in command):
+        return None
+    record = Path(record_path) if record_path and Path(record_path).is_absolute() else None
+    start = _deferred_command_start(command, record)
+    index = _powershell_script_index(command, start) if start is not None else None
+    if index is None:
+        return None
+    setup = _worktrees_setup_script()
+    script = Path(command[index])
+    prepared_wrapper = _prepared_script(script, record, "launch-command.ps1")
+    if script == setup.with_name("launch-command.ps1") or prepared_wrapper:
+        delimiter = index + 1
+        if command[delimiter:delimiter + 1] == ["--recovery"]:
+            delimiter += 1
+        if command[delimiter:delimiter + 1] != ["--"]:
+            return None
+        index = _powershell_script_index(command, delimiter + 1)
+        if index is None:
+            return None
+        inner = Path(command[index])
+        if prepared_wrapper and inner.parent != script.parent:
+            return None
+        script = inner
+    if script == setup:
+        return index
+    # Copied assets are bound to this resolver's record and selected runtime,
+    # not recognized by a filename or a marker that a custom script can copy.
+    if (
+        _prepared_script(script, record, "default-setup.ps1")
+        and index + 6 < len(command)
+        and command[index + 1:index + 3] in (
+            ["-LaunchSeedPreparation", "seed"], ["-LaunchSeedPreparation", "admission"],
+        )
+        and command[index + 3:index + 4] == ["-LaunchSeedNativeRoot"]
+        and Path(command[index + 4]) == setup.parent.parent
+        and command[index + 5:index + 6] == ["-LaunchSeedRecord"]
+        and Path(command[index + 6]) == record
+    ):
+        return index
     return None
 
 
@@ -59,10 +142,12 @@ def _insert_native_options(native: list[str], arguments: list[str]) -> list[str]
     return [*native[:index], *arguments, *native[index:]]
 
 
-def append_local_launch_arguments(command: list[str], arguments: list[str]) -> list[str]:
+def append_local_launch_arguments(
+    command: list[str], arguments: list[str], *, record_path: str | None = None,
+) -> list[str]:
     """Keep native arguments inside the Worktrees PowerShell setup envelope."""
     result = list(command)
-    setup = _owned_setup_index(result)
+    setup = _owned_setup_index(result, record_path)
     if setup is not None:
         envelopes = [
             index for index in range(setup + 1, len(result))
