@@ -830,7 +830,7 @@ class TestSpawnLocal:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("enveloped", [False, True], ids=["direct", "windows-setup"])
-    async def test_local_with_project_resolves_then_execs(self, enveloped):
+    async def test_local_with_project_resolves_then_execs(self, enveloped, monkeypatch):
         """Local spawn with project should resolve via --json --new, then exec copilot."""
         target = SpawnTarget(
             type="local",
@@ -847,6 +847,11 @@ class TestSpawnLocal:
              "-NativeArgumentsJson", '{"args":[]}']
             if enveloped else ["/usr/bin/copilot"]
         )
+        if enveloped:
+            monkeypatch.setattr(
+                "agent_bridge.local_launch_arguments._worktrees_setup_script",
+                lambda: Path(command[3]),
+            )
         resolve_plan = {
             "version": 1,
             "worktree": {"id": "test-wt-1234"},
@@ -908,7 +913,7 @@ class TestSpawnLocal:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("enveloped", [False, True], ids=["direct", "windows-setup"])
-    async def test_local_with_project_resume_worktree(self, enveloped):
+    async def test_local_with_project_resume_worktree(self, enveloped, monkeypatch):
         """Local spawn with worktree_id should resolve with --worktree-id."""
         target = SpawnTarget(
             type="local",
@@ -925,6 +930,11 @@ class TestSpawnLocal:
              "-NativeArgumentsJson", json.dumps({"args": native})]
             if enveloped else ["/usr/bin/copilot", *native]
         )
+        if enveloped:
+            monkeypatch.setattr(
+                "agent_bridge.local_launch_arguments._worktrees_setup_script",
+                lambda: Path(command[3]),
+            )
         resolve_plan = {
             "version": 1,
             "launch": {

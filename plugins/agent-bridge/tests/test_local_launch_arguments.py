@@ -11,7 +11,8 @@ from unittest.mock import AsyncMock
 import pytest
 from agent_procutil import no_window_kwargs
 
-from agent_bridge import transport, venue_plugins
+from agent_bridge import _peer_launch, local_launch_arguments, session_lifecycle_cli, transport, venue_plugins
+from agent_bridge.local_launch_arguments import _worktrees_setup_script
 
 SETUP_SOURCE = Path(__file__).resolve().parents[2] / "agent-worktrees/scripts/default-setup.ps1"
 
@@ -20,6 +21,46 @@ SETUP_SOURCE = Path(__file__).resolve().parents[2] / "agent-worktrees/scripts/de
 def admitted_target(monkeypatch):
     # Owner admission is covered by the repository-hosting suites.
     monkeypatch.setattr("agent_bridge.hosting_policy.require_target_hosting", AsyncMock())
+    monkeypatch.setattr(local_launch_arguments, "_worktrees_setup_script", lambda: SETUP_SOURCE)
+
+
+def test_setup_identity_uses_legacy_owner_root(monkeypatch):
+    monkeypatch.setattr(session_lifecycle_cli, "_agent_bridge_owner_root", lambda: Path.home() / ".agent-bridge")
+    monkeypatch.setattr(session_lifecycle_cli, "_agent_bridge_installation_context", lambda: "")
+    assert _worktrees_setup_script() == Path.home() / ".agent-worktrees/scripts/default-setup.ps1"
+
+
+def test_setup_identity_uses_validated_same_cell_owner(monkeypatch, tmp_path):
+    cell = tmp_path / "marketplaces/example"
+    own = cell / "plugins/agent-bridge"
+    monkeypatch.setattr(session_lifecycle_cli, "_agent_bridge_owner_root", lambda: own)
+    monkeypatch.setattr(session_lifecycle_cli, "_agent_bridge_installation_context", lambda: "owner-receipt")
+
+    def validate(owner, root, context):
+        assert (owner, root, context) == ("agent-bridge", own, "owner-receipt")
+        return {"cellRoot": str(cell)}
+
+    monkeypatch.setattr(_peer_launch, "validate_owner", validate)
+    assert _worktrees_setup_script() == cell / "plugins/agent-worktrees/scripts/default-setup.ps1"
+
+
+def test_setup_identity_rejects_invalid_context(monkeypatch, tmp_path):
+    monkeypatch.setattr(session_lifecycle_cli, "_agent_bridge_owner_root", lambda: tmp_path)
+    monkeypatch.setattr(session_lifecycle_cli, "_agent_bridge_installation_context", lambda: "bad-receipt")
+
+    def refuse(*_args):
+        raise ValueError("invalid receipt")
+
+    monkeypatch.setattr(_peer_launch, "validate_owner", refuse)
+    with pytest.raises(_peer_launch.ContextRefused, match="installation context refused"):
+        _worktrees_setup_script()
+
+
+def test_setup_identity_does_not_guess_legacy_for_unbound_cell(monkeypatch, tmp_path):
+    monkeypatch.setattr(session_lifecycle_cli, "_agent_bridge_owner_root", lambda: tmp_path / "agent-bridge")
+    monkeypatch.setattr(session_lifecycle_cli, "_agent_bridge_installation_context", lambda: "")
+    with pytest.raises(_peer_launch.ContextRefused, match="non-legacy bridge"):
+        _worktrees_setup_script()
 
 
 def setup_command(native, *, script=SETUP_SOURCE):
@@ -99,10 +140,8 @@ def test_missing_or_duplicate_envelope_refuses(suffix):
         transport._append_local_launch_arguments(command, ["--acp"])
 
 
-def test_setup_parameter_names_are_case_insensitive(tmp_path):
-    script = tmp_path / "DEFAULT-SETUP.PS1"
-    shutil.copy2(SETUP_SOURCE, script)
-    command = ["pwsh", "-FILE", str(script), "-nativeargumentsjson", '{"args":[]}']
+def test_setup_parameter_names_are_case_insensitive():
+    command = ["pwsh", "-FILE", str(SETUP_SOURCE), "-nativeargumentsjson", '{"args":[]}']
     args = transport._append_local_launch_arguments(command, ["--stdio"])
     assert json.loads(args[-1]) == {"args": ["--stdio"]}
 
@@ -119,21 +158,23 @@ def test_options_precede_real_terminator_but_not_option_values(native, expected)
     assert json.loads(args[-1])["args"] == expected
 
 
+@pytest.mark.parametrize("copied", [False, True])
 @pytest.mark.parametrize("payload", ["opaque", '{"args":["custom-data"]}'])
-def test_same_basename_custom_setup_retains_opaque_append_contract(tmp_path, payload):
+def test_same_basename_custom_setup_retains_opaque_append_contract(tmp_path, payload, copied):
     script = tmp_path / "default-setup.ps1"
-    script.write_text("param([string]$NativeArgumentsJson)\n", encoding="utf-8")
+    if copied:
+        shutil.copy2(SETUP_SOURCE, script)
+    else:
+        script.write_text("param([string]$NativeArgumentsJson)\n", encoding="utf-8")
     command = setup_command([], script=script)
     command[-1] = payload
     additions = ["--acp", "--stdio"]
     assert transport._append_local_launch_arguments(command, additions) == command + additions
 
 
-def test_missing_setup_consumer_does_not_silently_change_argument_contract(tmp_path):
-    with pytest.raises(RuntimeError, match="Cannot inspect worktree setup boundary"):
-        transport._append_local_launch_arguments(
-            setup_command([], script=tmp_path / "default-setup.ps1"), ["--acp"],
-        )
+def test_missing_custom_setup_is_not_inspected_or_rewritten(tmp_path):
+    command = setup_command([], script=tmp_path / "default-setup.ps1")
+    assert transport._append_local_launch_arguments(command, ["--acp"]) == [*command, "--acp"]
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native Windows PowerShell setup consumer")
@@ -151,6 +192,7 @@ def test_real_setup_consumer_rejects_old_shape_and_preserves_fixed_arguments(
         pytest.skip(f"{shell} is unavailable")
     script = tmp_path / "default-setup.ps1"
     shutil.copy2(SETUP_SOURCE, script)
+    monkeypatch.setattr(local_launch_arguments, "_worktrees_setup_script", lambda: script)
     backend = tmp_path / "capture.ps1"
     backend.write_text(
         "[Console]::Out.Write((ConvertTo-Json -InputObject @($args) -Compress))\n"

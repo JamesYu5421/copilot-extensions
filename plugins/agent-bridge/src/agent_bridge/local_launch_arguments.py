@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path, PureWindowsPath
 
-# The setup consumer already advertises this boundary, including relocated copies.
-SETUP_BOUNDARY_MARKER = b"# agent-worktrees:launch-seed-boundary-v1"
 NATIVE_VALUE_OPTIONS = {
     "-i", "--interactive", "-p", "--prompt", "--model", "--reasoning-effort",
     "--context", "--auto-tier", "--agent", "-n", "--name", "--session-id",
@@ -18,26 +16,35 @@ NATIVE_VALUE_OPTIONS = {
 }
 
 
+def _worktrees_setup_script() -> Path:
+    from . import _peer_launch, session_lifecycle_cli
+    from .install_paths import uses_legacy_install_dir
+
+    own_root = session_lifecycle_cli._agent_bridge_owner_root()
+    context = session_lifecycle_cli._agent_bridge_installation_context()
+    if context:
+        try:
+            owner = _peer_launch.validate_owner("agent-bridge", own_root, context)
+        except (OSError, ValueError, ImportError) as exc:
+            raise _peer_launch.ContextRefused(f"agent-bridge installation context refused: {exc}") from exc
+        root = Path(owner["cellRoot"]) / "plugins" / "agent-worktrees"
+    else:
+        if not uses_legacy_install_dir(own_root):
+            raise _peer_launch.ContextRefused("non-legacy bridge requires an installation context")
+        root = Path.home() / ".agent-worktrees"  # marketplace-isolation: allow legacy-compatibility
+    return root / "scripts" / "default-setup.ps1"
+
+
 def _owned_setup_index(command: list[str]) -> int | None:
     if not any(value.casefold() == "-nativeargumentsjson" for value in command):
         return None
-    for host, value in enumerate(command):
-        if PureWindowsPath(value).stem.casefold() not in {"pwsh", "powershell"}:
-            continue
-        index = host + 1
-        while index < len(command) and command[index].casefold() in {"-noprofile", "-nologo"}:
-            index += 1
-        if index + 1 >= len(command) or command[index].casefold() != "-file":
-            continue
-        script = command[index + 1]
-        if PureWindowsPath(script).name.casefold() != "default-setup.ps1":
-            continue
-        try:
-            with Path(script).open("rb") as stream:
-                header = stream.read(4096).removeprefix(b"\xef\xbb\xbf")
-        except OSError as exc:
-            raise RuntimeError(f"Cannot inspect worktree setup boundary: {script}") from exc
-        if SETUP_BOUNDARY_MARKER in header.splitlines():
+    if not command or PureWindowsPath(command[0]).stem.casefold() not in {"pwsh", "powershell"}:
+        return None
+    index = 1
+    while index < len(command) and command[index].casefold() in {"-noprofile", "-nologo"}:
+        index += 1
+    if index + 1 < len(command) and command[index].casefold() == "-file":
+        if Path(command[index + 1]) == _worktrees_setup_script():
             return index + 1
     return None
 

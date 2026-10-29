@@ -17,10 +17,12 @@ When Worktrees returns its normalized PowerShell `default-setup.ps1` command
 with `-NativeArgumentsJson`, Bridge adds its ACP flags and final prepared
 plugin/request arguments inside that envelope, preserving the original native
 arguments and setup parameters. It never appends a second loose argument tail
-to an envelope command. The setup consumer must advertise the existing
-`# agent-worktrees:launch-seed-boundary-v1` header declaration; a matching
-filename alone does not opt a custom script into this format. This also covers
-owner-relocated setup copies without guessing an installation directory.
+to an envelope command. Bridge matches the setup script's path against the
+selected Worktrees installation's `scripts/default-setup.ps1`, as the Worktrees
+argument producer does. In an installation cell, it uses Bridge's existing
+validated owner context to select the same-cell Worktrees root; legacy
+installations use the existing legacy root. A matching filename or copied
+script comment does not make a custom launcher Worktrees-owned.
 Native options are inserted before the real `--` terminator; option/value pairs
 are walked together so a literal `--` value is not mistaken for that boundary.
 Malformed owned envelopes fail before starting the backend;
@@ -45,9 +47,10 @@ it composes Worktrees' actual argument producer with Bridge's consumer,
 checking setup parameters, resume identity, literal values, immutability,
 literal tails, same-named custom scripts, malformed envelopes and legacy commands.
 The adapter's option/value vocabulary is checked against the producer's
-vocabulary. The native Windows checks below exercise the shipped setup script
-and its header declaration; the required unit packet uses a temporary consumer
-declaration and does not execute PowerShell.
+vocabulary. The native Windows checks below exercise the shipped setup script;
+the required unit packet uses a temporary installation path and does not execute
+PowerShell. Plugin tests also cover validated same-cell and legacy path selection,
+invalid installation context, and a copied setup script outside the owner path.
 Its exact cases, source hashes and
 coverage targets are enrolled in `tools/promotion-unit-manifest.json`; adding
 a plugin test alone does not enroll it in required PR unit checks.

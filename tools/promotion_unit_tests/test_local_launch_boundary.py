@@ -40,9 +40,7 @@ def boundary(monkeypatch, tmp_path):
     )
     scripts = tmp_path / "scripts"
     scripts.mkdir()
-    (scripts / "default-setup.ps1").write_bytes(
-        consumer.SETUP_BOUNDARY_MARKER + b"\nparam([string]$NativeArgumentsJson)\n",
-    )
+    monkeypatch.setattr(consumer, "_worktrees_setup_script", lambda: scripts / "default-setup.ps1")
     return producer, consumer
 
 
@@ -109,7 +107,10 @@ def test_same_named_custom_script_remains_opaque(boundary, tmp_path, payload):
     producer, consumer = boundary
     script = tmp_path / "custom/default-setup.ps1"
     script.parent.mkdir()
-    script.write_text("param([string]$NativeArgumentsJson)\n", encoding="utf-8")
+    script.write_text(
+        "# agent-worktrees:launch-seed-boundary-v1\nparam([string]$NativeArgumentsJson)\n",
+        encoding="utf-8",
+    )
     command = ["pwsh", "-File", str(script), "-NativeArgumentsJson", payload]
     assert producer.quote_powershell_command(command, RuntimeError) == command
     assert consumer.append_local_launch_arguments(command, ["--acp"]) == [*command, "--acp"]
