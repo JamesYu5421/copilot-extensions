@@ -17,11 +17,52 @@ When Worktrees returns its normalized PowerShell `default-setup.ps1` command
 with `-NativeArgumentsJson`, Bridge adds its ACP flags and final prepared
 plugin/request arguments inside that envelope, preserving the original native
 arguments and setup parameters. It never appends a second loose argument tail
-to an envelope command. Malformed envelopes fail before starting the backend;
+to an envelope command. The setup consumer must advertise the existing
+`# agent-worktrees:launch-seed-boundary-v1` header declaration; a matching
+filename alone does not opt a custom script into this format. This also covers
+owner-relocated setup copies without guessing an installation directory.
+Native options are inserted before the real `--` terminator; option/value pairs
+are walked together so a literal `--` value is not mistaken for that boundary.
+Malformed owned envelopes fail before starting the backend;
 the setup script's mixed-argument rejection remains unchanged. Older setup
 commands without an envelope, direct executables, and custom launchers retain
 their existing append behavior. This is a Bridge-side consumption fix, with
 no new owner command, runtime-version requirement, or replacement allocation.
+
+### Local launch regression coverage
+
+The previous spawn tests substituted direct `copilot` commands for the
+workspace owner's launch plan and mocked process creation. Flag-membership
+assertions could therefore pass even when Bridge appended native options
+outside a PowerShell setup envelope. They did not exercise the setup script
+that rejects that mixed representation.
+
+The existing fresh/resume spawn tests now cover direct and envelope commands
+and assert complete native arguments and envelope placement. The required
+unit packet also admits
+[`test_local_launch_boundary.py`](../../../tools/promotion_unit_tests/test_local_launch_boundary.py):
+it composes Worktrees' actual argument producer with Bridge's consumer,
+checking setup parameters, resume identity, literal values, immutability,
+literal tails, same-named custom scripts, malformed envelopes and legacy commands.
+The adapter's option/value vocabulary is checked against the producer's
+vocabulary. The native Windows checks below exercise the shipped setup script
+and its header declaration; the required unit packet uses a temporary consumer
+declaration and does not execute PowerShell.
+Its exact cases, source hashes and
+coverage targets are enrolled in `tools/promotion-unit-manifest.json`; adding
+a plugin test alone does not enroll it in required PR unit checks.
+
+[`test_local_launch_arguments.py`](../tests/test_local_launch_arguments.py)
+additionally runs the shipped setup script with an inert argument-recording
+backend under Windows PowerShell 5 and PowerShell 7. It requires the old
+mixed form to fail and the corrected form to preserve arguments and the
+backend's exit status. These native checks run locally on Windows when each
+shell is available; they are not required CI coverage (the Windows rotation
+job is currently disabled). Run them alongside the strengthened spawn tests:
+
+```powershell
+python tools/run-plugin-tests.py agent-bridge --test-file tests/test_transport.py --test-file tests/test_local_launch_arguments.py --allow-explicit-tiers
+```
 
 The [workspace allocation and session acquisition contract](../../../docs/patterns/workspace-allocation-and-session-acquisition.md)
 qualifies every allocation/acquisition by the selected execution project, not

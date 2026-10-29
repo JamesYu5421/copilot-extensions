@@ -2634,7 +2634,22 @@
         "tools/promotion_unit_tests/test_activation_preservation.py::test_project_identity_memo_unit_windows_handle_cleanup[none]",
         "tools/promotion_unit_tests/test_activation_preservation.py::test_project_identity_memo_unit_windows_handle_cleanup[open]",
         "tools/promotion_unit_tests/test_activation_preservation.py::test_project_identity_memo_unit_windows_handle_cleanup[query]",
-        "tools/promotion_unit_tests/test_activation_preservation.py::test_project_identity_memo_unit_windows_handle_cleanup[close]"
+        "tools/promotion_unit_tests/test_activation_preservation.py::test_project_identity_memo_unit_windows_handle_cleanup[close]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_owner_produced_setup_preserves_native_and_setup_arguments[fresh-pwsh]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_owner_produced_setup_preserves_native_and_setup_arguments[fresh-powershell]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_owner_produced_setup_preserves_native_and_setup_arguments[resume-pwsh]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_owner_produced_setup_preserves_native_and_setup_arguments[resume-powershell]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_owner_produced_setup_preserves_native_and_setup_arguments[literal-tail-pwsh]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_owner_produced_setup_preserves_native_and_setup_arguments[literal-tail-powershell]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_owner_produced_setup_preserves_native_and_setup_arguments[terminator-as-value-pwsh]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_owner_produced_setup_preserves_native_and_setup_arguments[terminator-as-value-powershell]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_owner_produced_envelope_corruption_is_not_legacy_fallback[pwsh]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_owner_produced_envelope_corruption_is_not_legacy_fallback[powershell]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_other_owner_launch_forms_preserve_append_semantics[direct]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_other_owner_launch_forms_preserve_append_semantics[bash-setup]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_same_named_custom_script_remains_opaque[opaque]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_same_named_custom_script_remains_opaque[{\"args\":[\"custom-data\"]}]",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py::test_adapter_vocabulary_matches_owner"
     ],
     "sources": {
         "tools/core_python_artifacts.py": "cfeae35bfee4537022e1026ffae498b61b23508426a676d9dc09ca8ab8d4b4a0",
@@ -2968,7 +2983,11 @@
         "libs/zdd/src/zdd/private_windows_native.py": "80df5f71f4962a64eb96670a15511cdfddc50e989cc667271642c442613fab9d",
         "libs/plugin-activation/src/plugin_activation/_project_identity.py": "8eeee3be5ee73113e8d6cd3642ecb6ba6eb163c25c14033a102c86462d808578",
         "libs/plugin-activation/tests/test_plugin_activation.py": "e72b654bf73e0672b6303a0cc3cd34c21b89abc95204e3abf20a45c4f1304638",
-        "libs/agent-procutil/src/agent_procutil/_job_scopes.py": "5f83fbbd838bbbf837b55cd714a75432ef05d44c8d76119adcac172d0f0d4d21"
+        "libs/agent-procutil/src/agent_procutil/_job_scopes.py": "5f83fbbd838bbbf837b55cd714a75432ef05d44c8d76119adcac172d0f0d4d21",
+        "plugins/agent-worktrees/src/agent_worktrees/native_arguments.py": "39fe58f667513b04e9a5ad6fca3cea0e9fac8a97e202a7c838b012c937ea870d",
+        "plugins/agent-worktrees/src/agent_worktrees/process_launcher.py": "efaa36d0a673c5ff08bd02a099140498e351632de4b2a684ad1b440531fd4e05",
+        "plugins/agent-bridge/src/agent_bridge/local_launch_arguments.py": "5d4f5317f5b4a56fa5cbb559d948421589fc98a92addbfb4a6d791b3f012bef6",
+        "tools/promotion_unit_tests/test_local_launch_boundary.py": "b81e8c954ee0a9ecf688785aa2e316f711b47b8604ba7772289fab76d2107998"
     },
     "coverage_targets": [
         "tools/core_runtime_profile.py",
@@ -3113,7 +3132,9 @@
         "plugins/agent-worktrees/src/agent_worktrees/allocation_run.py",
         "plugins/agent-bridge/src/agent_bridge/owned_workspace.py",
         "libs/plugin-activation/src/plugin_activation/_project_roots.py",
-        "libs/plugin-activation/src/plugin_activation/_project_identity.py"
+        "libs/plugin-activation/src/plugin_activation/_project_identity.py",
+        "plugins/agent-worktrees/src/agent_worktrees/process_launcher.py",
+        "plugins/agent-bridge/src/agent_bridge/local_launch_arguments.py"
     ],
     "max_seconds": 300
 }
