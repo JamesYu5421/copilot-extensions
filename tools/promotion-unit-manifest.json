@@ -2987,7 +2987,7 @@
         "plugins/agent-worktrees/src/agent_worktrees/native_arguments.py": "39fe58f667513b04e9a5ad6fca3cea0e9fac8a97e202a7c838b012c937ea870d",
         "plugins/agent-worktrees/src/agent_worktrees/process_launcher.py": "efaa36d0a673c5ff08bd02a099140498e351632de4b2a684ad1b440531fd4e05",
         "plugins/agent-bridge/src/agent_bridge/local_launch_arguments.py": "5d4f5317f5b4a56fa5cbb559d948421589fc98a92addbfb4a6d791b3f012bef6",
-        "tools/promotion_unit_tests/test_local_launch_boundary.py": "b81e8c954ee0a9ecf688785aa2e316f711b47b8604ba7772289fab76d2107998"
+        "tools/promotion_unit_tests/test_local_launch_boundary.py": "e05721e841726d20c8ec89d77a2dd22d86502ad0d3ccb76736c9c81c69b31196"
     },
     "coverage_targets": [
         "tools/core_runtime_profile.py",

@@ -118,3 +118,7 @@ def test_same_named_custom_script_remains_opaque(boundary, tmp_path, payload):
 def test_adapter_vocabulary_matches_owner(boundary):
     producer, consumer = boundary
     assert consumer.NATIVE_VALUE_OPTIONS == producer._NATIVE_VALUE_OPTIONS
+    for option in sorted(consumer.NATIVE_VALUE_OPTIONS):
+        assert consumer._insert_native_options(
+            [option, "--", "--", "literal-tail"], ["--stdio"],
+        ) == [option, "--", "--stdio", "--", "literal-tail"]
