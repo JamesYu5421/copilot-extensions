@@ -19,6 +19,7 @@ import shutil
 import signal
 import sys
 import time
+from pathlib import PureWindowsPath
 from typing import Any
 
 from agent_procutil import no_window_flags
@@ -554,6 +555,36 @@ exit 1
     return lines[-1] if lines else None
 
 
+def _append_local_launch_arguments(command: list[str], arguments: list[str]) -> list[str]:
+    """Keep native arguments inside the Worktrees PowerShell setup envelope."""
+    result = list(command)
+    setup = next((
+        index for index, value in enumerate(result)
+        if index and result[index - 1].casefold() == "-file"
+        and PureWindowsPath(value).name.casefold() == "default-setup.ps1"
+    ), None)
+    if setup is not None:
+        envelopes = [
+            index for index in range(setup + 1, len(result))
+            if result[index].casefold() == "-nativeargumentsjson"
+        ]
+        if envelopes:
+            index = envelopes[0] + 1
+            if len(envelopes) != 1 or index >= len(result):
+                raise RuntimeError("Invalid worktree native argument envelope")
+            try:
+                envelope = json.loads(result[index])
+            except (ValueError, TypeError) as exc:
+                raise RuntimeError("Invalid worktree native argument envelope") from exc
+            native = envelope.get("args") if isinstance(envelope, dict) else None
+            if not isinstance(native, list) or any(not isinstance(value, str) for value in native):
+                raise RuntimeError("Invalid worktree native argument envelope")
+            envelope["args"] = [*native, *arguments]
+            result[index] = json.dumps(envelope)
+            return result
+    return [*result, *arguments]
+
+
 async def resolve_local_launch(
     target: SpawnTarget,
     *,
@@ -602,21 +633,15 @@ async def resolve_local_launch(
         # Merge plan environment into the process env
         env.update(plan_env)
 
-        # --no-auto-update pins the child to the installed build (no silent CLI updates).
-        args = cmd + ["--acp", "--stdio", "--no-auto-update"] + target.copilot_args
-        log.info(
-            "Resolved copilot launch from worktree plan: %s (cwd=%s, worktree=%s)",
-            " ".join(args), work_dir, worktree_id,
-        )
     else:
         if not target.cwd:
             raise ValueError("Local agent without 'project' requires 'cwd'")
         copilot = _find_copilot(env, cwd=target.cwd, explicit_path=target.copilot_path)
-        args = [copilot, "--acp", "--stdio", "--no-auto-update"] + target.copilot_args
+        cmd = [copilot]
         work_dir = target.cwd
-        log.info("Resolved local agent launch: %s (cwd=%s)", " ".join(args), work_dir)
 
     require_path_hosting(work_dir)
+    native_args = target.copilot_args
     if (
         prepare_plugins and target.type == "local" and target.local_plugin_preparation
         and not target.spawn_command
@@ -639,10 +664,17 @@ async def resolve_local_launch(
         if target.elevated:
             prepared_context["execution_cwd"] = work_dir
         if replacement is not None:
-            launch_prefix = args[:-len(target.copilot_args)] if target.copilot_args else args
-            args = [*launch_prefix, *_prepared_plugin_args(target, replacement)]
+            native_args = _prepared_plugin_args(target, replacement)
             if target.elevated:
                 target.cwd = work_dir
+    # Assemble once after plugin preparation; envelope arguments are not an argv suffix.
+    args = _append_local_launch_arguments(
+        cmd, ["--acp", "--stdio", "--no-auto-update", *native_args],
+    )
+    log.info(
+        "Resolved local agent launch: %s (cwd=%s, worktree=%s)",
+        " ".join(args), work_dir, target.worktree_id,
+    )
     args = _wrap_batch_for_windows(args, env)
     return args, work_dir, env
 

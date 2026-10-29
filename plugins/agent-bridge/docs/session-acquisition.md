@@ -12,6 +12,17 @@ fleet acquisition remains outstanding.
 
 ## Request and result
 
+Local ACP launch keeps the ground owner's command representation intact.
+When Worktrees returns its normalized PowerShell `default-setup.ps1` command
+with `-NativeArgumentsJson`, Bridge adds its ACP flags and final prepared
+plugin/request arguments inside that envelope, preserving the original native
+arguments and setup parameters. It never appends a second loose argument tail
+to an envelope command. Malformed envelopes fail before starting the backend;
+the setup script's mixed-argument rejection remains unchanged. Older setup
+commands without an envelope, direct executables, and custom launchers retain
+their existing append behavior. This is a Bridge-side consumption fix, with
+no new owner command, runtime-version requirement, or replacement allocation.
+
 The [workspace allocation and session acquisition contract](../../../docs/patterns/workspace-allocation-and-session-acquisition.md)
 qualifies every allocation/acquisition by the selected execution project, not
 the producing task lane. Bridge creation for a worktree-capable project
