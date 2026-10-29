@@ -129,7 +129,7 @@ async def test_complete_worktrees_plan_preserves_final_native_boundary(
     for library in ("lazy-cli-dispatch", "work-coalescing-singleton"):
         monkeypatch.syspath_prepend(str(SETUP_SOURCE.parents[3] / "libs" / library / "src"))
     from agent_worktrees import __main__ as owner
-    from agent_worktrees import config, launch_seed_exec, manager_launch_cli, tracking
+    from agent_worktrees import config, launch_seed_exec, manager_launch_cli
 
     root = SETUP_SOURCE.parents[1]
     monkeypatch.setattr(owner.inst, "install_dir", lambda: root)
@@ -143,9 +143,15 @@ async def test_complete_worktrees_plan_preserves_final_native_boundary(
     monkeypatch.setattr(manager_launch_cli, "_usable_worktree_manager_launcher_dir", lambda: manager)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    record = tracking.create_new_record(
-        "test-worktree", "worktree/test", str(workspace), "example",
-        "test", "windows", tmp_path, codename="test-launch",
+    record_path = tmp_path / "test-worktree.yaml"
+    # Static test input: constructing a launch plan must not create a managed worktree.
+    record_path.write_text(
+        json.dumps({
+            "worktree_id": "test-worktree", "branch": "worktree/test",
+            "worktree_path": str(workspace), "repo": "example",
+            "machine": "test", "platform": "windows",
+        }),
+        encoding="utf-8",
     )
     settings = config.Config(
         srcroot=str(tmp_path), machine="test", platform="windows", repo_name="example",
@@ -164,7 +170,7 @@ async def test_complete_worktrees_plan_preserves_final_native_boundary(
     )
     if shape != "wrapped":
         command = launch_seed_exec.deferred_command(
-            command, record.yaml_path, admission_only=True,
+            command, record_path, admission_only=True,
             native_resume_session="original-head" if resume else None,
             prepare_native=shape == "prepared",
         )
@@ -179,7 +185,7 @@ async def test_complete_worktrees_plan_preserves_final_native_boundary(
         copilot_args=["--allow-all", "--plugin-dir", "old", "--name", "two words"],
     )
     monkeypatch.setattr(transport, "_resolve_worktree", AsyncMock(return_value={"launch": {
-        "cmd": command, "record_path": str(record.yaml_path), "work_dir": str(workspace),
+        "cmd": command, "record_path": str(record_path), "work_dir": str(workspace),
         "worktree_id": "test-worktree", "env": {"PLAN_VALUE": "retained"},
     }}))
     barrier = AsyncMock(return_value=["--plugin-dir", "prepared path"])
