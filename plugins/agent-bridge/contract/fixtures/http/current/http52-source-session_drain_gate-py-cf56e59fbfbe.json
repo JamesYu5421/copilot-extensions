@@ -6,11 +6,11 @@
   },
   "advertisement_evidence": {
     "path": "plugins/agent-bridge/contract/fixtures/http/current/http52-native-replacement.json",
-    "sha256": "28c4a097962f27300146cd1b0ee0da958d3ef62d4637149283a9e9d04d9f489e"
+    "sha256": "d0048604f52bc4e751f11af279a1fc95209fa9029bd0a43a8d2e5f56afda1ac7"
   },
   "scope": "unchanged source and immutable prior operation; no new runtime observation",
   "captured_from": {
-    "commit": "18bdec9741c85c25a90a3212fbac94a1aad34182",
+    "commit": "5db14ce0d4f9a811363ec74d4de10141c621dfc8",
     "plugin_version": "0.4.1-dev3",
     "protocol_generation": 52,
     "source_path": "plugins/agent-bridge/src/agent_bridge/session_drain_gate.py",
