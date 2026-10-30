@@ -1,0 +1,20 @@
+{
+  "evidence_family": "http52-unchanged-source-link-v1",
+  "preserved_from": {
+    "path": "plugins/agent-bridge/contract/fixtures/http/current/http51-source-inbox_custody-py-38c7081a4d75.json",
+    "sha256": "96402a799ee9c91c3614d5bd497b4dcd1d1145da70ec3dfcd08b978d279355fa"
+  },
+  "advertisement_evidence": {
+    "path": "plugins/agent-bridge/contract/fixtures/http/current/http52-native-replacement.json",
+    "sha256": "28c4a097962f27300146cd1b0ee0da958d3ef62d4637149283a9e9d04d9f489e"
+  },
+  "scope": "unchanged source and immutable prior operation; no new runtime observation",
+  "captured_from": {
+    "commit": "18bdec9741c85c25a90a3212fbac94a1aad34182",
+    "plugin_version": "0.4.1-dev3",
+    "protocol_generation": 52,
+    "source_path": "plugins/agent-bridge/src/agent_bridge/inbox_custody.py",
+    "source_git_blob": "f5c2e89e47f9b7c77f4ddb0931645b3083ccf785",
+    "source_sha256": "3400f262278222031ebef397d316f586be2ebd05aa5a7be8bbb244923bbaa4ab"
+  }
+}
