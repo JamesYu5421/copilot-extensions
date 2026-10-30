@@ -43,15 +43,11 @@ no new owner command, runtime-version requirement, or replacement allocation.
 
 ### Local launch regression coverage
 
-The previous spawn tests substituted direct `copilot` commands for the
-workspace owner's launch plan and mocked process creation. Flag-membership
-assertions could therefore pass even when Bridge appended native options
-outside a PowerShell setup envelope. They did not exercise the setup script
-that rejects that mixed representation.
-
-The existing fresh/resume spawn tests now cover direct and envelope commands
-and assert complete native arguments and envelope placement. The required
-unit packet also admits
+The fresh/resume spawn tests cover direct and envelope commands with mocked
+process creation. They assert the complete native argument list, preserved
+resume identity, unchanged setup parameters, and envelope placement without
+a loose argument tail. These tests do not execute the setup script.
+The required unit packet also admits
 [`test_local_launch_boundary.py`](../../../tools/promotion_unit_tests/test_local_launch_boundary.py):
 it composes Worktrees' actual argument producer with Bridge's consumer,
 checking setup parameters, resume identity, literal values, immutability,
@@ -80,7 +76,7 @@ shell is available; they are not required CI coverage (the Windows rotation
 job is currently disabled). They skip machine setup in recovery mode and do
 not start an installed Bridge daemon or perform live native admission. Those
 remain separate release/rollout checks; generating a prepared plan does not
-prove that a live session starts. Run the tests alongside the strengthened spawn tests:
+prove that a live session starts. Run the tests alongside the spawn tests:
 
 ```powershell
 python tools/run-plugin-tests.py agent-bridge --test-file tests/test_transport.py --test-file tests/test_local_launch_arguments.py --allow-explicit-tiers
