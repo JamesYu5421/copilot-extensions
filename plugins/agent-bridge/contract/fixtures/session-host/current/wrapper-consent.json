@@ -1,6 +1,6 @@
 {
   "captured_from": {
-    "commit": "4d1addd60943b3601831af6f36cfe3d23441b485",
+    "commit": "5e5dd67933dc11b7575fc72f70e6997eb2d30337",
     "plugin_version": "0.4.1-dev3",
     "protocol_generation": 1,
     "source_path": "plugins/agent-bridge/src/agent_bridge/session_host/preference_spawn.py",
